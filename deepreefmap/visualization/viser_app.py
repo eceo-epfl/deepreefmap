@@ -131,13 +131,12 @@ class ViserLiveApp:
                     order_base = float(index) * 2.0
                     self._server.gui.add_image(
                         self._legend_swatch_image(class_id_i),
-                        label=self._legend_swatch_label(class_id_i),
                         order=order_base,
                     )
                     toggle = self._server.gui.add_checkbox(
                         self._legend_checkbox_label(class_id_i),
                         True,
-                        order=order_base + 1.0,
+                        order=order_base,
                     )
                     self._legend_toggles[int(class_id)] = toggle
                     @toggle.on_update
@@ -655,7 +654,7 @@ class ViserLiveApp:
 
     def _legend_swatch_image(self, class_id: int) -> np.ndarray:
         r, g, b = self._class_colors[int(class_id)]
-        swatch = np.zeros((10, 28, 3), dtype=np.uint8)
+        swatch = np.zeros((28, 28, 3), dtype=np.uint8)
         swatch[:, :] = np.asarray([int(r), int(g), int(b)], dtype=np.uint8)
         return swatch
 
