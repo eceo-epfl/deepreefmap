@@ -18,3 +18,6 @@ mapping:
   loger:
     window_size: 32
     overlap_size: 3
+  loger_star:
+    window_size: 32
+    overlap_size: 3

@@ -5,7 +5,7 @@ DeepReefMap is a modular framework for semantic 3D mapping of coral reefs from v
 ## Scope
 
 - Semantic segmentation from multiple interchangeable model backends.
-- 3D mapping from interchangeable backends (SC-SfMLearner and LoGeR adapters).
+- 3D mapping from interchangeable backends (SC-SfMLearner, LoGeR, and LoGeR Star adapters).
 - Cached frame preparation over one or more ordered video files.
 - Semantic point-cloud generation, optional semantic TSDF fusion, ortho-projection, transect-based scaling/cropping.
 - Live `viser` visualization and offline rendering command.
@@ -54,7 +54,7 @@ Expected config files are already present in the submodule:
 
 ### LoGeR failure behavior
 
-When `--mapping loger` is selected, DeepReefMap now fails loudly if:
+When `--mapping loger` or `--mapping loger_star` is selected, DeepReefMap now fails loudly if:
 
 - the checkpoint path is missing
 - LoGeR import/init fails
@@ -105,6 +105,20 @@ uv run deepreefmap reconstruct \
   --loger-overlap-size 3 \
   --classes configs/classes_coralscapes.yaml \
   --out out_loger \
+  --viser
+```
+
+LoGeR Star (uses `third_party/LoGeR/ckpts/LoGeR_star/latest.pt` and matching config by default; override with `--loger-model-path` if needed):
+
+```bash
+uv run deepreefmap reconstruct \
+  --videos GX010001.MP4 \
+  --fps 10 \
+  --segmentation segformer-b2 \
+  --mapping loger_star \
+  --camera-profile gopro_hero_10 \
+  --classes configs/classes_coralscapes.yaml \
+  --out out_loger_star \
   --viser
 ```
 

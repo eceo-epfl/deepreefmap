@@ -107,7 +107,7 @@ def reconstruct(
         raise typer.Exit(code=1)
 
     mapping_options: dict[str, object] = {}
-    if mapping == "loger":
+    if mapping in ("loger", "loger_star"):
         mapping_options = {
             "window_size": loger_window_size,
             "overlap_size": loger_overlap_size,

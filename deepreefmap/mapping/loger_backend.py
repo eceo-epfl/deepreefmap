@@ -53,8 +53,9 @@ class LoGeRBackend(MappingBackend):
         sim3: bool = False,
         turn_off_ttt: bool = False,
         turn_off_swa: bool = False,
+        backend_id: str = "loger",
     ) -> None:
-        self.name = "loger"
+        self.name = backend_id
         self.default_window_size = window_size
         self._overlap_size = overlap_size
         self._model_path = model_path or str(_LOGER_PATH / "ckpts" / "LoGeR" / "latest.pt")
