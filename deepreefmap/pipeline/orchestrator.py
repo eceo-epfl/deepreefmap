@@ -63,7 +63,7 @@ def run_reconstruction(
     end_s: float | None = None,
     mapping_options: dict[str, object] | None = None,
     classes_path: Path = DEFAULT_CLASSES_PATH,
-    point_stride: int = 2,
+    point_stride: int = 1,
     grid_bins: int = 2000,
     keep_viser_open: bool = True,
 ) -> None:
@@ -229,7 +229,7 @@ def run_reconstruction(
             if len(cloud_for_metrics) > 0:
                 # Keep a light visualization subsample for interactivity, but
                 # retain substantially more points per frame than before.
-                viewer_stride = 2
+                viewer_stride = 1
                 sampled_frame_indices = (
                     cloud_for_metrics.frame_indices[::viewer_stride]
                     if cloud_for_metrics.frame_indices is not None
