@@ -1,0 +1,54 @@
+{
+  "name": "gopro_hero_10",
+  "source": "colmap_radial_v1",
+  "distorted": {
+    "model": "RADIAL",
+    "params": {
+      "fx": 1243.6276334472113,
+      "fy": 1243.6276334472113,
+      "cx": 960.0,
+      "cy": 540.0,
+      "k1": 0.36223110184368823,
+      "k2": 0.2476961799393366
+    }
+  },
+  "rectified_pinhole": {
+    "image_size": [
+      1920,
+      1080
+    ],
+    "K": [
+      [
+        1562.98876953125,
+        0.0,
+        959.5
+      ],
+      [
+        0.0,
+        1562.98876953125,
+        539.5
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "diagnostics": {
+    "n_input_frames": 100,
+    "n_registered_images": 100,
+    "mean_reprojection_error_px": 0.783395585447909,
+    "camera_model": "RADIAL",
+    "source_video": "../../epfl/jonathan/GX010655.MP4",
+    "sampling_fps": 10,
+    "begin_s": 12.0,
+    "end_s": null,
+    "valid_roi_xywh": [
+      0,
+      0,
+      1919,
+      1079
+    ]
+  }
+}

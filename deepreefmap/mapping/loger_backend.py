@@ -3,12 +3,15 @@ from __future__ import annotations
 from collections import deque
 from pathlib import Path
 import inspect
+import logging
 import yaml
 
 import cv2
 import numpy as np
 
 from deepreefmap.mapping.base import FrameEstimate, MappingBackend
+
+logger = logging.getLogger(__name__)
 
 
 class LoGeRBackend(MappingBackend):
@@ -26,6 +29,8 @@ class LoGeRBackend(MappingBackend):
         model_path: str | None = None,
         config_path: str | None = None,
         target_resolution: tuple[int, int] = (448, 252),
+        strict_checkpoint_loading: bool = True,
+        strict_runtime_inference: bool = True,
     ) -> None:
         self.name = "loger"
         self.default_window_size = window_size
@@ -41,7 +46,12 @@ class LoGeRBackend(MappingBackend):
         self._device = "cpu"
         self._torch = None
         self._model_ready = False
+        self._init_error: Exception | None = None
+        self._inference_error_logged = False
+        self._strict_checkpoint_loading = strict_checkpoint_loading
+        self._strict_runtime_inference = strict_runtime_inference
         self._try_init_loger()
+        self._validate_init_state()
 
     def _try_init_loger(self) -> None:
         try:
@@ -69,11 +79,39 @@ class LoGeRBackend(MappingBackend):
                 else:
                     state_dict = None
                 if state_dict is not None:
-                    self._model.load_state_dict(state_dict, strict=False)
+                    missing, unexpected = self._model.load_state_dict(state_dict, strict=False)
+                    loaded_tensors = len(self._model.state_dict()) - len(missing)
+                    if loaded_tensors <= 0:
+                        raise RuntimeError("LoGeR checkpoint loaded zero matching tensors.")
+                    if missing:
+                        logger.warning("LoGeR checkpoint missing %d tensors.", len(missing))
+                    if unexpected:
+                        logger.warning("LoGeR checkpoint has %d unexpected tensors.", len(unexpected))
+                else:
+                    raise RuntimeError(
+                        f"Checkpoint '{self._model_path}' does not contain a readable state_dict."
+                    )
             self._model_ready = True
-        except Exception:
+        except Exception as exc:
             self._model = None
             self._model_ready = False
+            self._init_error = exc
+
+    def _validate_init_state(self) -> None:
+        if self._model_path and not Path(self._model_path).exists():
+            raise FileNotFoundError(f"LoGeR checkpoint not found: {self._model_path}")
+        if self._model_ready:
+            return
+        err_detail = f" Original error: {self._init_error!r}" if self._init_error else ""
+        if self._strict_checkpoint_loading and self._model_path:
+            raise RuntimeError(
+                "LoGeR backend initialization failed; checkpoint was not loaded."
+                f"{err_detail}"
+            )
+        logger.warning(
+            "LoGeR backend unavailable; falling back to geometric proxy depth.%s",
+            err_detail,
+        )
 
     def initialize(self, image_size: tuple[int, int], intrinsics: np.ndarray) -> None:
         del image_size
@@ -132,11 +170,25 @@ class LoGeRBackend(MappingBackend):
                             depth = np.abs(pts[..., 2]).astype(np.float32)
                             break
             if depth is None:
+                msg = (
+                    "LoGeR inference output did not contain usable depth tensors "
+                    "(expected one of: 'points', 'local_points')."
+                )
+                if self._strict_runtime_inference:
+                    raise RuntimeError(msg)
+                logger.warning("%s Falling back to geometric proxy depth.", msg)
                 depth = self._fallback_estimate(frame_index, image_rgb).depth
 
             # Resize depth back to current frame.
             depth = cv2.resize(depth, (image_rgb.shape[1], image_rgb.shape[0]), interpolation=cv2.INTER_LINEAR).astype(np.float32)
             self._pose_w_c = pose.astype(np.float32)
             return FrameEstimate(frame_index=frame_index, depth=depth, pose_w_c=self._pose_w_c.copy(), intrinsics=self._k)
-        except Exception:
+        except Exception as exc:
+            if not self._inference_error_logged:
+                logger.exception(
+                    "LoGeR inference failed; switching to geometric proxy depth for subsequent frames."
+                )
+                self._inference_error_logged = True
+            if self._strict_runtime_inference:
+                raise RuntimeError(f"LoGeR inference failed at frame {frame_index}") from exc
             return self._fallback_estimate(frame_index, image_rgb)

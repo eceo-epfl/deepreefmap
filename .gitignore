@@ -1,0 +1,48 @@
+# Python environment and build artifacts
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime outputs
+out/
+out_*/
+
+# Calibration diagnostics (generated)
+camera_profiles/*_diagnostics/
+
+# Local editor/system files
+.DS_Store
+
+# Large model/checkpoint artifacts
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+*.h5
+*.hdf5
+*.pb
+
+# Large binary/data artifacts
+*.npy
+*.npz
+*.parquet
+*.feather
+*.pkl
+*.joblib
+
+# Common large compressed outputs
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z

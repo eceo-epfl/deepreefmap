@@ -15,13 +15,16 @@ dependencies = [
   "transformers>=4.53.0",
   "huggingface_hub>=0.34.0",
   "torch>=2.2.0",
+  "torchvision>=0.17.0",
   "pycolmap>=3.13.0",
   "viser>=0.2.23",
 ]
 
 [project.optional-dependencies]
-loger = []
-gopro = ["py-gpmf-parser>=0.3.0"]
+loger = ["loger"]
+gopro = [
+  "py-gpmf-parser>=0.1.1,<0.2.0; sys_platform == 'linux' and platform_machine == 'x86_64'"
+]
 train = ["wandb>=0.20.0", "tensorboard>=2.18.0"]
 dev = ["pytest>=8.4.0", "ruff>=0.12.0", "mypy>=1.16.0"]
 
@@ -34,3 +37,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["deepreefmap*"]
+
+[tool.uv.sources]
+loger = { path = "third_party/LoGeR", editable = true }

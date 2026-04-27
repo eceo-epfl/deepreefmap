@@ -14,6 +14,7 @@ class CameraProfile:
     image_size: tuple[int, int]
     k: np.ndarray
     radial: dict[str, float]
+    diagnostics: dict[str, object] | None = None
 
     @classmethod
     def load(cls, name: str) -> "CameraProfile":
@@ -26,6 +27,7 @@ class CameraProfile:
             image_size=(int(size[0]), int(size[1])),
             k=k,
             radial=data["distorted"]["params"],
+            diagnostics=data.get("diagnostics"),
         )
 
     def save(self) -> Path:
@@ -40,5 +42,7 @@ class CameraProfile:
                 "K": self.k.tolist(),
             },
         }
+        if self.diagnostics is not None:
+            payload["diagnostics"] = self.diagnostics
         path.write_text(json.dumps(payload, indent=2))
         return path

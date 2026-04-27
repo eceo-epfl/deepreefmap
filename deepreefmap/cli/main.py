@@ -80,8 +80,17 @@ def calibrate(
     name: str = typer.Option(..., help="Profile name for camera_profiles/<name>.json"),
     n_frames: int = typer.Option(100),
     fps: int = typer.Option(10),
+    begin: Optional[float] = typer.Option(None, help="Optional begin timestamp (seconds) for calibration window."),
+    end: Optional[float] = typer.Option(None, help="Optional end timestamp (seconds) for calibration window."),
 ) -> None:
-    profile_path = calibrate_camera_profile(video, name, n_frames=n_frames, fps=fps)
+    profile_path = calibrate_camera_profile(
+        video,
+        name,
+        n_frames=n_frames,
+        fps=fps,
+        begin_s=begin,
+        end_s=end,
+    )
     typer.echo(f"Saved camera profile: {profile_path}")
 
 

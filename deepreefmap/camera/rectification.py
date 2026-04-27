@@ -11,6 +11,7 @@ class Rectifier:
         self.profile = profile
         self._map1 = None
         self._map2 = None
+        self._roi: tuple[int, int, int, int] | None = None
 
     def _init_maps(self, image_size: tuple[int, int]) -> None:
         w, h = image_size
@@ -23,6 +24,16 @@ class Rectifier:
             dtype=np.float32,
         )
         dist = np.array([self.profile.radial.get("k1", 0.0), self.profile.radial.get("k2", 0.0), 0.0, 0.0], dtype=np.float32)
+        # Compute ROI for valid undistorted pixels (alpha=0 crops black borders).
+        _, roi = cv2.getOptimalNewCameraMatrix(
+            k,
+            dist,
+            (w, h),
+            alpha=0.0,
+            newImgSize=(w, h),
+            centerPrincipalPoint=True,
+        )
+        self._roi = (int(roi[0]), int(roi[1]), int(roi[2]), int(roi[3]))
         self._map1, self._map2 = cv2.initUndistortRectifyMap(
             k,
             dist,
@@ -36,4 +47,11 @@ class Rectifier:
         h, w = image_rgb.shape[:2]
         if self._map1 is None or self._map2 is None:
             self._init_maps((w, h))
-        return cv2.remap(image_rgb, self._map1, self._map2, interpolation=cv2.INTER_LINEAR)
+        rect = cv2.remap(image_rgb, self._map1, self._map2, interpolation=cv2.INTER_LINEAR)
+        if self._roi is not None:
+            x, y, rw, rh = self._roi
+            if rw > 0 and rh > 0:
+                rect = rect[y : y + rh, x : x + rw]
+                # Keep downstream shape stable while removing black borders.
+                rect = cv2.resize(rect, (w, h), interpolation=cv2.INTER_LINEAR)
+        return rect
