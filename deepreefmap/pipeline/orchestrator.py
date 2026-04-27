@@ -321,13 +321,27 @@ def _estimate_selected_frame_count(
         src_fps = src_fps if src_fps > 0 else float(max(1, fps))
         stride = max(1, int(round(src_fps / max(1, fps))))
 
-        nframes = meta.get("nframes")
-        if nframes is None or int(nframes) <= 0:
+        nframes_raw = meta.get("nframes")
+        nframes: int | None = None
+        if nframes_raw is not None:
+            try:
+                nframes_f = float(nframes_raw)
+                if np.isfinite(nframes_f) and nframes_f > 0:
+                    nframes = int(round(nframes_f))
+            except (TypeError, ValueError, OverflowError):
+                nframes = None
+        if nframes is None:
             duration = meta.get("duration")
             if duration is None:
                 return None
-            nframes = int(round(float(duration) * src_fps))
-        nframes = max(int(nframes), 0)
+            try:
+                duration_f = float(duration)
+            except (TypeError, ValueError, OverflowError):
+                return None
+            if not np.isfinite(duration_f) or duration_f <= 0:
+                return None
+            nframes = int(round(duration_f * src_fps))
+        nframes = max(nframes, 0)
         clip_duration = nframes / src_fps if src_fps > 0 else 0.0
         clip_start = cumulative_time
         clip_end = cumulative_time + clip_duration
