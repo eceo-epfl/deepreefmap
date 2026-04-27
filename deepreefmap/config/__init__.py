@@ -1,3 +1,3 @@
-from deepreefmap.config.taxonomy import Taxonomy, TaxonomyClass, load_taxonomy
+from deepreefmap.config.classes import ClassConfig, SemanticClass, load_classes
 
-__all__ = ["Taxonomy", "TaxonomyClass", "load_taxonomy"]
+__all__ = ["ClassConfig", "SemanticClass", "load_classes"]

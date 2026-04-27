@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from deepreefmap.config.taxonomy import Taxonomy
+from deepreefmap.config.classes import ClassConfig
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, SemanticPointCloud
 from deepreefmap.pointcloud.unprojection import depth_to_points
 
@@ -24,11 +24,11 @@ class PointFilterConfig:
 def build_semantic_reference_cloud(
     frame_batch: FrameBatch,
     mapping: MappingSequenceResult,
-    taxonomy: Taxonomy,
+    classes_config: ClassConfig,
     config: PointFilterConfig | None = None,
 ) -> SemanticPointCloud:
     cfg = config or PointFilterConfig()
-    ignore_labels = taxonomy.ids_for_role("ignore_in_point_cloud")
+    ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
     xyz_parts: list[np.ndarray] = []
     rgb_parts: list[np.ndarray] = []
     label_parts: list[np.ndarray] = []

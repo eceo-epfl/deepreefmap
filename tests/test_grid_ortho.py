@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from deepreefmap.config.taxonomy import Taxonomy, TaxonomyClass
+from deepreefmap.config.classes import ClassConfig, SemanticClass
 from deepreefmap.pipeline.artifacts import SemanticPointCloud
 from deepreefmap.pointcloud.grid_ortho import OrthoGrid, aggregate_cloud_to_ortho_grid
 from deepreefmap.pointcloud.transect_crop import crop_grid_around_transect
@@ -38,19 +38,19 @@ def test_aggregate_cloud_returns_empty_grid_on_degenerate_input():
     assert int(grid.labels.sum()) == 0
 
 
-def test_benthic_cover_uses_taxonomy_ignores_and_counts():
-    taxonomy = Taxonomy(
+def test_benthic_cover_uses_classes_ignores_and_counts():
+    classes_config = ClassConfig(
         classes=(
-            TaxonomyClass(0, "unlabeled", frozenset({"ignore_in_cover"})),
-            TaxonomyClass(1, "sand", frozenset()),
-            TaxonomyClass(7, "human", frozenset({"ignore_in_cover"})),
+            SemanticClass(0, "unlabeled", (0, 0, 0), frozenset({"ignore_in_cover"})),
+            SemanticClass(1, "sand", (194, 178, 128), frozenset()),
+            SemanticClass(7, "human", (255, 0, 0), frozenset({"ignore_in_cover"})),
         ),
         path=Path("test"),
     )
     labels = np.array([[1, 1], [7, 0]], dtype=np.int32)
     counts = np.array([[2, 3], [100, 50]], dtype=np.int32)
 
-    cover = compute_benthic_cover(labels, taxonomy=taxonomy, counts=counts)
+    cover = compute_benthic_cover(labels, classes_config=classes_config, counts=counts)
 
     assert cover["denominator"] == 5
     assert cover["classes"]["1"]["name"] == "sand"

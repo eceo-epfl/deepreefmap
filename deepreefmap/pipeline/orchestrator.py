@@ -10,7 +10,7 @@ import numpy as np
 
 from deepreefmap.camera.intrinsics import CameraProfile
 from deepreefmap.camera.rectification import Rectifier
-from deepreefmap.config.taxonomy import DEFAULT_TAXONOMY_PATH, Taxonomy, load_taxonomy
+from deepreefmap.config.classes import ClassConfig, DEFAULT_CLASSES_PATH, load_classes
 from deepreefmap.io.exports import save_ortho_grid, save_semantic_cloud
 from deepreefmap.io.video import iter_video_frames
 from deepreefmap.mapping.registry import create_mapping_backend
@@ -60,7 +60,7 @@ def run_reconstruction(
     begin_s: float | None = None,
     end_s: float | None = None,
     mapping_options: dict[str, object] | None = None,
-    taxonomy_path: Path = DEFAULT_TAXONOMY_PATH,
+    classes_path: Path = DEFAULT_CLASSES_PATH,
     point_stride: int = 4,
     grid_bins: int = 2000,
     keep_viser_open: bool = True,
@@ -72,8 +72,8 @@ def run_reconstruction(
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Loading taxonomy from %s", taxonomy_path)
-    taxonomy = load_taxonomy(taxonomy_path)
+    logger.info("Loading classes from %s", classes_path)
+    classes_config = load_classes(classes_path)
 
     logger.info("Loading camera profile '%s'", camera_profile_name)
     profile = CameraProfile.load(camera_profile_name)
@@ -95,7 +95,7 @@ def run_reconstruction(
         end_s=end_s,
         rectifier=rectifier,
         segmentation=segmentation,
-        taxonomy=taxonomy,
+        classes_config=classes_config,
         output_dir=output_dir,
     )
     frame_count = len(frame_batch.frames)
@@ -118,7 +118,7 @@ def run_reconstruction(
     reference_cloud = build_semantic_reference_cloud(
         frame_batch,
         mapping_result,
-        taxonomy,
+        classes_config,
         PointFilterConfig(stride=point_stride),
     )
     save_semantic_cloud(output_dir / "semantic_reference_cloud.npz", reference_cloud)
@@ -157,15 +157,15 @@ def run_reconstruction(
     if transect_length is not None and transect_crop_width is not None:
         grid = crop_grid_around_transect(
             grid=grid,
-            transect_label=taxonomy.single_id_for_role("transect_line"),
-            transect_tools_label=taxonomy.single_id_for_role("transect_tools"),
+            transect_label=classes_config.single_id_for_role("transect_line"),
+            transect_tools_label=classes_config.single_id_for_role("transect_tools"),
             transect_length_m=transect_length,
             crop_width_m=transect_crop_width,
         )
     cv2.imwrite(str(output_dir / "ortho.png"), cv2.cvtColor(grid.rgb, cv2.COLOR_RGB2BGR))
     save_ortho_grid(output_dir / "ortho.npz", grid)
 
-    cover = compute_benthic_cover(grid.labels, taxonomy=taxonomy, counts=grid.counts)
+    cover = compute_benthic_cover(grid.labels, classes_config=classes_config, counts=grid.counts)
     save_cover_report(output_dir / "benthic_cover.json", cover)
 
     # #region agent log
@@ -177,7 +177,7 @@ def run_reconstruction(
         data={"enable_viser": enable_viser, "constructor": "ViserLiveApp()"},
     )
     # #endregion
-    viewer = ViserLiveApp(port=viser_port) if enable_viser else None
+    viewer = ViserLiveApp(class_colors=classes_config.id_to_color, port=viser_port) if enable_viser else None
     if viewer is not None:
         for frame in frame_batch.frames:
             try:
@@ -196,7 +196,7 @@ def run_reconstruction(
         segmentation_name=segmentation_name,
         mapping_name=mapping_name,
         camera_profile_name=camera_profile_name,
-        taxonomy_path=taxonomy_path,
+        classes_path=classes_path,
         reference_cloud_size=len(reference_cloud),
         metric_cloud_size=len(cloud_for_metrics),
         pixel_size_m=grid.pixel_size_m,
@@ -217,7 +217,7 @@ def _prepare_frames(
     end_s: float | None,
     rectifier: Rectifier,
     segmentation,
-    taxonomy: Taxonomy,
+    classes_config: ClassConfig,
     output_dir: Path,
 ) -> FrameBatch:
     frames_dir = output_dir / "frames"
@@ -226,7 +226,7 @@ def _prepare_frames(
     frames_dir.mkdir(parents=True, exist_ok=True)
     labels_dir.mkdir(parents=True, exist_ok=True)
     masks_dir.mkdir(parents=True, exist_ok=True)
-    ignore_labels = taxonomy.ids_for_role("ignore_in_point_cloud")
+    ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
     prepared: list[PreparedFrame] = []
     for idx, frame in iter_video_frames(video_paths, target_fps=fps, begin_s=begin_s, end_s=end_s):
         t_frame = time.monotonic()
@@ -290,7 +290,7 @@ def _build_manifest(
     segmentation_name: str,
     mapping_name: str,
     camera_profile_name: str,
-    taxonomy_path: Path,
+    classes_path: Path,
     reference_cloud_size: int,
     metric_cloud_size: int,
     pixel_size_m: float | None,
@@ -302,7 +302,7 @@ def _build_manifest(
         "segmentation_model": segmentation_name,
         "mapping_backend": mapping_name,
         "camera_profile": camera_profile_name,
-        "taxonomy": str(taxonomy_path),
+        "classes": str(classes_path),
         "semantic_reference_points": reference_cloud_size,
         "metric_points": metric_cloud_size,
         "pixel_size_m": pixel_size_m,

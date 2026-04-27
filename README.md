@@ -103,7 +103,7 @@ uv run deepreefmap reconstruct \
   --loger-model-path third_party/LoGeR/ckpts/LoGeR/latest.pt \
   --loger-window-size 32 \
   --loger-overlap-size 3 \
-  --taxonomy configs/taxonomy_coralscapes.yaml \
+  --classes configs/classes_coralscapes.yaml \
   --out out_loger \
   --viser
 ```
@@ -112,12 +112,12 @@ uv run deepreefmap reconstruct \
 
 Each reconstruction writes cached and derived artifacts for inspection:
 
-- `frames/`, `labels/`, `masks/`: rectified RGB frames, semantic labels, and taxonomy-derived keep masks.
+- `frames/`, `labels/`, `masks/`: rectified RGB frames, semantic labels, and class-derived keep masks.
 - `mapping_outputs.npz`: depth, poses, intrinsics, confidence, and frame indices.
 - `semantic_reference_cloud.npz`: filtered semantic reference point cloud.
 - `tsdf_cloud.npz` and `semantic_tsdf_cloud.npz`: geometry and semantics when `--tsdf` is enabled.
 - `ortho.png` and `ortho.npz`: aggregated ortho grid used for reporting.
-- `benthic_cover.json`: taxonomy-aware class counts and fractions.
+- `benthic_cover.json`: class-aware class counts and fractions.
 - `run_manifest.json`: single canonical run manifest (schema, summary fields, frame paths, mapping refs).
 
 ## Notes

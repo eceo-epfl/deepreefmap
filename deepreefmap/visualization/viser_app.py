@@ -8,9 +8,10 @@ import cv2
 
 
 class ViserLiveApp:
-    def __init__(self, port: int = 8080) -> None:
+    def __init__(self, class_colors: dict[int, tuple[int, int, int]] | None = None, port: int = 8080) -> None:
         self.enabled = False
         self._server = None
+        self._class_colors = class_colors or {}
         self._pts_xyz: list[np.ndarray] = []
         self._pts_rgb: list[np.ndarray] = []
         self._rgb_handle = None
@@ -63,11 +64,12 @@ class ViserLiveApp:
 
     def _colorize_seg(self, seg: np.ndarray) -> np.ndarray:
         s = np.asarray(seg, dtype=np.int32)
-        # Deterministic pseudo-color table for label IDs.
-        r = (s * 53 + 37) % 255
-        g = (s * 97 + 17) % 255
-        b = (s * 193 + 71) % 255
-        return np.stack([r, g, b], axis=-1).astype(np.uint8)
+        out = np.full((s.shape[0], s.shape[1], 3), 128, dtype=np.uint8)
+        if not self._class_colors:
+            return out
+        for class_id, rgb in self._class_colors.items():
+            out[s == int(class_id)] = np.asarray(rgb, dtype=np.uint8)
+        return out
 
     def add_points(self, xyz: np.ndarray, rgb: np.ndarray) -> None:
         if not self.enabled:

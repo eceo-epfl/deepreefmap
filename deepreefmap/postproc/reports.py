@@ -4,6 +4,8 @@ import json
 import cv2
 import numpy as np
 
+from deepreefmap.config.classes import load_classes
+
 
 def save_cover_report(path: Path, cover: dict[str, object]) -> None:
     path.write_text(json.dumps(cover, indent=2))
@@ -22,6 +24,12 @@ def render_offline_video_placeholder(run_dir: Path) -> None:
         return
 
     manifest = json.loads(manifest_path.read_text())
+    classes_path = Path(manifest.get("classes", "configs/classes_coralscapes.yaml"))
+    if not classes_path.is_absolute():
+        classes_path = run_dir / classes_path
+    if not classes_path.exists():
+        classes_path = Path(manifest.get("classes", "configs/classes_coralscapes.yaml"))
+    class_colors = load_classes(classes_path).id_to_color
     frame_paths = [run_dir / p for p in manifest.get("frame_paths", [])]
     labels_paths = [run_dir / p for p in manifest.get("labels_paths", [])]
     depths_path = run_dir / str(manifest.get("depth_maps", ""))
@@ -45,7 +53,7 @@ def render_offline_video_placeholder(run_dir: Path) -> None:
         depth_vis = _colorize_depth(depths[idx], (w, h))
         if idx < len(labels_paths) and labels_paths[idx].exists():
             labels = np.load(labels_paths[idx])
-            seg_vis = _colorize_labels(labels, (w, h))
+            seg_vis = _colorize_labels(labels, class_colors, (w, h))
         else:
             seg_vis = np.zeros_like(bgr)
         ortho_path = run_dir / "ortho.png"
@@ -72,9 +80,14 @@ def _colorize_depth(depth: np.ndarray, size_wh: tuple[int, int]) -> np.ndarray:
     return cv2.resize(colored, size_wh, interpolation=cv2.INTER_AREA)
 
 
-def _colorize_labels(labels: np.ndarray, size_wh: tuple[int, int]) -> np.ndarray:
-    labels = labels.astype(np.uint8)
-    hue = (labels.astype(np.uint16) * 37 % 180).astype(np.uint8)
-    hsv = np.stack([hue, np.full_like(hue, 180), np.where(labels == 0, 0, 220).astype(np.uint8)], axis=-1)
-    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+def _colorize_labels(
+    labels: np.ndarray,
+    class_colors: dict[int, tuple[int, int, int]],
+    size_wh: tuple[int, int],
+) -> np.ndarray:
+    labels_i = labels.astype(np.int32)
+    rgb = np.full((labels_i.shape[0], labels_i.shape[1], 3), 128, dtype=np.uint8)
+    for class_id, color in class_colors.items():
+        rgb[labels_i == int(class_id)] = np.asarray(color, dtype=np.uint8)
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     return cv2.resize(bgr, size_wh, interpolation=cv2.INTER_NEAREST)

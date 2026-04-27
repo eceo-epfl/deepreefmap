@@ -70,7 +70,7 @@ def reconstruct(
     end: Optional[float] = typer.Option(None, help="End timestamp in the concatenated stream (seconds)."),
     transect_length: Optional[float] = typer.Option(None, help="Transect length in meters."),
     transect_crop_width: Optional[float] = typer.Option(None, help="Crop width around transect in meters."),
-    taxonomy: Path = typer.Option(Path("configs/taxonomy_coralscapes.yaml"), help="Taxonomy YAML with class roles."),
+    classes: Path = typer.Option(Path("configs/classes_coralscapes.yaml"), help="Classes YAML with class roles and colors."),
     viser: bool = typer.Option(False, help="Enable viser visualization."),
     viser_port: int = typer.Option(8080, help="Port for viser visualization server."),
     tsdf: bool = typer.Option(False, help="Enable optional TSDF fusion output."),
@@ -116,7 +116,7 @@ def reconstruct(
         viser_port=viser_port,
         enable_tsdf=tsdf,
         mapping_options=mapping_options,
-        taxonomy_path=taxonomy,
+        classes_path=classes,
     )
 
 

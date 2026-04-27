@@ -2,17 +2,17 @@ from pathlib import Path
 
 import numpy as np
 
-from deepreefmap.config.taxonomy import Taxonomy, TaxonomyClass
+from deepreefmap.config.classes import ClassConfig, SemanticClass
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
 from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_reference_cloud, voxel_reduce_semantic_cloud
 from deepreefmap.pipeline.artifacts import SemanticPointCloud
 
 
-def _taxonomy():
-    return Taxonomy(
+def _classes():
+    return ClassConfig(
         classes=(
-            TaxonomyClass(1, "reef", frozenset()),
-            TaxonomyClass(7, "human", frozenset({"ignore_in_point_cloud"})),
+            SemanticClass(1, "reef", (10, 10, 10), frozenset()),
+            SemanticClass(7, "human", (255, 0, 0), frozenset({"ignore_in_point_cloud"})),
         ),
         path=Path("test"),
     )
@@ -38,7 +38,7 @@ def test_build_semantic_reference_cloud_filters_labels_and_confidence():
     cloud = build_semantic_reference_cloud(
         batch,
         mapping,
-        _taxonomy(),
+        _classes(),
         PointFilterConfig(stride=1, voxel_size=None, confidence_percentile=None, min_confidence=0.5),
     )
 
