@@ -1,0 +1,23 @@
+{
+  "name": "example_linear",
+  "source": "manual_example",
+  "distorted": {
+    "model": "RADIAL",
+    "params": {
+      "fx": 1200.0,
+      "fy": 1200.0,
+      "cx": 960.0,
+      "cy": 540.0,
+      "k1": 0.0,
+      "k2": 0.0
+    }
+  },
+  "rectified_pinhole": {
+    "image_size": [1920, 1080],
+    "K": [
+      [1200.0, 0.0, 960.0],
+      [0.0, 1200.0, 540.0],
+      [0.0, 0.0, 1.0]
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+[project]
+name = "deepreefmap"
+version = "0.1.0"
+description = "Modular framework for semantic 3D mapping of coral reefs from videos"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+  "numpy>=1.26.0",
+  "opencv-python>=4.10.0.84",
+  "imageio[ffmpeg]>=2.37.0",
+  "typer>=0.16.0",
+  "pyyaml>=6.0.2",
+  "scikit-learn>=1.5.0",
+  "open3d>=0.18.0",
+  "transformers>=4.53.0",
+  "huggingface_hub>=0.34.0",
+  "torch>=2.2.0",
+  "pycolmap>=3.13.0",
+  "viser>=0.2.23",
+]
+
+[project.optional-dependencies]
+loger = []
+gopro = ["py-gpmf-parser>=0.3.0"]
+train = ["wandb>=0.20.0", "tensorboard>=2.18.0"]
+dev = ["pytest>=8.4.0", "ruff>=0.12.0", "mypy>=1.16.0"]
+
+[project.scripts]
+deepreefmap = "deepreefmap.cli.main:app"
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["deepreefmap*"]
