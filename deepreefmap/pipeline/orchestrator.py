@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 
 import cv2
+import imageio.v3 as iio
 import numpy as np
 
 from deepreefmap.camera.intrinsics import CameraProfile
@@ -86,7 +87,14 @@ def run_reconstruction(
     mapping = create_mapping_backend(mapping_name, **(mapping_options or {}))
     mapping.initialize(image_size=profile.image_size, intrinsics=profile.k)
 
-    logger.info("Preparing frames...")
+    estimated_total = _estimate_selected_frame_count([Path(p) for p in video_paths], fps=fps, begin_s=begin_s, end_s=end_s)
+    if estimated_total is not None:
+        logger.info(
+            "Preparing frames (extract + rectify + segment + mask): expected %d sampled frames...",
+            estimated_total,
+        )
+    else:
+        logger.info("Preparing frames (extract + rectify + segment + mask): total sampled frame count unknown")
     t_start = time.monotonic()
     frame_batch = _prepare_frames(
         video_paths=[Path(p) for p in video_paths],
@@ -97,13 +105,14 @@ def run_reconstruction(
         segmentation=segmentation,
         classes_config=classes_config,
         output_dir=output_dir,
+        total_frames_hint=estimated_total,
     )
     frame_count = len(frame_batch.frames)
     if frame_count == 0:
         raise RuntimeError("No frames processed")
 
-    logger.info("Prepared %d frames in %.1fs", frame_count, time.monotonic() - t_start)
-    logger.info("Running mapping backend '%s' on prepared sequence...", mapping_name)
+    logger.info("Prepared %d sampled frames in %.1fs", frame_count, time.monotonic() - t_start)
+    logger.info("Running mapping backend '%s' on %d prepared frames...", mapping_name, frame_count)
     mapping_result = mapping.process_sequence(frame_batch.frame_indices, frame_batch.images)
     np.savez_compressed(
         output_dir / "mapping_outputs.npz",
@@ -219,6 +228,7 @@ def _prepare_frames(
     segmentation,
     classes_config: ClassConfig,
     output_dir: Path,
+    total_frames_hint: int | None = None,
 ) -> FrameBatch:
     frames_dir = output_dir / "frames"
     labels_dir = output_dir / "labels"
@@ -228,8 +238,13 @@ def _prepare_frames(
     masks_dir.mkdir(parents=True, exist_ok=True)
     ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
     prepared: list[PreparedFrame] = []
+    if total_frames_hint is not None:
+        logger.info("Frame preparation progress will be reported as current/%d", total_frames_hint)
+    else:
+        logger.info("Frame preparation progress will be reported as current/unknown_total")
     for idx, frame in iter_video_frames(video_paths, target_fps=fps, begin_s=begin_s, end_s=end_s):
         t_frame = time.monotonic()
+        prepared_count = len(prepared) + 1
         rectified = rectifier.rectify(frame)
         labels = segmentation.predict(rectified).labels.astype(np.int32)
         keep_mask = (~np.isin(labels, list(ignore_labels))).astype(np.uint8) * 255
@@ -253,7 +268,21 @@ def _prepare_frames(
                 mask_path=mask_path,
             )
         )
-        logger.info("Prepared frame idx=%d in %.1fs", idx, time.monotonic() - t_frame)
+        if total_frames_hint is not None:
+            logger.info(
+                "Prepared sampled frame %d/%d (source_idx=%d): rectified + segmented + masked in %.1fs",
+                prepared_count,
+                total_frames_hint,
+                idx,
+                time.monotonic() - t_frame,
+            )
+        else:
+            logger.info(
+                "Prepared sampled frame %d (source_idx=%d of unknown total): rectified + segmented + masked in %.1fs",
+                prepared_count,
+                idx,
+                time.monotonic() - t_frame,
+            )
     image_size = (prepared[0].image_rgb.shape[1], prepared[0].image_rgb.shape[0]) if prepared else (0, 0)
     return FrameBatch(
         frames=tuple(prepared),
@@ -271,6 +300,53 @@ def _resize_rgb(image_rgb: np.ndarray, depth_shape_hw: tuple[int, int]) -> np.nd
 def _resize_mask(mask: np.ndarray, depth_shape_hw: tuple[int, int]) -> np.ndarray:
     h, w = depth_shape_hw
     return cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+
+
+def _estimate_selected_frame_count(
+    video_paths: list[Path],
+    fps: int,
+    begin_s: float | None,
+    end_s: float | None,
+) -> int | None:
+    if end_s is not None and begin_s is not None and end_s <= begin_s:
+        return 0
+    interval_start = 0.0 if begin_s is None else max(0.0, begin_s)
+    interval_end = float("inf") if end_s is None else max(0.0, end_s)
+    total = 0
+    cumulative_time = 0.0
+
+    for path in video_paths:
+        meta = iio.immeta(path)
+        src_fps = float(meta.get("fps", fps))
+        src_fps = src_fps if src_fps > 0 else float(max(1, fps))
+        stride = max(1, int(round(src_fps / max(1, fps))))
+
+        nframes = meta.get("nframes")
+        if nframes is None or int(nframes) <= 0:
+            duration = meta.get("duration")
+            if duration is None:
+                return None
+            nframes = int(round(float(duration) * src_fps))
+        nframes = max(int(nframes), 0)
+        clip_duration = nframes / src_fps if src_fps > 0 else 0.0
+        clip_start = cumulative_time
+        clip_end = cumulative_time + clip_duration
+
+        sel_start = max(interval_start, clip_start)
+        sel_end = min(interval_end, clip_end)
+        if sel_end > sel_start and nframes > 0:
+            local_start_idx = max(0, int(np.ceil((sel_start - clip_start) * src_fps)))
+            local_end_idx_exclusive = min(nframes, int(np.ceil((sel_end - clip_start) * src_fps)))
+            if local_end_idx_exclusive > local_start_idx:
+                first = ((local_start_idx + stride - 1) // stride) * stride
+                if first < local_end_idx_exclusive:
+                    total += ((local_end_idx_exclusive - 1 - first) // stride) + 1
+
+        cumulative_time = clip_end
+        if interval_end <= cumulative_time:
+            break
+
+    return total
 
 
 def _rel(output_dir: Path, path: Path | None) -> str | None:

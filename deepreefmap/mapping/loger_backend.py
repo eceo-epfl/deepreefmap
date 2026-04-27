@@ -4,6 +4,7 @@ from pathlib import Path
 import inspect
 import logging
 import sys
+import time
 import yaml
 
 import cv2
@@ -138,10 +139,26 @@ class LoGeRBackend(MappingBackend):
             torch = self._torch
             model = self._model
             assert torch is not None and model is not None
+            total_frames = len(images_rgb)
+            logger.info(
+                "LoGeR sequence run starting: %d prepared frames, window_size=%d, overlap_size=%d",
+                total_frames,
+                self.default_window_size,
+                self._overlap_size,
+            )
             target_w, target_h = self._target_resolution
             target_w = _nearest_multiple(target_w, 14)
             target_h = _nearest_multiple(target_h, 14)
+            t_resize = time.monotonic()
             resized = [cv2.resize(frm, (target_w, target_h), interpolation=cv2.INTER_AREA) for frm in images_rgb]
+            logger.info(
+                "LoGeR input resize complete for %d/%d frames to %dx%d in %.1fs",
+                len(resized),
+                total_frames,
+                target_w,
+                target_h,
+                time.monotonic() - t_resize,
+            )
             batch = np.stack(resized, axis=0).astype(np.float32) / 255.0
             batch_t = torch.from_numpy(batch).permute(0, 3, 1, 2).unsqueeze(0).to(self._device)
             forward_kwargs = {
@@ -154,11 +171,19 @@ class LoGeRBackend(MappingBackend):
             }
             capability = torch.cuda.get_device_capability(self._device)[0]
             dtype = torch.bfloat16 if capability >= 8 else torch.float16
+            logger.info(
+                "LoGeR inference running on %s with autocast dtype=%s (%d frames)...",
+                self._device,
+                str(dtype).split(".")[-1],
+                total_frames,
+            )
+            t_infer = time.monotonic()
             with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=dtype):
                 out = model(
                     batch_t,
                     **forward_kwargs,
                 )
+            logger.info("LoGeR inference finished in %.1fs", time.monotonic() - t_infer)
 
             if not isinstance(out, dict):
                 raise RuntimeError("LoGeR inference did not return a prediction dictionary")
@@ -181,6 +206,7 @@ class LoGeRBackend(MappingBackend):
                     f"LoGeR returned {n_out} depth maps and {poses.shape[0]} poses for "
                     f"{n_in} input frames; refusing to silently drop frames."
                 )
+            logger.info("LoGeR outputs validated: %d/%d frames have depth and poses", n_out, n_in)
 
             poses, world_points = _reanchor_to_first_camera(poses, world_points)
             _assert_pose_convention(poses)
@@ -193,6 +219,7 @@ class LoGeRBackend(MappingBackend):
             input_h, input_w = images_rgb[0].shape[:2]
             image_size = self._image_size or (input_w, input_h)
             intrinsics = _scale_intrinsics(self._k, image_size, (target_w, target_h))
+            logger.info("LoGeR sequence run complete for %d frames", n_in)
             return MappingSequenceResult(
                 frame_indices=np.asarray(frame_indices, dtype=np.int32),
                 depth_maps=depth.astype(np.float32),
