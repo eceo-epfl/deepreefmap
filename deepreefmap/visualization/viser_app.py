@@ -43,6 +43,12 @@ class ViserLiveApp:
         self._last_cloud_frame: int | None = None
         self._last_cloud_accumulate: bool | None = None
         self._last_cloud_filter_signature: tuple[int, ...] | None = None
+        self._suppress_frame_slider_callback = False
+        self._status_markdown_handle = None
+        self._outputs_markdown_handle = None
+        self._preprocess_progress_slider = None
+        self._mapping_progress_slider = None
+        self._stage_states: dict[str, tuple[str, str]] = {}
         try:
             import viser
 
@@ -58,10 +64,31 @@ class ViserLiveApp:
             self.enabled = True
             self._semantic_color_toggle = self._server.gui.add_checkbox("Semantic cloud colors", False)
             self._point_size_slider = self._server.gui.add_slider("Point size", 0.0001, 0.05, 0.0001, 0.002)
-            self._frame_slider = self._server.gui.add_slider("Frame", 0, 0, 1, 0, disabled=True)
+            # Use a float-valued contiguous index slider. This avoids NaN->int coercion
+            # failures in viser when browser-side slider state momentarily becomes NaN.
+            self._frame_slider = self._server.gui.add_slider("Frame", 0.0, 0.0, 1.0, 0.0, disabled=True)
             self._playing_toggle = self._server.gui.add_checkbox("Playing", False)
             self._fps_slider = self._server.gui.add_slider("FPS", 1.0, 60.0, 0.5, 8.0)
             self._accumulate_toggle = self._server.gui.add_checkbox("Accumulate", True)
+            with self._server.gui.add_folder("Pipeline status"):
+                self._status_markdown_handle = self._server.gui.add_markdown("Stage: idle")
+                self._preprocess_progress_slider = self._server.gui.add_slider(
+                    "Preprocess progress",
+                    0.0,
+                    100.0,
+                    0.1,
+                    0.0,
+                    disabled=True,
+                )
+                self._mapping_progress_slider = self._server.gui.add_slider(
+                    "Mapping progress",
+                    0.0,
+                    100.0,
+                    0.1,
+                    0.0,
+                    disabled=True,
+                )
+                self._outputs_markdown_handle = self._server.gui.add_markdown("Outputs: pending")
             with self._server.gui.add_folder("Semantic legend"):
                 self._add_legend_swatch_block()
                 for class_id in sorted(self._class_colors):
@@ -87,6 +114,8 @@ class ViserLiveApp:
 
             @self._frame_slider.on_update
             def _(_) -> None:
+                if self._suppress_frame_slider_callback:
+                    return
                 self._render_current_state()
 
             @self._accumulate_toggle.on_update
@@ -137,6 +166,8 @@ class ViserLiveApp:
     def _show_frame(self, frame_index: int) -> None:
         frame_data = self._frame_data.get(int(frame_index))
         if frame_data is None:
+            # Explicitly clear stale image context when selected frame has no RGB data.
+            self._latest_stacked_image = None
             return
         self._selected_frame_index = int(frame_index)
         stacked = self._stacked_image_for_frame(int(frame_index))
@@ -171,7 +202,7 @@ class ViserLiveApp:
         # for stacked display.
         target_h, target_w = image_rgb.shape[:2]
         seg_display = self._resize_to_shape(seg_color, (target_h, target_w), interpolation=cv2.INTER_NEAREST)
-        depth_display = self._resize_to_shape(depth_color, (target_h, target_w), interpolation=cv2.INTER_LINEAR)
+        depth_display = self._resize_to_shape(depth_color, (target_h, target_w), interpolation=cv2.INTER_NEAREST)
         return np.concatenate([image_rgb, seg_display, depth_display], axis=0)
 
     def _resize_to_shape(
@@ -225,20 +256,28 @@ class ViserLiveApp:
                 rgb_part = np.concatenate([old_rgb, rgb_part], axis=0)
                 labels_part = np.concatenate([old_labels, labels_part], axis=0)
             self._points_by_frame[frame_index] = (xyz_part, rgb_part, labels_part)
-            if frame_index not in self._frame_order:
-                self._frame_order.append(frame_index)
-        self._frame_order.sort()
         self._accumulated_cache.clear()
         self._update_frame_slider_limits()
         self._render_current_state()
 
+    def _safe_slider_value(self) -> float | None:
+        if self._frame_slider is None:
+            return None
+        try:
+            slider_value = float(self._frame_slider.value)
+        except (TypeError, ValueError):
+            return None
+        if not np.isfinite(slider_value):
+            return None
+        return slider_value
+
     def _current_frame(self) -> int | None:
         if not self._frame_order:
             return None
-        if self._frame_slider is not None:
-            current_value = int(self._frame_slider.value)
-            if current_value in self._frame_order:
-                return current_value
+        slider_value = self._safe_slider_value()
+        if slider_value is not None:
+            pos = int(np.clip(np.floor(slider_value + 0.5), 0, max(len(self._frame_order) - 1, 0)))
+            return int(self._frame_order[pos])
         if self._selected_frame_index in self._frame_order:
             return int(self._selected_frame_index)
         return int(self._frame_order[0])
@@ -248,22 +287,42 @@ class ViserLiveApp:
             return
         self._selected_frame_index = int(frame_index)
         if self._frame_slider is not None:
-            self._frame_slider.value = int(frame_index)
+            pos = self._frame_order.index(int(frame_index))
+            self._suppress_frame_slider_callback = True
+            try:
+                self._frame_slider.value = float(pos)
+            finally:
+                self._suppress_frame_slider_callback = False
         else:
             self._render_current_state()
+        self._render_current_state()
 
     def _update_frame_slider_limits(self) -> None:
         if self._frame_slider is None or not self._frame_order:
             return
         self._frame_slider.disabled = False
-        self._frame_slider.min = int(self._frame_order[0])
-        self._frame_slider.max = int(self._frame_order[-1])
-        current_value = int(self._frame_slider.value)
+        self._frame_slider.min = 0.0
+        self._frame_slider.max = float(max(len(self._frame_order) - 1, 0))
+        slider_value = self._safe_slider_value()
         if self._selected_frame_index is None:
-            self._frame_slider.value = int(self._frame_order[-1])
+            self._suppress_frame_slider_callback = True
+            try:
+                self._frame_slider.value = float(max(len(self._frame_order) - 1, 0))
+            finally:
+                self._suppress_frame_slider_callback = False
             return
-        if current_value not in self._frame_order:
-            self._frame_slider.value = int(self._selected_frame_index)
+        if int(self._selected_frame_index) in self._frame_order:
+            self._suppress_frame_slider_callback = True
+            try:
+                self._frame_slider.value = float(self._frame_order.index(int(self._selected_frame_index)))
+            finally:
+                self._suppress_frame_slider_callback = False
+        elif slider_value is None:
+            self._suppress_frame_slider_callback = True
+            try:
+                self._frame_slider.value = float(max(len(self._frame_order) - 1, 0))
+            finally:
+                self._suppress_frame_slider_callback = False
 
     def _render_current_state(self) -> None:
         current_frame = self._current_frame()
@@ -276,8 +335,12 @@ class ViserLiveApp:
         self._set_cloud_state(current_frame, accumulate, force_points=True)
 
     def _set_frustum_visibility(self, current_frame: int, accumulate: bool) -> None:
+        if current_frame not in self._frame_order:
+            return
+        current_pos = self._frame_order.index(int(current_frame))
         for frame_index, handle in self._frustums_by_frame.items():
-            handle.visible = frame_index <= current_frame if accumulate else frame_index == current_frame
+            frame_pos = self._frame_order.index(frame_index) if frame_index in self._frame_order else -1
+            handle.visible = frame_pos <= current_pos if accumulate else frame_index == current_frame
 
     def _set_cloud_state(self, current_frame: int, accumulate: bool, force_points: bool = False) -> None:
         xyz, rgb, labels = self._cloud_for_frame(current_frame, accumulate)
@@ -363,7 +426,13 @@ class ViserLiveApp:
             )
         if current_frame in self._accumulated_cache:
             return self._accumulated_cache[current_frame]
-        frame_ids = [idx for idx in self._frame_order if idx <= current_frame and idx in self._points_by_frame]
+        if current_frame not in self._frame_order:
+            empty_xyz = np.zeros((0, 3), dtype=np.float32)
+            empty_rgb = np.zeros((0, 3), dtype=np.uint8)
+            empty_labels = np.zeros((0,), dtype=np.int32)
+            return empty_xyz, empty_rgb, empty_labels
+        current_pos = self._frame_order.index(int(current_frame))
+        frame_ids = [idx for idx in self._frame_order[: current_pos + 1] if idx in self._points_by_frame]
         if not frame_ids:
             empty_xyz = np.zeros((0, 3), dtype=np.float32)
             empty_rgb = np.zeros((0, 3), dtype=np.uint8)
@@ -375,6 +444,73 @@ class ViserLiveApp:
         labels = np.concatenate([self._points_by_frame[idx][2] for idx in frame_ids], axis=0)
         self._accumulated_cache[current_frame] = (xyz, rgb, labels)
         return self._accumulated_cache[current_frame]
+
+    def _set_markdown_content(self, handle: object, content: str) -> None:
+        if handle is None:
+            return
+        with suppress(Exception):
+            handle.content = content
+            return
+        with suppress(Exception):
+            handle.value = content
+
+    def _refresh_status_markdown(self) -> None:
+        if not self._stage_states:
+            self._set_markdown_content(self._status_markdown_handle, "Stage: idle")
+            return
+        rows = []
+        for stage_name in ("startup", "preprocess", "mapping", "outputs"):
+            state = self._stage_states.get(stage_name)
+            if state is None:
+                continue
+            status, message = state
+            rows.append(f"- **{stage_name}**: {status} - {message}")
+        self._set_markdown_content(self._status_markdown_handle, "### Pipeline\n" + "\n".join(rows))
+
+    def start_run(self, run_label: str, output_dir: str) -> None:
+        self._stage_states.clear()
+        self._set_markdown_content(self._outputs_markdown_handle, f"Outputs: pending (`{output_dir}`)")
+        if self._preprocess_progress_slider is not None:
+            self._preprocess_progress_slider.value = 0.0
+        if self._mapping_progress_slider is not None:
+            self._mapping_progress_slider.value = 0.0
+        self.set_stage("startup", "running", f"{run_label}")
+
+    def set_stage(self, stage: str, status: str, message: str | None = None) -> None:
+        detail = "" if message is None else str(message)
+        self._stage_states[str(stage)] = (str(status), detail)
+        self._refresh_status_markdown()
+
+    def update_progress(
+        self,
+        stage: str,
+        current: int,
+        total: int | None = None,
+        message: str | None = None,
+        frame_index: int | None = None,
+    ) -> None:
+        pct = 0.0
+        if total is not None and total > 0:
+            pct = float(np.clip((float(current) / float(total)) * 100.0, 0.0, 100.0))
+        detail = "" if message is None else str(message)
+        if frame_index is not None:
+            detail = f"{detail} (frame={int(frame_index)})".strip()
+        self.set_stage(stage, "running", detail)
+        if stage == "preprocess" and self._preprocess_progress_slider is not None:
+            self._preprocess_progress_slider.value = pct
+        if stage == "mapping" and self._mapping_progress_slider is not None:
+            self._mapping_progress_slider.value = pct
+
+    def mark_outputs_ready(self, output_dir: str, output_files: list[str]) -> None:
+        rendered = "\n".join(f"- `{f}`" for f in output_files)
+        self.set_stage("outputs", "completed", "Outputs ready")
+        self._set_markdown_content(
+            self._outputs_markdown_handle,
+            f"### Outputs\nDirectory: `{output_dir}`\n{rendered}",
+        )
+
+    def fail_run(self, stage: str, error_message: str) -> None:
+        self.set_stage(stage, "failed", error_message)
 
     def _colorize_labels(self, labels: np.ndarray) -> np.ndarray:
         out = np.full((labels.shape[0], 3), 128, dtype=np.uint8)
