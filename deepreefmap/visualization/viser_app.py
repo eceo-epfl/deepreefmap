@@ -42,7 +42,7 @@ class ViserLiveApp:
         h, w = image_rgb.shape[:2]
         scene.add_camera_frustum(
             name=f"/camera/{frame_index:06d}",
-            wxyz=(1.0, 0.0, 0.0, 0.0),
+            wxyz=_rotation_to_wxyz(pose_w_c[:3, :3]),
             position=tuple(pose_w_c[:3, 3].tolist()),
             fov=float(np.deg2rad(60.0)),
             aspect=float(w) / float(max(h, 1)),
@@ -102,3 +102,37 @@ class ViserLiveApp:
                 time.sleep(1.0)
         except KeyboardInterrupt:
             pass
+
+
+def _rotation_to_wxyz(rotation: np.ndarray) -> tuple[float, float, float, float]:
+    r = np.asarray(rotation, dtype=np.float64)
+    trace = float(np.trace(r))
+    if trace > 0.0:
+        s = np.sqrt(trace + 1.0) * 2.0
+        w = 0.25 * s
+        x = (r[2, 1] - r[1, 2]) / s
+        y = (r[0, 2] - r[2, 0]) / s
+        z = (r[1, 0] - r[0, 1]) / s
+    else:
+        idx = int(np.argmax(np.diag(r)))
+        if idx == 0:
+            s = np.sqrt(1.0 + r[0, 0] - r[1, 1] - r[2, 2]) * 2.0
+            w = (r[2, 1] - r[1, 2]) / s
+            x = 0.25 * s
+            y = (r[0, 1] + r[1, 0]) / s
+            z = (r[0, 2] + r[2, 0]) / s
+        elif idx == 1:
+            s = np.sqrt(1.0 + r[1, 1] - r[0, 0] - r[2, 2]) * 2.0
+            w = (r[0, 2] - r[2, 0]) / s
+            x = (r[0, 1] + r[1, 0]) / s
+            y = 0.25 * s
+            z = (r[1, 2] + r[2, 1]) / s
+        else:
+            s = np.sqrt(1.0 + r[2, 2] - r[0, 0] - r[1, 1]) * 2.0
+            w = (r[1, 0] - r[0, 1]) / s
+            x = (r[0, 2] + r[2, 0]) / s
+            y = (r[1, 2] + r[2, 1]) / s
+            z = 0.25 * s
+    quat = np.array([w, x, y, z], dtype=np.float64)
+    quat /= max(np.linalg.norm(quat), 1e-8)
+    return tuple(float(v) for v in quat)

@@ -6,8 +6,8 @@ DeepReefMap is a modular framework for semantic 3D mapping of coral reefs from v
 
 - Semantic segmentation from multiple interchangeable model backends.
 - 3D mapping from interchangeable backends (SC-SfMLearner and LoGeR adapters).
-- Streaming reconstruction pipeline over one or more ordered video files.
-- Semantic point-cloud generation, optional TSDF fusion, ortho-projection, transect-based scaling/cropping.
+- Cached frame preparation over one or more ordered video files.
+- Semantic point-cloud generation, optional semantic TSDF fusion, ortho-projection, transect-based scaling/cropping.
 - Live `viser` visualization and offline rendering command.
 - COLMAP-based camera calibration endpoint using a `RADIAL` camera model.
 
@@ -61,7 +61,9 @@ When `--mapping loger` is selected, DeepReefMap now fails loudly if:
 - checkpoint state dict cannot be read/loaded
 - LoGeR inference fails or returns unusable depth tensors
 
-This prevents silent fallback to proxy depth when LoGeR is expected.
+This prevents silent fallback to proxy depth when LoGeR is expected. LoGeR runs
+as a sequence backend: frames are first rectified, segmented, and cached, then
+LoGeR processes the real ordered sequence with its own sliding-window memory.
 
 ## Commands
 
@@ -99,15 +101,27 @@ uv run deepreefmap reconstruct \
   --mapping loger \
   --camera-profile gopro_profile \
   --loger-model-path third_party/LoGeR/ckpts/LoGeR/latest.pt \
-  --loger-config-path third_party/LoGeR/ckpts/LoGeR/original_config.yaml \
   --loger-window-size 32 \
   --loger-overlap-size 3 \
+  --taxonomy configs/taxonomy_coralscapes.yaml \
   --out out_loger \
   --viser
 ```
 
+## Reconstruction outputs
+
+Each reconstruction writes cached and derived artifacts for inspection:
+
+- `frames/`, `labels/`, `masks/`: rectified RGB frames, semantic labels, and taxonomy-derived keep masks.
+- `mapping_outputs.npz`: depth, poses, intrinsics, confidence, and frame indices.
+- `semantic_reference_cloud.npz`: filtered semantic reference point cloud.
+- `tsdf_cloud.npz` and `semantic_tsdf_cloud.npz`: geometry and semantics when `--tsdf` is enabled.
+- `ortho.png` and `ortho.npz`: aggregated ortho grid used for reporting.
+- `benthic_cover.json`: taxonomy-aware class counts and fractions.
+- `run_manifest.json`: single canonical run manifest (schema, summary fields, frame paths, mapping refs).
+
 ## Notes
 
 - If multiple videos are passed, they are processed in order as a single sequence.
-- The ortho output is saved as both `ortho.png` and `ortho.npz`.
-- 4-panel video rendering is an offline post-step by design.
+- The scientific cover path uses the aggregated semantic grid, not the live preview point raster.
+- Offline rendering reads `run_manifest.json` and writes a lightweight QC video when cached artifacts are available.

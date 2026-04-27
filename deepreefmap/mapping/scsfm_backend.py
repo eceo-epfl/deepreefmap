@@ -89,4 +89,5 @@ class SCSfMBackend(MappingBackend):
             depth=depth,
             pose_w_c=self._pose_w_c.copy(),
             intrinsics=self._k,
+            scale_type="relative",
         )

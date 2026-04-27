@@ -1,8 +1,41 @@
 classes:
-  - {id: 15, name: "transect line", roles: ["transect_line"]}
-  - {id: 8, name: "transect tools", roles: ["transect_tools"]}
-  - {id: 13, name: "background", roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
-  - {id: 9, name: "fish", roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
-  - {id: 7, name: "human", roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 0, name: "unlabeled", roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 1, name: "seagrass", roles: []}
+  - {id: 2, name: "trash", roles: []}
+  - {id: 3, name: "other coral dead", roles: []}
+  - {id: 4, name: "other coral bleached", roles: []}
   - {id: 5, name: "sand", roles: []}
+  - {id: 6, name: "other coral alive", roles: []}
+  - {id: 7, name: "human", roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 8, name: "transect tools", roles: ["transect_tools", "ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 9, name: "fish", roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 10, name: "algae covered substrate", roles: []}
+  - {id: 11, name: "other animal", roles: []}
+  - {id: 12, name: "unknown hard substrate", roles: []}
+  - {id: 13, name: "background", roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 14, name: "dark", roles: ["ignore_in_cover"]}
+  - {id: 15, name: "transect line", roles: ["transect_line"]}
+  - {id: 16, name: "massive/meandering bleached", roles: []}
+  - {id: 17, name: "massive/meandering alive", roles: []}
   - {id: 18, name: "rubble", roles: []}
+  - {id: 19, name: "branching bleached", roles: []}
+  - {id: 20, name: "branching dead", roles: []}
+  - {id: 21, name: "millepora", roles: []}
+  - {id: 22, name: "branching alive", roles: []}
+  - {id: 23, name: "massive/meandering dead", roles: []}
+  - {id: 24, name: "clam", roles: []}
+  - {id: 25, name: "acropora alive", roles: []}
+  - {id: 26, name: "sea cucumber", roles: []}
+  - {id: 27, name: "turbinaria", roles: []}
+  - {id: 28, name: "table acropora alive", roles: []}
+  - {id: 29, name: "sponge", roles: []}
+  - {id: 30, name: "anemone", roles: []}
+  - {id: 31, name: "pocillopora alive", roles: []}
+  - {id: 32, name: "table acropora dead", roles: []}
+  - {id: 33, name: "meandering bleached", roles: []}
+  - {id: 34, name: "stylophora alive", roles: []}
+  - {id: 35, name: "sea urchin", roles: []}
+  - {id: 36, name: "meandering alive", roles: []}
+  - {id: 37, name: "meandering dead", roles: []}
+  - {id: 38, name: "crown of thorn", roles: []}
+  - {id: 39, name: "dead clam", roles: []}

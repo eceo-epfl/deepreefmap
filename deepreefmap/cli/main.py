@@ -48,13 +48,14 @@ def reconstruct(
     mapping: str = typer.Option("scsfm", help="3D mapping backend name."),
     camera_profile: str = typer.Option(..., help="Camera profile name (in camera_profiles)."),
     out: Path = typer.Option(Path("out"), help="Output directory."),
+    begin: Optional[float] = typer.Option(None, help="Start timestamp in the concatenated stream (seconds)."),
+    end: Optional[float] = typer.Option(None, help="End timestamp in the concatenated stream (seconds)."),
     transect_length: Optional[float] = typer.Option(None, help="Transect length in meters."),
     transect_crop_width: Optional[float] = typer.Option(None, help="Crop width around transect in meters."),
-    viser: bool = typer.Option(False, help="Enable live viser visualization."),
-    keep_viser_open: bool = typer.Option(True, help="Keep viser open after reconstruction until Ctrl-C."),
+    taxonomy: Path = typer.Option(Path("configs/taxonomy_coralscapes.yaml"), help="Taxonomy YAML with class roles."),
+    viser: bool = typer.Option(False, help="Enable viser visualization."),
     tsdf: bool = typer.Option(False, help="Enable optional TSDF fusion output."),
-    loger_model_path: Optional[Path] = typer.Option(None, help="Optional LoGeR checkpoint path."),
-    loger_config_path: Optional[Path] = typer.Option(None, help="Optional LoGeR config yaml path."),
+    loger_model_path: Optional[Path] = typer.Option(None, help="LoGeR checkpoint path (defaults to vendored)."),
     loger_window_size: int = typer.Option(32, help="LoGeR window size."),
     loger_overlap_size: int = typer.Option(3, help="LoGeR overlap size."),
 ) -> None:
@@ -71,7 +72,6 @@ def reconstruct(
             "window_size": loger_window_size,
             "overlap_size": loger_overlap_size,
             "model_path": str(loger_model_path) if loger_model_path else None,
-            "config_path": str(loger_config_path) if loger_config_path else None,
         }
     run_reconstruction(
         video_paths=[v.strip() for v in videos.split(",") if v.strip()],
@@ -80,11 +80,14 @@ def reconstruct(
         mapping_name=mapping,
         camera_profile_name=camera_profile,
         output_dir=out,
+        begin_s=begin,
+        end_s=end,
         transect_length=transect_length,
         transect_crop_width=transect_crop_width,
         enable_viser=viser,
         enable_tsdf=tsdf,
         mapping_options=mapping_options,
+        taxonomy_path=taxonomy,
     )
 
 
