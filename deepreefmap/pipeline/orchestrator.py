@@ -224,27 +224,12 @@ def run_reconstruction(
         save_cover_report(output_dir / "benthic_cover.json", cover)
 
         if viewer is not None:
-            for frame in frame_batch.frames:
-                try:
-                    est = mapping_result.estimate_for_index(frame.frame_index)
-                except KeyError:
-                    continue
-                viewer.update_frame(frame.frame_index, frame.image_rgb, frame.labels, est.depth, est.pose_w_c)
-            if len(cloud_for_metrics) > 0:
-                # Keep a light visualization subsample for interactivity, but
-                # retain substantially more points per frame than before.
-                viewer_stride = 1
-                sampled_frame_indices = (
-                    cloud_for_metrics.frame_indices[::viewer_stride]
-                    if cloud_for_metrics.frame_indices is not None
-                    else np.zeros_like(cloud_for_metrics.labels[::viewer_stride], dtype=np.int32)
-                )
-                viewer.add_points(
-                    cloud_for_metrics.xyz[::viewer_stride],
-                    cloud_for_metrics.rgb[::viewer_stride],
-                    cloud_for_metrics.labels[::viewer_stride],
-                    sampled_frame_indices,
-                )
+            viewer.set_data(
+                frame_batch=frame_batch,
+                mapping_result=mapping_result,
+                reference_cloud=reference_cloud,
+                classes_config=classes_config,
+            )
 
         save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
             output_dir=output_dir,

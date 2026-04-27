@@ -125,6 +125,7 @@ Each reconstruction writes cached and derived artifacts for inspection:
 - If multiple videos are passed, they are processed in order as a single sequence.
 - The scientific cover path uses the aggregated semantic grid, not the live preview point raster.
 - Offline rendering reads `run_manifest.json` and writes a lightweight QC video when cached artifacts are available.
-- In live `--viser` mode, click any camera frustum to inspect that frame's RGB, semantic segmentation, and depth panels.
-- Live `--viser` point cloud coloring can be toggled between RGB colors and semantic-class colors.
-- Live `--viser` controls include point-size adjustment, frame scrubbing, and playback (`Playing`, `FPS`, `Accumulate`).
+- In live `--viser` mode (after the run finishes), click any camera frustum to jump the timeline; the panel shows stacked RGB, semantic segmentation, and depth for the selected frame.
+- The 3D view uses a per-frame **live** point cloud (full depth unprojection) plus the **final filtered** semantic cloud; `Accumulate` overlays filtered points from frames at or before the timeline index.
+- Point cloud coloring toggles between RGB and semantic-class colors; the legend toggles hide/show classes in both clouds.
+- Controls: point size, frame scrubber, `Playing` / `FPS`, and `Accumulate`.

@@ -2,11 +2,21 @@ from __future__ import annotations
 
 from contextlib import suppress
 import logging
+import threading
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import numpy as np
 import cv2
+import numpy as np
+
+from deepreefmap.visualization.final_cloud_index import build_final_cloud_index
+from deepreefmap.visualization.live_frame_cloud import LiveFrameCloudCache
+from deepreefmap.visualization.viser_scene import ViserSceneController
+
+if TYPE_CHECKING:
+    from deepreefmap.config.classes import ClassConfig
+    from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, SemanticPointCloud
 
 logger = logging.getLogger(__name__)
 
@@ -14,13 +24,7 @@ _VISER_NAN_GUARD_PATCHED = False
 
 
 def _install_viser_nan_slider_guard() -> None:
-    """Best-effort guard for transient NaN slider updates from the browser.
-
-    Viser can receive intermediate `NaN` values while a numeric field is being
-    edited, and some versions cast those updates directly to `int`, which raises
-    before user callbacks run. We keep behavior stable by dropping only that
-    specific update error and preserving the last valid control value.
-    """
+    """Best-effort guard for transient NaN slider updates from the browser."""
 
     global _VISER_NAN_GUARD_PATCHED
     if _VISER_NAN_GUARD_PATCHED:
@@ -57,6 +61,8 @@ def _install_viser_nan_slider_guard() -> None:
 
 
 class ViserLiveApp:
+    """Live viser server: pipeline status + reconstruction scene (post `set_data`)."""
+
     def __init__(
         self,
         class_colors: dict[int, tuple[int, int, int]] | None = None,
@@ -67,16 +73,13 @@ class ViserLiveApp:
         self._server = None
         self._class_colors = class_colors or {}
         self._class_names = class_names or {}
-        self._frame_data: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
-        self._selected_frame_index: int | None = None
-        self._frame_order: list[int] = []
-        self._frustums_by_frame: dict[int, object] = {}
-        self._points_by_frame: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
-        self._accumulated_cache: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+
+        self._frame_order: tuple[int, ...] = ()
+        self._frame_panel_data: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
         self._stacked_image_cache: dict[int, np.ndarray] = {}
         self._seg_color_cache: dict[int, np.ndarray] = {}
         self._depth_color_cache: dict[int, np.ndarray] = {}
-        self._cloud_handle = None
+
         self._semantic_color_toggle = None
         self._point_size_slider = None
         self._frame_slider = None
@@ -85,20 +88,22 @@ class ViserLiveApp:
         self._accumulate_toggle = None
         self._stacked_handle = None
         self._legend_toggles: dict[int, object] = {}
-        self._enabled_class_ids = np.asarray([], dtype=np.int32)
         self._download_stacked_button = None
         self._latest_stacked_image: np.ndarray | None = None
-        self._last_cloud_frame: int | None = None
-        self._last_cloud_accumulate: bool | None = None
-        self._last_cloud_filter_signature: tuple[int, ...] | None = None
         self._suppress_frame_slider_callback = False
-        self._user_selected_frame = False
-        self._last_slider_pos: int | None = None
         self._status_markdown_handle = None
         self._outputs_markdown_handle = None
         self._preprocess_progress_slider = None
         self._mapping_progress_slider = None
         self._stage_states: dict[str, tuple[str, str]] = {}
+
+        self._scene_controller: ViserSceneController | None = None
+        self._scene_ready = False
+        self._render_lock = threading.Lock()
+        self._dirty = threading.Event()
+        self._stop_render = threading.Event()
+        self._render_thread: threading.Thread | None = None
+
         try:
             import viser
 
@@ -113,10 +118,9 @@ class ViserLiveApp:
             with suppress(Exception):
                 self._server.gui.configure_theme(dark_mode=True, control_width="large")
             self.enabled = True
+
             self._semantic_color_toggle = self._server.gui.add_checkbox("Semantic cloud colors", False)
             self._point_size_slider = self._server.gui.add_slider("Point size", 0.0001, 0.05, 0.0001, 0.002)
-            # Keep this slider float-backed so transient NaN UI states do not trigger
-            # integer casting failures inside viser's websocket handler.
             self._frame_slider = self._server.gui.add_slider("Frame", 0.0, 0.0, 1.0, 0.0, disabled=True)
             self._playing_toggle = self._server.gui.add_checkbox("Playing", False)
             self._fps_slider = self._server.gui.add_slider("FPS", 1.0, 60.0, 0.5, 8.0)
@@ -139,12 +143,11 @@ class ViserLiveApp:
                         order=order_base,
                     )
                     self._legend_toggles[int(class_id)] = toggle
+
                     @toggle.on_update
-                    def _(_, class_id_for_toggle: int = int(class_id)) -> None:
-                        _ = class_id_for_toggle
-                        self._refresh_enabled_class_ids()
-                        self._refresh_cloud_only()
-            self._refresh_enabled_class_ids()
+                    def _(_u, _cid: int = int(class_id)) -> None:  # noqa: ARG001
+                        self._mark_dirty()
+
             self._download_stacked_button = self._server.gui.add_button("Download stacked RGB/Seg/Depth")
             self._download_stacked_button.disabled = True
             with self._server.gui.add_folder("Pipeline status"):
@@ -168,81 +171,197 @@ class ViserLiveApp:
                 self._outputs_markdown_handle = self._server.gui.add_markdown("Outputs: pending")
 
             @self._semantic_color_toggle.on_update
-            def _(_) -> None:
-                self._refresh_cloud_only()
+            def _(_u) -> None:  # noqa: ARG001
+                self._mark_dirty()
 
             @self._point_size_slider.on_update
-            def _(_) -> None:
-                if self._cloud_handle is not None:
-                    self._cloud_handle.point_size = float(self._point_size_slider.value)
+            def _(_u) -> None:  # noqa: ARG001
+                self._mark_dirty()
 
             @self._frame_slider.on_update
-            def _(_) -> None:
+            def _(_u) -> None:  # noqa: ARG001
                 if self._suppress_frame_slider_callback:
                     return
-                slider_pos = self._validate_frame_slider_value(strict=True)
-                if slider_pos is None:
-                    return
-                next_frame = int(self._frame_order[slider_pos])
-                if self._selected_frame_index == next_frame:
-                    return
-                self._user_selected_frame = True
-                self._render_current_state()
+                self._validate_frame_slider_value(strict=True)
+                self._mark_dirty()
 
             @self._accumulate_toggle.on_update
-            def _(_) -> None:
-                self._render_current_state()
+            def _(_u) -> None:  # noqa: ARG001
+                self._mark_dirty()
 
             @self._download_stacked_button.on_click
-            def _(_) -> None:
+            def _(_u) -> None:  # noqa: ARG001
                 self._save_stacked_image()
         except Exception:
             self.enabled = False
 
-    def update_frame(self, frame_index: int, image_rgb: np.ndarray, seg: np.ndarray, depth: np.ndarray, pose_w_c: np.ndarray) -> None:
-        if not self.enabled:
+    def set_data(
+        self,
+        frame_batch: "FrameBatch",
+        mapping_result: "MappingSequenceResult",
+        reference_cloud: "SemanticPointCloud",
+        classes_config: "ClassConfig",
+    ) -> None:
+        """Build scene graph and caches after reconstruction (single bulk load)."""
+        if not self.enabled or self._server is None:
             return
-        frame_index = int(frame_index)
-        self._frame_data[frame_index] = (image_rgb, seg, depth)
-        self._seg_color_cache.pop(frame_index, None)
-        self._depth_color_cache.pop(frame_index, None)
-        self._stacked_image_cache.pop(frame_index, None)
-        if frame_index not in self._frame_order:
-            self._frame_order.append(frame_index)
-            self._frame_order.sort()
-            self._update_frame_slider_limits()
-        scene = self._server.scene
 
-        h, w = image_rgb.shape[:2]
-        frustum_handle = scene.add_camera_frustum(
-            name=f"/camera/{frame_index:06d}",
-            wxyz=_rotation_to_wxyz(pose_w_c[:3, :3]),
-            position=tuple(pose_w_c[:3, 3].tolist()),
-            fov=float(np.deg2rad(60.0)),
-            aspect=float(w) / float(max(h, 1)),
-            scale=0.04,
-            color=(0.6, 0.6, 0.6),
+        frame_order = tuple(int(x) for x in frame_batch.frame_indices)
+        self._frame_order = frame_order
+        self._frame_panel_data.clear()
+        for frame in frame_batch.frames:
+            try:
+                est = mapping_result.estimate_for_index(int(frame.frame_index))
+            except KeyError:
+                continue
+            self._frame_panel_data[int(frame.frame_index)] = (
+                frame.image_rgb,
+                frame.labels,
+                np.asarray(est.depth, dtype=np.float32),
+            )
+        self._stacked_image_cache.clear()
+        self._seg_color_cache.clear()
+        self._depth_color_cache.clear()
+
+        final_index = build_final_cloud_index(
+            reference_cloud,
+            list(frame_order),
+            classes_config.id_to_color,
         )
-        self._frustums_by_frame[frame_index] = frustum_handle
-        if hasattr(frustum_handle, "on_click"):
-            @frustum_handle.on_click
-            def _(_, selected_frame_index: int = frame_index) -> None:
-                self._set_current_frame(selected_frame_index, user_initiated=True)
+        live_cache = LiveFrameCloudCache(frame_batch, mapping_result, frame_order)
 
-        if self._selected_frame_index is None or not self._user_selected_frame:
-            self._set_current_frame(int(self._frame_order[-1]), user_initiated=False)
+        k = np.asarray(mapping_result.intrinsics, dtype=np.float64)
+        fy = float(max(k[1, 1], 1e-6))
+        frustum_specs: list[tuple[int, np.ndarray, int, int, float]] = []
+        for fid in frame_order:
+            try:
+                est = mapping_result.estimate_for_index(int(fid))
+            except KeyError:
+                continue
+            frame = next((f for f in frame_batch.frames if int(f.frame_index) == int(fid)), None)
+            if frame is None:
+                continue
+            h, w = frame.image_rgb.shape[:2]
+            fov_y = float(2.0 * np.arctan(h / (2.0 * fy)))
+            frustum_specs.append((int(fid), np.asarray(est.pose_w_c, dtype=np.float64), w, h, fov_y))
+
+        with self._render_lock:
+            if self._scene_controller is None:
+                self._scene_controller = ViserSceneController(self._server.scene)
+            else:
+                self._scene_controller.clear_dynamic_nodes()
+
+            ps = 0.002 if self._point_size_slider is None else float(self._point_size_slider.value)
+            self._scene_controller.build(
+                final_index,
+                live_cache,
+                classes_config.id_to_color,
+                frustum_specs,
+                initial_point_size=ps,
+            )
+            self._wire_frustum_clicks()
+            self._update_frame_slider_limits()
+            self._suppress_frame_slider_callback = True
+            try:
+                if self._frame_slider is not None and frame_order:
+                    self._frame_slider.value = float(max(len(frame_order) - 1, 0))
+            finally:
+                self._suppress_frame_slider_callback = False
+            self._scene_ready = True
+
+        if self._download_stacked_button is not None:
+            self._download_stacked_button.disabled = False
+        self._mark_dirty()
+
+        if self._render_thread is None or not self._render_thread.is_alive():
+            self._stop_render.clear()
+            self._render_thread = threading.Thread(target=self._render_loop, name="viser-render", daemon=True)
+            self._render_thread.start()
+
+    def _wire_frustum_clicks(self) -> None:
+        if self._scene_controller is None:
             return
-        self._render_current_state()
+        for fid, hnd in self._scene_controller.iter_frustum_handles():
+            if not hasattr(hnd, "on_click"):
+                continue
+            fi = int(fid)
 
-    def _show_frame(self, frame_index: int) -> None:
-        frame_data = self._frame_data.get(int(frame_index))
-        if frame_data is None:
-            # Explicitly clear stale image context when selected frame has no RGB data.
+            @hnd.on_click
+            def _on_click(_e, frame_index: int = fi) -> None:  # type: ignore[no-untyped-def]
+                self._select_frame_by_source_index(frame_index)
+
+    def _select_frame_by_source_index(self, frame_index: int) -> None:
+        if int(frame_index) not in self._frame_order:
+            return
+        pos = self._frame_order.index(int(frame_index))
+        if self._frame_slider is not None:
+            self._suppress_frame_slider_callback = True
+            try:
+                self._frame_slider.value = float(int(pos))
+            finally:
+                self._suppress_frame_slider_callback = False
+        self._mark_dirty()
+
+    def _mark_dirty(self) -> None:
+        self._dirty.set()
+
+    def _render_loop(self) -> None:
+        while not self._stop_render.is_set():
+            if self._playing_toggle is not None and bool(self._playing_toggle.value) and self._scene_ready:
+                if self._frame_slider is not None and self._frame_order:
+                    max_pos = max(len(self._frame_order) - 1, 0)
+                    pos = self._normalize_slider_position(self._frame_slider.value, max_pos)
+                    next_pos = (int(pos) + 1) % len(self._frame_order)
+                    self._suppress_frame_slider_callback = True
+                    try:
+                        self._frame_slider.value = float(int(next_pos))
+                    finally:
+                        self._suppress_frame_slider_callback = False
+                self._dirty.set()
+                fps = 8.0 if self._fps_slider is None else max(1.0, float(self._fps_slider.value))
+                time.sleep(1.0 / fps)
+            else:
+                self._dirty.wait(timeout=0.05)
+
+            if not self._dirty.is_set():
+                continue
+            self._dirty.clear()
+            self._apply_state_once()
+
+    def _apply_state_once(self) -> None:
+        if not self._scene_ready or self._scene_controller is None:
+            return
+        with self._render_lock:
+            t = self._safe_slider_value()
+            if t is None:
+                t = 0
+            accumulate = bool(self._accumulate_toggle is not None and self._accumulate_toggle.value)
+            semantic = bool(self._semantic_color_toggle is not None and self._semantic_color_toggle.value)
+            enabled = self._enabled_class_set()
+            ps = 0.002 if self._point_size_slider is None else float(self._point_size_slider.value)
+            self._scene_controller.apply_state(
+                timeline_t=int(t),
+                accumulate=accumulate,
+                enabled_classes=enabled,
+                semantic_colors=semantic,
+                point_size=ps,
+            )
+            self._refresh_image_panel_for_timeline(int(t))
+
+    def _enabled_class_set(self) -> frozenset[int]:
+        if not self._legend_toggles:
+            return frozenset()
+        return frozenset(int(cid) for cid, toggle in self._legend_toggles.items() if bool(toggle.value))
+
+    def _refresh_image_panel_for_timeline(self, slider_pos: int) -> None:
+        if not self._frame_order or slider_pos < 0 or slider_pos >= len(self._frame_order):
             self._latest_stacked_image = None
+            if self._stacked_handle is not None:
+                self._stacked_handle.image = np.zeros((3, 3, 3), dtype=np.uint8)
             self._sync_download_button_state()
             return
-        self._selected_frame_index = int(frame_index)
-        stacked = self._stacked_image_for_frame(int(frame_index))
+        fid = int(self._frame_order[slider_pos])
+        stacked = self._stacked_image_for_frame(fid)
         self._latest_stacked_image = stacked
         self._sync_download_button_state()
         if self._stacked_handle is not None:
@@ -252,7 +371,10 @@ class ViserLiveApp:
         cached = self._stacked_image_cache.get(int(frame_index))
         if cached is not None:
             return cached
-        image_rgb, seg, depth = self._frame_data[int(frame_index)]
+        payload = self._frame_panel_data.get(int(frame_index))
+        if payload is None:
+            return np.zeros((3, 3, 3), dtype=np.uint8)
+        image_rgb, seg, depth = payload
         seg_color = self._seg_color_cache.get(int(frame_index))
         if seg_color is None:
             seg_color = self._colorize_seg(seg)
@@ -266,8 +388,6 @@ class ViserLiveApp:
         return stacked
 
     def _compose_stacked(self, image_rgb: np.ndarray, seg_color: np.ndarray, depth_color: np.ndarray) -> np.ndarray:
-        # Mapping depth may be lower resolution than RGB/segmentation; unify panel sizes
-        # for stacked display.
         target_h, target_w = image_rgb.shape[:2]
         seg_display = self._resize_to_shape(seg_color, (target_h, target_w), interpolation=cv2.INTER_NEAREST)
         depth_display = self._resize_to_shape(depth_color, (target_h, target_w), interpolation=cv2.INTER_NEAREST)
@@ -306,51 +426,6 @@ class ViserLiveApp:
             out[s == int(class_id)] = np.asarray(rgb, dtype=np.uint8)
         return out
 
-    def add_points(
-        self,
-        xyz: np.ndarray,
-        rgb: np.ndarray,
-        labels: np.ndarray,
-        frame_indices: np.ndarray,
-    ) -> None:
-        if not self.enabled:
-            return
-        if xyz.size == 0:
-            return
-        xyz_f32 = np.asarray(xyz, dtype=np.float32).reshape(-1, 3)
-        rgb_u8 = np.asarray(rgb, dtype=np.uint8).reshape(-1, 3)
-        labels_i32 = np.asarray(labels, dtype=np.int32).reshape(-1)
-        frame_indices_raw = np.asarray(frame_indices).reshape(-1)
-        if not (len(xyz_f32) == len(rgb_u8) == len(labels_i32) == len(frame_indices_raw)):
-            return
-        finite_points = np.isfinite(xyz_f32).all(axis=1)
-        finite_frames = np.isfinite(frame_indices_raw.astype(np.float64, copy=False))
-        valid = finite_points & finite_frames
-        if not np.any(valid):
-            return
-        xyz_f32 = xyz_f32[valid]
-        rgb_u8 = rgb_u8[valid]
-        labels_i32 = labels_i32[valid]
-        frame_indices_i32 = frame_indices_raw[valid].astype(np.int32, copy=False)
-        unique_frames = np.unique(frame_indices_i32)
-        for frame_index in unique_frames.tolist():
-            mask = frame_indices_i32 == int(frame_index)
-            xyz_part = xyz_f32[mask]
-            rgb_part = rgb_u8[mask]
-            labels_part = labels_i32[mask]
-            if frame_index in self._points_by_frame:
-                old_xyz, old_rgb, old_labels = self._points_by_frame[frame_index]
-                xyz_part = np.concatenate([old_xyz, xyz_part], axis=0)
-                rgb_part = np.concatenate([old_rgb, rgb_part], axis=0)
-                labels_part = np.concatenate([old_labels, labels_part], axis=0)
-            self._points_by_frame[frame_index] = (xyz_part, rgb_part, labels_part)
-        self._accumulated_cache.clear()
-        self._update_frame_slider_limits()
-        if self._frame_order and (self._selected_frame_index is None or not self._user_selected_frame):
-            self._set_current_frame(int(self._frame_order[-1]), user_initiated=False)
-            return
-        self._render_current_state()
-
     def _normalize_slider_position(self, raw_value: object, max_pos: int) -> int:
         try:
             slider_value = float(raw_value)
@@ -374,195 +449,28 @@ class ViserLiveApp:
         if slider_pos is None:
             return None
         if strict and self._frame_slider is not None:
-            # Write the normalized integer back for consistent UI state.
             self._suppress_frame_slider_callback = True
             try:
                 self._frame_slider.value = float(int(slider_pos))
             finally:
                 self._suppress_frame_slider_callback = False
-        self._last_slider_pos = int(slider_pos)
         return slider_pos
-
-    def _current_frame(self) -> int | None:
-        if not self._frame_order:
-            return None
-        slider_pos = self._validate_frame_slider_value(strict=True)
-        if slider_pos is not None:
-            return int(self._frame_order[slider_pos])
-        if self._selected_frame_index in self._frame_order:
-            return int(self._selected_frame_index)
-        return int(self._frame_order[0])
-
-    def _sync_download_button_state(self) -> None:
-        if self._download_stacked_button is None:
-            return
-        self._download_stacked_button.disabled = self._latest_stacked_image is None
-
-    def _set_current_frame(self, frame_index: int, user_initiated: bool = False) -> None:
-        if frame_index not in self._frame_order:
-            return
-        if user_initiated:
-            self._user_selected_frame = True
-        self._selected_frame_index = int(frame_index)
-        if self._frame_slider is not None:
-            pos = self._frame_order.index(int(frame_index))
-            self._suppress_frame_slider_callback = True
-            try:
-                self._frame_slider.value = float(int(pos))
-            finally:
-                self._suppress_frame_slider_callback = False
-        else:
-            self._render_current_state()
-        self._render_current_state()
 
     def _update_frame_slider_limits(self) -> None:
         if self._frame_slider is None or not self._frame_order:
+            if self._frame_slider is not None:
+                self._frame_slider.disabled = True
             return
         self._frame_slider.disabled = False
         self._frame_slider.min = 0.0
         self._frame_slider.max = float(int(max(len(self._frame_order) - 1, 0)))
         self._frame_slider.step = 1.0
-        slider_value = self._validate_frame_slider_value(strict=True)
-        if self._selected_frame_index is None:
-            self._suppress_frame_slider_callback = True
-            try:
-                self._frame_slider.value = float(int(max(len(self._frame_order) - 1, 0)))
-            finally:
-                self._suppress_frame_slider_callback = False
+        self._validate_frame_slider_value(strict=True)
+
+    def _sync_download_button_state(self) -> None:
+        if self._download_stacked_button is None:
             return
-        if int(self._selected_frame_index) in self._frame_order:
-            self._suppress_frame_slider_callback = True
-            try:
-                self._frame_slider.value = float(int(self._frame_order.index(int(self._selected_frame_index))))
-            finally:
-                self._suppress_frame_slider_callback = False
-        elif slider_value is None:
-            self._suppress_frame_slider_callback = True
-            try:
-                self._frame_slider.value = float(int(max(len(self._frame_order) - 1, 0)))
-            finally:
-                self._suppress_frame_slider_callback = False
-
-    def _render_current_state(self) -> None:
-        current_frame = self._current_frame()
-        if current_frame is None:
-            return
-        self._selected_frame_index = int(current_frame)
-        self._show_frame(current_frame)
-        accumulate = bool(self._accumulate_toggle is not None and self._accumulate_toggle.value)
-        self._set_frustum_visibility(current_frame, accumulate)
-        self._set_cloud_state(current_frame, accumulate, force_points=True)
-
-    def _set_frustum_visibility(self, current_frame: int, accumulate: bool) -> None:
-        if current_frame not in self._frame_order:
-            return
-        current_pos = self._frame_order.index(int(current_frame))
-        for frame_index, handle in self._frustums_by_frame.items():
-            frame_pos = self._frame_order.index(frame_index) if frame_index in self._frame_order else -1
-            handle.visible = frame_pos <= current_pos if accumulate else frame_index == current_frame
-
-    def _set_cloud_state(self, current_frame: int, accumulate: bool, force_points: bool = False) -> None:
-        xyz, rgb, labels = self._cloud_for_frame(current_frame, accumulate)
-        xyz, rgb, labels = self._filter_cloud_by_enabled_classes(xyz, rgb, labels)
-        if xyz.size == 0:
-            if self._cloud_handle is not None:
-                self._cloud_handle.visible = False
-            return
-        use_semantic_colors = bool(self._semantic_color_toggle is not None and self._semantic_color_toggle.value)
-        colors = self._colorize_labels(labels) if use_semantic_colors else rgb
-        point_size = 0.002 if self._point_size_slider is None else float(self._point_size_slider.value)
-        filter_signature = tuple(self._enabled_class_ids.tolist())
-        should_update_points = force_points or (
-            self._last_cloud_frame != int(current_frame)
-            or self._last_cloud_accumulate != bool(accumulate)
-            or self._last_cloud_filter_signature != filter_signature
-        )
-
-        if self._cloud_handle is None:
-            self._cloud_handle = self._server.scene.add_point_cloud(
-                name="/cloud/points",
-                points=xyz,
-                colors=colors,
-                point_size=point_size,
-            )
-            self._last_cloud_frame = int(current_frame)
-            self._last_cloud_accumulate = bool(accumulate)
-            self._last_cloud_filter_signature = filter_signature
-            return
-        self._cloud_handle.visible = True
-        if should_update_points:
-            self._cloud_handle.points = xyz
-        self._cloud_handle.colors = colors
-        self._cloud_handle.point_size = point_size
-        self._last_cloud_frame = int(current_frame)
-        self._last_cloud_accumulate = bool(accumulate)
-        self._last_cloud_filter_signature = filter_signature
-
-    def _refresh_cloud_only(self) -> None:
-        current_frame = self._current_frame()
-        if current_frame is None:
-            return
-        accumulate = bool(self._accumulate_toggle is not None and self._accumulate_toggle.value)
-        self._set_cloud_state(current_frame, accumulate, force_points=False)
-
-    def _refresh_enabled_class_ids(self) -> None:
-        if not self._legend_toggles:
-            self._enabled_class_ids = np.asarray([], dtype=np.int32)
-            return
-        enabled = [class_id for class_id, toggle in self._legend_toggles.items() if bool(toggle.value)]
-        self._enabled_class_ids = np.asarray(sorted(enabled), dtype=np.int32)
-
-    def _filter_cloud_by_enabled_classes(
-        self,
-        xyz: np.ndarray,
-        rgb: np.ndarray,
-        labels: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        if not self._legend_toggles:
-            return xyz, rgb, labels
-        if self._enabled_class_ids.size == 0:
-            empty_xyz = np.zeros((0, 3), dtype=xyz.dtype)
-            empty_rgb = np.zeros((0, 3), dtype=rgb.dtype)
-            empty_labels = np.zeros((0,), dtype=labels.dtype)
-            return empty_xyz, empty_rgb, empty_labels
-        mask = np.isin(labels, self._enabled_class_ids)
-        return xyz[mask], rgb[mask], labels[mask]
-
-    def _cloud_for_frame(self, current_frame: int, accumulate: bool) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        if not self._points_by_frame:
-            empty_xyz = np.zeros((0, 3), dtype=np.float32)
-            empty_rgb = np.zeros((0, 3), dtype=np.uint8)
-            empty_labels = np.zeros((0,), dtype=np.int32)
-            return empty_xyz, empty_rgb, empty_labels
-        if not accumulate:
-            return self._points_by_frame.get(
-                int(current_frame),
-                (
-                    np.zeros((0, 3), dtype=np.float32),
-                    np.zeros((0, 3), dtype=np.uint8),
-                    np.zeros((0,), dtype=np.int32),
-                ),
-            )
-        if current_frame in self._accumulated_cache:
-            return self._accumulated_cache[current_frame]
-        if current_frame not in self._frame_order:
-            empty_xyz = np.zeros((0, 3), dtype=np.float32)
-            empty_rgb = np.zeros((0, 3), dtype=np.uint8)
-            empty_labels = np.zeros((0,), dtype=np.int32)
-            return empty_xyz, empty_rgb, empty_labels
-        current_pos = self._frame_order.index(int(current_frame))
-        frame_ids = [idx for idx in self._frame_order[: current_pos + 1] if idx in self._points_by_frame]
-        if not frame_ids:
-            empty_xyz = np.zeros((0, 3), dtype=np.float32)
-            empty_rgb = np.zeros((0, 3), dtype=np.uint8)
-            empty_labels = np.zeros((0,), dtype=np.int32)
-            self._accumulated_cache[current_frame] = (empty_xyz, empty_rgb, empty_labels)
-            return self._accumulated_cache[current_frame]
-        xyz = np.concatenate([self._points_by_frame[idx][0] for idx in frame_ids], axis=0)
-        rgb = np.concatenate([self._points_by_frame[idx][1] for idx in frame_ids], axis=0)
-        labels = np.concatenate([self._points_by_frame[idx][2] for idx in frame_ids], axis=0)
-        self._accumulated_cache[current_frame] = (xyz, rgb, labels)
-        return self._accumulated_cache[current_frame]
+        self._download_stacked_button.disabled = self._latest_stacked_image is None
 
     def _set_markdown_content(self, handle: object, content: str) -> None:
         if handle is None:
@@ -631,32 +539,22 @@ class ViserLiveApp:
     def fail_run(self, stage: str, error_message: str) -> None:
         self.set_stage(stage, "failed", error_message)
 
-    def _colorize_labels(self, labels: np.ndarray) -> np.ndarray:
-        out = np.full((labels.shape[0], 3), 128, dtype=np.uint8)
-        if not self._class_colors:
-            return out
-        for class_id, rgb in self._class_colors.items():
-            out[labels == int(class_id)] = np.asarray(rgb, dtype=np.uint8)
-        return out
-
     def _save_stacked_image(self) -> None:
         if self._latest_stacked_image is None:
             return
         output_dir = Path.cwd() / "viser_exports"
         output_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d_%H%M%S")
-        frame_id = -1 if self._selected_frame_index is None else int(self._selected_frame_index)
-        output_path = output_dir / f"frame_{frame_id:06d}_rgb_seg_depth_stacked_{stamp}.png"
+        sp = self._safe_slider_value()
+        fid = -1
+        if sp is not None and self._frame_order and 0 <= sp < len(self._frame_order):
+            fid = int(self._frame_order[sp])
+        output_path = output_dir / f"frame_{fid:06d}_rgb_seg_depth_stacked_{stamp}.png"
         bgr = cv2.cvtColor(self._latest_stacked_image, cv2.COLOR_RGB2BGR)
         cv2.imwrite(str(output_path), bgr)
 
     def _legend_checkbox_label(self, class_id: int) -> str:
-        class_name = self._legend_display_name(int(class_id))
-        return class_name
-
-    def _legend_swatch_label(self, class_id: int) -> str:
-        r, g, b = self._class_colors[int(class_id)]
-        return f"RGB({int(r)}, {int(g)}, {int(b)})"
+        return self._legend_display_name(int(class_id))
 
     def _legend_swatch_image(self, class_id: int) -> np.ndarray:
         r, g, b = self._class_colors[int(class_id)]
@@ -674,64 +572,24 @@ class ViserLiveApp:
         return class_name_s
 
     def close(self) -> None:
+        self._stop_render.set()
+        self._dirty.set()
+        if self._render_thread is not None and self._render_thread.is_alive():
+            self._render_thread.join(timeout=1.0)
         if self._server is None:
             return
         with suppress(Exception):
             self._server.stop()
-            # Let viser/websocket background threads finish printing before
-            # Python tears down stdout during interpreter shutdown.
             time.sleep(0.2)
         self.enabled = False
         self._server = None
+        self._scene_ready = False
 
     def wait_forever(self) -> None:
         if not self.enabled:
             return
         try:
             while True:
-                if bool(self._playing_toggle is not None and self._playing_toggle.value):
-                    current = self._current_frame()
-                    if current is not None:
-                        current_pos = self._frame_order.index(current)
-                        next_pos = (current_pos + 1) % len(self._frame_order)
-                        self._set_current_frame(int(self._frame_order[next_pos]))
-                    fps = 8.0 if self._fps_slider is None else max(1.0, float(self._fps_slider.value))
-                    time.sleep(1.0 / fps)
-                else:
-                    time.sleep(0.05)
+                time.sleep(0.2)
         except KeyboardInterrupt:
             pass
-
-
-def _rotation_to_wxyz(rotation: np.ndarray) -> tuple[float, float, float, float]:
-    r = np.asarray(rotation, dtype=np.float64)
-    trace = float(np.trace(r))
-    if trace > 0.0:
-        s = np.sqrt(trace + 1.0) * 2.0
-        w = 0.25 * s
-        x = (r[2, 1] - r[1, 2]) / s
-        y = (r[0, 2] - r[2, 0]) / s
-        z = (r[1, 0] - r[0, 1]) / s
-    else:
-        idx = int(np.argmax(np.diag(r)))
-        if idx == 0:
-            s = np.sqrt(1.0 + r[0, 0] - r[1, 1] - r[2, 2]) * 2.0
-            w = (r[2, 1] - r[1, 2]) / s
-            x = 0.25 * s
-            y = (r[0, 1] + r[1, 0]) / s
-            z = (r[0, 2] + r[2, 0]) / s
-        elif idx == 1:
-            s = np.sqrt(1.0 + r[1, 1] - r[0, 0] - r[2, 2]) * 2.0
-            w = (r[0, 2] - r[2, 0]) / s
-            x = (r[0, 1] + r[1, 0]) / s
-            y = 0.25 * s
-            z = (r[1, 2] + r[2, 1]) / s
-        else:
-            s = np.sqrt(1.0 + r[2, 2] - r[0, 0] - r[1, 1]) * 2.0
-            w = (r[1, 0] - r[0, 1]) / s
-            x = (r[0, 2] + r[2, 0]) / s
-            y = (r[1, 2] + r[2, 1]) / s
-            z = 0.25 * s
-    quat = np.array([w, x, y, z], dtype=np.float64)
-    quat /= max(np.linalg.norm(quat), 1e-8)
-    return tuple(float(v) for v in quat)
