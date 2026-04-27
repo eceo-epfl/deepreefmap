@@ -84,7 +84,7 @@ uv run deepreefmap verify-calibration my_new_camera
 uv run deepreefmap reconstruct \
   --videos /path/to/new_video.mp4 \
   --fps 10 \
-  --segmentation segformer-b5 \
+  --segmentation segformer-b2 \
   --mapping loger \
   --camera-profile my_new_camera \
   --out out_new_camera \
@@ -97,9 +97,9 @@ LoGeR-focused run:
 uv run deepreefmap reconstruct \
   --videos GX010001.MP4,GX020001.MP4 \
   --fps 10 \
-  --segmentation coralscapes-vit-b-dpt \
+  --segmentation segformer-b2 \
   --mapping loger \
-  --camera-profile gopro_profile \
+  --camera-profile gopro_hero_10 \
   --loger-model-path third_party/LoGeR/ckpts/LoGeR/latest.pt \
   --loger-window-size 32 \
   --loger-overlap-size 3 \
