@@ -1,11 +1,59 @@
 from __future__ import annotations
 
 from contextlib import suppress
+import logging
 import time
 from pathlib import Path
 
 import numpy as np
 import cv2
+
+logger = logging.getLogger(__name__)
+
+_VISER_NAN_GUARD_PATCHED = False
+
+
+def _install_viser_nan_slider_guard() -> None:
+    """Best-effort guard for transient NaN slider updates from the browser.
+
+    Viser can receive intermediate `NaN` values while a numeric field is being
+    edited, and some versions cast those updates directly to `int`, which raises
+    before user callbacks run. We keep behavior stable by dropping only that
+    specific update error and preserving the last valid control value.
+    """
+
+    global _VISER_NAN_GUARD_PATCHED
+    if _VISER_NAN_GUARD_PATCHED:
+        return
+    try:
+        from viser import _gui_api
+    except Exception:
+        return
+
+    gui_api_cls = getattr(_gui_api, "GuiApi", None)
+    if gui_api_cls is None:
+        gui_api_cls = getattr(_gui_api, "_GuiApi", None)
+    if gui_api_cls is None:
+        return
+
+    original = getattr(gui_api_cls, "_handle_gui_updates", None)
+    if original is None or getattr(original, "_deepreefmap_nan_guard", False):
+        _VISER_NAN_GUARD_PATCHED = True
+        return
+
+    async def _guarded_handle_gui_updates(self, client_id, message):  # type: ignore[no-untyped-def]
+        try:
+            return await original(self, client_id, message)
+        except ValueError as exc:
+            text = str(exc)
+            if "cannot convert float NaN to integer" in text:
+                logger.debug("Dropped transient NaN slider GUI update from client_id=%s", client_id)
+                return
+            raise
+
+    setattr(_guarded_handle_gui_updates, "_deepreefmap_nan_guard", True)
+    gui_api_cls._handle_gui_updates = _guarded_handle_gui_updates
+    _VISER_NAN_GUARD_PATCHED = True
 
 
 class ViserLiveApp:
@@ -45,6 +93,7 @@ class ViserLiveApp:
         self._last_cloud_filter_signature: tuple[int, ...] | None = None
         self._suppress_frame_slider_callback = False
         self._user_selected_frame = False
+        self._last_slider_pos: int | None = None
         self._status_markdown_handle = None
         self._outputs_markdown_handle = None
         self._preprocess_progress_slider = None
@@ -53,6 +102,7 @@ class ViserLiveApp:
         try:
             import viser
 
+            _install_viser_nan_slider_guard()
             self._server = viser.ViserServer(port=port)
             with suppress(Exception):
                 self._server.gui.configure_theme(
@@ -76,10 +126,8 @@ class ViserLiveApp:
                 label="RGB / Segmentation / Depth (stacked)",
             )
             with self._server.gui.add_folder("Semantic legend"):
-                self._add_legend_swatch_block()
                 for class_id in sorted(self._class_colors):
-                    class_name = self._legend_display_name(int(class_id))
-                    toggle = self._server.gui.add_checkbox(class_name, True)
+                    toggle = self._server.gui.add_checkbox(self._legend_checkbox_label(int(class_id)), True)
                     self._legend_toggles[int(class_id)] = toggle
                     @toggle.on_update
                     def _(_, class_id_for_toggle: int = int(class_id)) -> None:
@@ -122,7 +170,12 @@ class ViserLiveApp:
             def _(_) -> None:
                 if self._suppress_frame_slider_callback:
                     return
-                self._validate_frame_slider_value(strict=True)
+                slider_pos = self._validate_frame_slider_value(strict=True)
+                if slider_pos is None:
+                    return
+                next_frame = int(self._frame_order[slider_pos])
+                if self._selected_frame_index == next_frame:
+                    return
                 self._user_selected_frame = True
                 self._render_current_state()
 
@@ -282,20 +335,23 @@ class ViserLiveApp:
             return
         self._render_current_state()
 
+    def _normalize_slider_position(self, raw_value: object, max_pos: int) -> int:
+        try:
+            slider_value = float(raw_value)
+        except (TypeError, ValueError):
+            slider_value = float(max_pos)
+        if not np.isfinite(slider_value):
+            slider_value = float(max_pos)
+            logger.debug("Frame slider produced non-finite value; clamped to max index=%d", max_pos)
+        return int(np.clip(np.rint(slider_value), 0, max_pos))
+
     def _safe_slider_value(self) -> int | None:
         if self._frame_slider is None:
             return None
         if not self._frame_order:
             return None
         max_pos = max(len(self._frame_order) - 1, 0)
-        try:
-            slider_value = float(self._frame_slider.value)
-        except (TypeError, ValueError):
-            slider_value = float(max_pos)
-        if not np.isfinite(slider_value):
-            slider_value = float(max_pos)
-        slider_pos = int(np.clip(np.rint(slider_value), 0, max_pos))
-        return slider_pos
+        return self._normalize_slider_position(self._frame_slider.value, max_pos)
 
     def _validate_frame_slider_value(self, strict: bool = False) -> int | None:
         slider_pos = self._safe_slider_value()
@@ -308,6 +364,7 @@ class ViserLiveApp:
                 self._frame_slider.value = float(int(slider_pos))
             finally:
                 self._suppress_frame_slider_callback = False
+        self._last_slider_pos = int(slider_pos)
         return slider_pos
 
     def _current_frame(self) -> int | None:
@@ -577,21 +634,10 @@ class ViserLiveApp:
         bgr = cv2.cvtColor(self._latest_stacked_image, cv2.COLOR_RGB2BGR)
         cv2.imwrite(str(output_path), bgr)
 
-    def _add_legend_swatch_block(self) -> None:
-        if not self._class_colors:
-            return
-        for class_id in sorted(self._class_colors):
-            class_name = self._legend_display_name(int(class_id))
-            r, g, b = self._class_colors[int(class_id)]
-            swatch = np.zeros((10, 30, 3), dtype=np.uint8)
-            swatch[:, :] = np.asarray([int(r), int(g), int(b)], dtype=np.uint8)
-            try:
-                self._server.gui.add_image(swatch, label=f"{class_name} [{int(class_id)}]")
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Failed to render legend swatch for class_id={int(class_id)} "
-                    f"class_name={class_name!r} color=({int(r)},{int(g)},{int(b)})"
-                ) from exc
+    def _legend_checkbox_label(self, class_id: int) -> str:
+        class_name = self._legend_display_name(int(class_id))
+        r, g, b = self._class_colors[int(class_id)]
+        return f"{class_name} | RGB({int(r)}, {int(g)}, {int(b)})"
 
     def _legend_display_name(self, class_id: int) -> str:
         class_name = self._class_names.get(int(class_id), f"Class {int(class_id)}")
