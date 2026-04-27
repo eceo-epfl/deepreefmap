@@ -125,3 +125,5 @@ Each reconstruction writes cached and derived artifacts for inspection:
 - If multiple videos are passed, they are processed in order as a single sequence.
 - The scientific cover path uses the aggregated semantic grid, not the live preview point raster.
 - Offline rendering reads `run_manifest.json` and writes a lightweight QC video when cached artifacts are available.
+- In live `--viser` mode, click any camera frustum to inspect that frame's RGB, semantic segmentation, and depth panels.
+- Live `--viser` point cloud coloring can be toggled between RGB colors and semantic-class colors.

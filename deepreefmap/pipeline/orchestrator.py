@@ -195,7 +195,11 @@ def run_reconstruction(
                 continue
             viewer.update_frame(frame.frame_index, frame.image_rgb, frame.labels, est.depth, est.pose_w_c)
         if len(cloud_for_metrics) > 0:
-            viewer.add_points(cloud_for_metrics.xyz[::16], cloud_for_metrics.rgb[::16])
+            viewer.add_points(
+                cloud_for_metrics.xyz[::16],
+                cloud_for_metrics.rgb[::16],
+                cloud_for_metrics.labels[::16],
+            )
 
     save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
         output_dir=output_dir,

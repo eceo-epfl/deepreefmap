@@ -12,8 +12,13 @@ class ViserLiveApp:
         self.enabled = False
         self._server = None
         self._class_colors = class_colors or {}
+        self._frame_data: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+        self._selected_frame_index: int | None = None
         self._pts_xyz: list[np.ndarray] = []
         self._pts_rgb: list[np.ndarray] = []
+        self._pts_labels: list[np.ndarray] = []
+        self._cloud_handle = None
+        self._semantic_color_toggle = None
         self._rgb_handle = None
         self._seg_handle = None
         self._depth_handle = None
@@ -22,33 +27,52 @@ class ViserLiveApp:
 
             self._server = viser.ViserServer(port=port)
             self.enabled = True
+            self._semantic_color_toggle = self._server.gui.add_checkbox("Semantic cloud colors", False)
+
+            @self._semantic_color_toggle.on_update
+            def _(_) -> None:
+                self._refresh_cloud_handle()
         except Exception:
             self.enabled = False
 
     def update_frame(self, frame_index: int, image_rgb: np.ndarray, seg: np.ndarray, depth: np.ndarray, pose_w_c: np.ndarray) -> None:
         if not self.enabled:
             return
+        self._frame_data[int(frame_index)] = (image_rgb, seg, depth)
         scene = self._server.scene
 
-        if self._rgb_handle is None:
-            self._rgb_handle = self._server.gui.add_image(image_rgb, label="RGB")
-            self._seg_handle = self._server.gui.add_image(self._colorize_seg(seg), label="Segmentation")
-            self._depth_handle = self._server.gui.add_image(self._colorize_depth(depth), label="Depth")
-        else:
-            self._rgb_handle.image = image_rgb
-            self._seg_handle.image = self._colorize_seg(seg)
-            self._depth_handle.image = self._colorize_depth(depth)
-
-        # Keep updates lightweight; camera frustums + point cloud in 3D.
         h, w = image_rgb.shape[:2]
-        scene.add_camera_frustum(
+        frustum_handle = scene.add_camera_frustum(
             name=f"/camera/{frame_index:06d}",
             wxyz=_rotation_to_wxyz(pose_w_c[:3, :3]),
             position=tuple(pose_w_c[:3, 3].tolist()),
             fov=float(np.deg2rad(60.0)),
             aspect=float(w) / float(max(h, 1)),
             scale=0.04,
+            color=(0.6, 0.6, 0.6),
         )
+        if hasattr(frustum_handle, "on_click"):
+            @frustum_handle.on_click
+            def _(_, selected_frame_index: int = int(frame_index)) -> None:
+                self._show_frame(selected_frame_index)
+
+        if self._selected_frame_index is None:
+            self._show_frame(int(frame_index))
+
+    def _show_frame(self, frame_index: int) -> None:
+        frame_data = self._frame_data.get(int(frame_index))
+        if frame_data is None:
+            return
+        image_rgb, seg, depth = frame_data
+        self._selected_frame_index = int(frame_index)
+        if self._rgb_handle is None:
+            self._rgb_handle = self._server.gui.add_image(image_rgb, label="RGB")
+            self._seg_handle = self._server.gui.add_image(self._colorize_seg(seg), label="Segmentation")
+            self._depth_handle = self._server.gui.add_image(self._colorize_depth(depth), label="Depth")
+            return
+        self._rgb_handle.image = image_rgb
+        self._seg_handle.image = self._colorize_seg(seg)
+        self._depth_handle.image = self._colorize_depth(depth)
 
     def _colorize_depth(self, depth: np.ndarray) -> np.ndarray:
         d = np.asarray(depth, dtype=np.float32)
@@ -71,19 +95,41 @@ class ViserLiveApp:
             out[s == int(class_id)] = np.asarray(rgb, dtype=np.uint8)
         return out
 
-    def add_points(self, xyz: np.ndarray, rgb: np.ndarray) -> None:
+    def add_points(self, xyz: np.ndarray, rgb: np.ndarray, labels: np.ndarray) -> None:
         if not self.enabled:
             return
         self._pts_xyz.append(xyz)
         self._pts_rgb.append(rgb)
+        self._pts_labels.append(labels)
+        self._refresh_cloud_handle()
+
+    def _refresh_cloud_handle(self) -> None:
+        if not self._pts_xyz:
+            return
         all_xyz = np.concatenate(self._pts_xyz, axis=0)
         all_rgb = np.concatenate(self._pts_rgb, axis=0)
-        self._server.scene.add_point_cloud(
-            name="/cloud/rgb",
-            points=all_xyz,
-            colors=all_rgb,
-            point_size=0.002,
-        )
+        all_labels = np.concatenate(self._pts_labels, axis=0).astype(np.int32)
+        use_semantic_colors = bool(self._semantic_color_toggle is not None and self._semantic_color_toggle.value)
+        colors = self._colorize_labels(all_labels) if use_semantic_colors else all_rgb
+
+        if self._cloud_handle is None:
+            self._cloud_handle = self._server.scene.add_point_cloud(
+                name="/cloud/points",
+                points=all_xyz,
+                colors=colors,
+                point_size=0.002,
+            )
+            return
+        self._cloud_handle.points = all_xyz
+        self._cloud_handle.colors = colors
+
+    def _colorize_labels(self, labels: np.ndarray) -> np.ndarray:
+        out = np.full((labels.shape[0], 3), 128, dtype=np.uint8)
+        if not self._class_colors:
+            return out
+        for class_id, rgb in self._class_colors.items():
+            out[labels == int(class_id)] = np.asarray(rgb, dtype=np.uint8)
+        return out
 
     def close(self) -> None:
         if self._server is None:
