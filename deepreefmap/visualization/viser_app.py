@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
+import html
 import time
 from pathlib import Path
 
@@ -44,6 +45,7 @@ class ViserLiveApp:
         self._last_cloud_accumulate: bool | None = None
         self._last_cloud_filter_signature: tuple[int, ...] | None = None
         self._suppress_frame_slider_callback = False
+        self._user_selected_frame = False
         self._status_markdown_handle = None
         self._outputs_markdown_handle = None
         self._preprocess_progress_slider = None
@@ -70,6 +72,19 @@ class ViserLiveApp:
             self._playing_toggle = self._server.gui.add_checkbox("Playing", False)
             self._fps_slider = self._server.gui.add_slider("FPS", 1.0, 60.0, 0.5, 8.0)
             self._accumulate_toggle = self._server.gui.add_checkbox("Accumulate", True)
+            with self._server.gui.add_folder("Semantic legend"):
+                self._add_legend_swatch_block()
+                for class_id in sorted(self._class_colors):
+                    class_name = self._class_names.get(int(class_id), f"Class {int(class_id)}")
+                    toggle = self._server.gui.add_checkbox(class_name, True)
+                    self._legend_toggles[int(class_id)] = toggle
+                    @toggle.on_update
+                    def _(_, class_id_for_toggle: int = int(class_id)) -> None:
+                        _ = class_id_for_toggle
+                        self._refresh_enabled_class_ids()
+                        self._refresh_cloud_only()
+            self._refresh_enabled_class_ids()
+            self._download_stacked_button = self._server.gui.add_button("Download stacked RGB/Seg/Depth")
             with self._server.gui.add_folder("Pipeline status"):
                 self._status_markdown_handle = self._server.gui.add_markdown("Stage: idle")
                 self._preprocess_progress_slider = self._server.gui.add_slider(
@@ -89,19 +104,6 @@ class ViserLiveApp:
                     disabled=True,
                 )
                 self._outputs_markdown_handle = self._server.gui.add_markdown("Outputs: pending")
-            with self._server.gui.add_folder("Semantic legend"):
-                self._add_legend_swatch_block()
-                for class_id in sorted(self._class_colors):
-                    class_name = self._class_names.get(int(class_id), f"Class {int(class_id)}")
-                    toggle = self._server.gui.add_checkbox(class_name, True)
-                    self._legend_toggles[int(class_id)] = toggle
-                    @toggle.on_update
-                    def _(_, class_id_for_toggle: int = int(class_id)) -> None:
-                        _ = class_id_for_toggle
-                        self._refresh_enabled_class_ids()
-                        self._refresh_cloud_only()
-            self._refresh_enabled_class_ids()
-            self._download_stacked_button = self._server.gui.add_button("Download stacked RGB/Seg/Depth")
 
             @self._semantic_color_toggle.on_update
             def _(_) -> None:
@@ -116,6 +118,7 @@ class ViserLiveApp:
             def _(_) -> None:
                 if self._suppress_frame_slider_callback:
                     return
+                self._user_selected_frame = True
                 self._render_current_state()
 
             @self._accumulate_toggle.on_update
@@ -156,12 +159,12 @@ class ViserLiveApp:
         if hasattr(frustum_handle, "on_click"):
             @frustum_handle.on_click
             def _(_, selected_frame_index: int = frame_index) -> None:
-                self._set_current_frame(selected_frame_index)
+                self._set_current_frame(selected_frame_index, user_initiated=True)
 
-        if self._selected_frame_index is None:
-            self._set_current_frame(int(self._frame_order[-1]))
-        else:
-            self._render_current_state()
+        if self._selected_frame_index is None or not self._user_selected_frame:
+            self._set_current_frame(int(self._frame_order[-1]), user_initiated=False)
+            return
+        self._render_current_state()
 
     def _show_frame(self, frame_index: int) -> None:
         frame_data = self._frame_data.get(int(frame_index))
@@ -243,13 +246,27 @@ class ViserLiveApp:
             return
         if xyz.size == 0:
             return
-        frame_indices_i32 = np.asarray(frame_indices, dtype=np.int32).reshape(-1)
+        xyz_f32 = np.asarray(xyz, dtype=np.float32).reshape(-1, 3)
+        rgb_u8 = np.asarray(rgb, dtype=np.uint8).reshape(-1, 3)
+        labels_i32 = np.asarray(labels, dtype=np.int32).reshape(-1)
+        frame_indices_raw = np.asarray(frame_indices).reshape(-1)
+        if not (len(xyz_f32) == len(rgb_u8) == len(labels_i32) == len(frame_indices_raw)):
+            return
+        finite_points = np.isfinite(xyz_f32).all(axis=1)
+        finite_frames = np.isfinite(frame_indices_raw.astype(np.float64, copy=False))
+        valid = finite_points & finite_frames
+        if not np.any(valid):
+            return
+        xyz_f32 = xyz_f32[valid]
+        rgb_u8 = rgb_u8[valid]
+        labels_i32 = labels_i32[valid]
+        frame_indices_i32 = frame_indices_raw[valid].astype(np.int32, copy=False)
         unique_frames = np.unique(frame_indices_i32)
         for frame_index in unique_frames.tolist():
             mask = frame_indices_i32 == int(frame_index)
-            xyz_part = xyz[mask]
-            rgb_part = rgb[mask]
-            labels_part = labels[mask].astype(np.int32)
+            xyz_part = xyz_f32[mask]
+            rgb_part = rgb_u8[mask]
+            labels_part = labels_i32[mask]
             if frame_index in self._points_by_frame:
                 old_xyz, old_rgb, old_labels = self._points_by_frame[frame_index]
                 xyz_part = np.concatenate([old_xyz, xyz_part], axis=0)
@@ -258,6 +275,9 @@ class ViserLiveApp:
             self._points_by_frame[frame_index] = (xyz_part, rgb_part, labels_part)
         self._accumulated_cache.clear()
         self._update_frame_slider_limits()
+        if self._frame_order and (self._selected_frame_index is None or not self._user_selected_frame):
+            self._set_current_frame(int(self._frame_order[-1]), user_initiated=False)
+            return
         self._render_current_state()
 
     def _safe_slider_value(self) -> float | None:
@@ -282,9 +302,11 @@ class ViserLiveApp:
             return int(self._selected_frame_index)
         return int(self._frame_order[0])
 
-    def _set_current_frame(self, frame_index: int) -> None:
+    def _set_current_frame(self, frame_index: int, user_initiated: bool = False) -> None:
         if frame_index not in self._frame_order:
             return
+        if user_initiated:
+            self._user_selected_frame = True
         self._selected_frame_index = int(frame_index)
         if self._frame_slider is not None:
             pos = self._frame_order.index(int(frame_index))
@@ -534,20 +556,26 @@ class ViserLiveApp:
     def _add_legend_swatch_block(self) -> None:
         if not self._class_colors:
             return
-        rows: list[str] = []
+        html_rows: list[str] = []
+        fallback_rows: list[str] = []
         for class_id in sorted(self._class_colors):
             class_name = self._class_names.get(int(class_id), f"Class {int(class_id)}")
             r, g, b = self._class_colors[int(class_id)]
-            rows.append(
+            escaped_name = html.escape(class_name)
+            html_rows.append(
                 (
                     f'<div style="display:flex;align-items:center;gap:8px;margin:2px 0;">'
                     f'<span style="display:inline-block;width:11px;height:11px;'
                     f'background:rgb({int(r)},{int(g)},{int(b)});border:1px solid #888;"></span>'
-                    f"<span>{class_name}</span></div>"
+                    f"<span>{escaped_name}</span></div>"
                 )
             )
-        with suppress(Exception):
-            self._server.gui.add_markdown("\n".join(rows))
+            fallback_rows.append(f"- `{int(class_id)}` {class_name} (rgb({int(r)},{int(g)},{int(b)}))")
+        try:
+            self._server.gui.add_markdown("\n".join(html_rows))
+        except Exception:
+            with suppress(Exception):
+                self._server.gui.add_markdown("### Class colors\n" + "\n".join(fallback_rows))
 
     def close(self) -> None:
         if self._server is None:
