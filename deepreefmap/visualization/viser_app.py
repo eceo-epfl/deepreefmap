@@ -126,8 +126,19 @@ class ViserLiveApp:
                 label="RGB / Segmentation / Depth (stacked)",
             )
             with self._server.gui.add_folder("Semantic legend"):
-                for class_id in sorted(self._class_colors):
-                    toggle = self._server.gui.add_checkbox(self._legend_checkbox_label(int(class_id)), True)
+                for index, class_id in enumerate(sorted(self._class_colors)):
+                    class_id_i = int(class_id)
+                    order_base = float(index) * 2.0
+                    self._server.gui.add_image(
+                        self._legend_swatch_image(class_id_i),
+                        label=self._legend_swatch_label(class_id_i),
+                        order=order_base,
+                    )
+                    toggle = self._server.gui.add_checkbox(
+                        self._legend_checkbox_label(class_id_i),
+                        True,
+                        order=order_base + 1.0,
+                    )
                     self._legend_toggles[int(class_id)] = toggle
                     @toggle.on_update
                     def _(_, class_id_for_toggle: int = int(class_id)) -> None:
@@ -636,8 +647,17 @@ class ViserLiveApp:
 
     def _legend_checkbox_label(self, class_id: int) -> str:
         class_name = self._legend_display_name(int(class_id))
+        return class_name
+
+    def _legend_swatch_label(self, class_id: int) -> str:
         r, g, b = self._class_colors[int(class_id)]
-        return f"{class_name} | RGB({int(r)}, {int(g)}, {int(b)})"
+        return f"RGB({int(r)}, {int(g)}, {int(b)})"
+
+    def _legend_swatch_image(self, class_id: int) -> np.ndarray:
+        r, g, b = self._class_colors[int(class_id)]
+        swatch = np.zeros((10, 28, 3), dtype=np.uint8)
+        swatch[:, :] = np.asarray([int(r), int(g), int(b)], dtype=np.uint8)
+        return swatch
 
     def _legend_display_name(self, class_id: int) -> str:
         class_name = self._class_names.get(int(class_id), f"Class {int(class_id)}")
