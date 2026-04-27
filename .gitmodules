@@ -1,0 +1,3 @@
+[submodule "third_party/LoGeR"]
+	path = third_party/LoGeR
+	url = https://github.com/Junyi42/LoGeR
