@@ -120,7 +120,7 @@ class ViserLiveApp:
             def _(_) -> None:
                 if self._suppress_frame_slider_callback:
                     return
-                self._sanitize_frame_slider_value()
+                self._validate_frame_slider_value(strict=True)
                 self._user_selected_frame = True
                 self._render_current_state()
 
@@ -283,37 +283,42 @@ class ViserLiveApp:
     def _safe_slider_value(self) -> int | None:
         if self._frame_slider is None:
             return None
+        if not self._frame_order:
+            return None
         try:
             slider_value = float(self._frame_slider.value)
         except (TypeError, ValueError):
-            return None
+            raise ValueError(f"Frame slider value is not numeric: {self._frame_slider.value!r}") from None
         if not np.isfinite(slider_value):
-            return None
+            raise ValueError(f"Frame slider produced non-finite value: {slider_value!r}")
+        rounded_value = float(np.rint(slider_value))
+        if not np.isclose(slider_value, rounded_value):
+            raise ValueError(f"Frame slider produced non-integer value: {slider_value!r}")
         max_pos = max(len(self._frame_order) - 1, 0)
-        return int(np.clip(np.rint(slider_value), 0, max_pos))
+        slider_pos = int(rounded_value)
+        if slider_pos < 0 or slider_pos > max_pos:
+            raise ValueError(
+                f"Frame slider index out of range: index={slider_pos}, allowed=[0, {max_pos}]"
+            )
+        return slider_pos
 
-    def _sanitize_frame_slider_value(self) -> int | None:
-        if self._frame_slider is None or not self._frame_order:
-            return None
+    def _validate_frame_slider_value(self, strict: bool = False) -> int | None:
         slider_pos = self._safe_slider_value()
         if slider_pos is None:
-            if self._selected_frame_index in self._frame_order:
-                slider_pos = self._frame_order.index(int(self._selected_frame_index))
-            else:
-                slider_pos = 0
-        slider_pos = int(np.clip(slider_pos, 0, max(len(self._frame_order) - 1, 0)))
-        self._suppress_frame_slider_callback = True
-        try:
-            # Keep the UI slider pinned to a finite integer index.
-            self._frame_slider.value = int(slider_pos)
-        finally:
-            self._suppress_frame_slider_callback = False
+            return None
+        if strict and self._frame_slider is not None:
+            # Write the normalized integer back for consistent UI state.
+            self._suppress_frame_slider_callback = True
+            try:
+                self._frame_slider.value = int(slider_pos)
+            finally:
+                self._suppress_frame_slider_callback = False
         return slider_pos
 
     def _current_frame(self) -> int | None:
         if not self._frame_order:
             return None
-        slider_pos = self._sanitize_frame_slider_value()
+        slider_pos = self._validate_frame_slider_value(strict=True)
         if slider_pos is not None:
             return int(self._frame_order[slider_pos])
         if self._selected_frame_index in self._frame_order:
@@ -348,7 +353,7 @@ class ViserLiveApp:
         self._frame_slider.disabled = False
         self._frame_slider.min = 0
         self._frame_slider.max = int(max(len(self._frame_order) - 1, 0))
-        slider_value = self._safe_slider_value()
+        slider_value = self._validate_frame_slider_value(strict=True)
         if self._selected_frame_index is None:
             self._suppress_frame_slider_callback = True
             try:
@@ -584,12 +589,22 @@ class ViserLiveApp:
             r, g, b = self._class_colors[int(class_id)]
             swatch = np.zeros((10, 30, 3), dtype=np.uint8)
             swatch[:, :] = np.asarray([int(r), int(g), int(b)], dtype=np.uint8)
-            with suppress(Exception):
+            try:
                 self._server.gui.add_image(swatch, label=f"{class_name} [{int(class_id)}]")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to render legend swatch for class_id={int(class_id)} "
+                    f"class_name={class_name!r} color=({int(r)},{int(g)},{int(b)})"
+                ) from exc
 
     def _legend_display_name(self, class_id: int) -> str:
         class_name = self._class_names.get(int(class_id), f"Class {int(class_id)}")
-        return " ".join(str(class_name).split())
+        class_name_s = str(class_name)
+        if "\n" in class_name_s or "\r" in class_name_s:
+            raise ValueError(
+                f"Legend class name contains line break for class_id={int(class_id)}: {class_name_s!r}"
+            )
+        return class_name_s
 
     def close(self) -> None:
         if self._server is None:
