@@ -1,0 +1,8 @@
+classes:
+  - {id: 15, name: "transect line", roles: ["transect_line"]}
+  - {id: 8, name: "transect tools", roles: ["transect_tools"]}
+  - {id: 13, name: "background", roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 9, name: "fish", roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 7, name: "human", roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 5, name: "sand", roles: []}
+  - {id: 18, name: "rubble", roles: []}

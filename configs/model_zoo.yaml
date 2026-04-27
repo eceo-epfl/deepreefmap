@@ -1,0 +1,20 @@
+segmentation:
+  coralscapes-vit-l-dpt:
+    predict_resolution: [768, 1376]
+    family: dinov3_dpt
+  coralscapes-vit-b-dpt:
+    predict_resolution: [768, 1376]
+    family: dinov3_dpt
+  segformer-b2:
+    predict_resolution: [1024, 1024]
+    family: segformer
+  segformer-b5:
+    predict_resolution: [1024, 1024]
+    family: segformer
+
+mapping:
+  scsfm:
+    window_size: 3
+  loger:
+    window_size: 32
+    overlap_size: 3
