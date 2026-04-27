@@ -9,6 +9,173 @@ from deepreefmap.config.classes import ClassConfig
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, SemanticPointCloud
 from deepreefmap.pointcloud.unprojection import depth_to_points
 
+_BIAS = np.int64(1 << 20)
+_MASK = np.int64((1 << 21) - 1)
+
+
+def _pack_voxel_key(ix: np.ndarray, iy: np.ndarray, iz: np.ndarray) -> np.ndarray:
+    """Packed int keys where in-range; object array with int or tuple for overflow rows."""
+    xa = ix.astype(np.int64, copy=False) + _BIAS
+    ya = iy.astype(np.int64, copy=False) + _BIAS
+    za = iz.astype(np.int64, copy=False) + _BIAS
+    in_range = (xa >= 0) & (xa <= _MASK) & (ya >= 0) & (ya <= _MASK) & (za >= 0) & (za <= _MASK)
+    n = int(ix.shape[0])
+    out = np.empty(n, dtype=object)
+    if np.any(in_range):
+        xi = xa[in_range].astype(np.uint64)
+        yi = ya[in_range].astype(np.uint64)
+        zi = za[in_range].astype(np.uint64)
+        packed = xi | (yi << np.uint64(21)) | (zi << np.uint64(42))
+        ir = np.flatnonzero(in_range)
+        out[ir] = packed.astype(object)
+    if np.any(~in_range):
+        ir = np.flatnonzero(~in_range)
+        for j in ir:
+            out[int(j)] = (int(ix[j]), int(iy[j]), int(iz[j]))
+    return out
+
+
+class _GrowableArray2D:
+    def __init__(self, cols: int, dtype: np.dtype) -> None:
+        self.cols = int(cols)
+        self.dtype = dtype
+        self._data = np.zeros((512, self.cols), dtype=dtype)
+        self.size = 0
+
+    def _ensure_capacity(self, need: int) -> None:
+        if self.size + need <= len(self._data):
+            return
+        new_len = max(len(self._data) * 2, self.size + need)
+        new_buf = np.zeros((new_len, self.cols), dtype=self.dtype)
+        if self.size:
+            new_buf[: self.size] = self._data[: self.size]
+        self._data = new_buf
+
+    def append_rows(self, rows: np.ndarray) -> None:
+        n = int(rows.shape[0])
+        if n == 0:
+            return
+        self._ensure_capacity(n)
+        self._data[self.size : self.size + n] = rows
+        self.size += n
+
+    def set_row(self, i: int, row: np.ndarray) -> None:
+        self._data[i] = row
+
+    def view(self) -> np.ndarray:
+        return self._data[: self.size]
+
+
+class _GrowableArray1D:
+    def __init__(self, dtype: np.dtype) -> None:
+        self.dtype = dtype
+        self._data = np.zeros(512, dtype=dtype)
+        self.size = 0
+
+    def _ensure_capacity(self, need: int) -> None:
+        if self.size + need <= len(self._data):
+            return
+        new_len = max(len(self._data) * 2, self.size + need)
+        new_buf = np.zeros(new_len, dtype=self.dtype)
+        if self.size:
+            new_buf[: self.size] = self._data[: self.size]
+        self._data = new_buf
+
+    def append(self, values: np.ndarray) -> None:
+        n = int(values.shape[0])
+        if n == 0:
+            return
+        self._ensure_capacity(n)
+        self._data[self.size : self.size + n] = values
+        self.size += n
+
+    def __setitem__(self, i: int, v) -> None:
+        self._data[i] = v
+
+    def view(self) -> np.ndarray:
+        return self._data[: self.size]
+
+
+class NearestCameraVoxelMap:
+    """Winner-takes-all store: one point per voxel cell; closer-to-camera replaces occupant."""
+
+    def __init__(self, radius: float) -> None:
+        if radius <= 0 or not np.isfinite(radius):
+            raise ValueError("radius must be finite and positive")
+        self._radius = float(radius)
+        self._key_to_idx: dict[object, int] = {}
+        self._xyz = _GrowableArray2D(3, np.float32)
+        self._rgb = _GrowableArray2D(3, np.uint8)
+        self._labels = _GrowableArray1D(np.int32)
+        self._frame_indices = _GrowableArray1D(np.int32)
+        self._confidence = _GrowableArray1D(np.float32)
+        self._distance = _GrowableArray1D(np.float32)
+
+    def add_points(
+        self,
+        xyz: np.ndarray,
+        rgb: np.ndarray,
+        labels: np.ndarray,
+        frame_index: int,
+        confidence: np.ndarray,
+        distance: np.ndarray,
+    ) -> None:
+        n = int(xyz.shape[0])
+        if n == 0:
+            return
+        r = self._radius
+        ix = np.floor(xyz[:, 0] / r).astype(np.int64, copy=False)
+        iy = np.floor(xyz[:, 1] / r).astype(np.int64, copy=False)
+        iz = np.floor(xyz[:, 2] / r).astype(np.int64, copy=False)
+        order = np.lexsort((distance, iz, iy, ix))
+        cx, cy, cz, cd = ix[order], iy[order], iz[order], distance[order]
+        same_cell = (np.diff(cx) == 0) & (np.diff(cy) == 0) & (np.diff(cz) == 0)
+        first_in_cell = np.concatenate([[True], ~same_cell])
+        w = order[first_in_cell]
+
+        xyz_w = xyz[w]
+        rgb_w = rgb[w]
+        lab_w = labels[w]
+        conf_w = confidence[w]
+        dist_w = distance[w]
+        keys = _pack_voxel_key(ix[w], iy[w], iz[w])
+
+        fi = np.int32(frame_index)
+        for i in range(int(w.shape[0])):
+            raw = keys[i]
+            key: object = raw if isinstance(raw, tuple) else int(raw)
+            di = float(dist_w[i])
+            existing = self._key_to_idx.get(key)
+            if existing is None:
+                j = self._xyz.size
+                self._key_to_idx[key] = j
+                self._xyz.append_rows(xyz_w[i : i + 1])
+                self._rgb.append_rows(rgb_w[i : i + 1])
+                self._labels.append(lab_w[i : i + 1])
+                self._frame_indices.append(np.array([fi], dtype=np.int32))
+                self._confidence.append(conf_w[i : i + 1])
+                self._distance.append(np.array([di], dtype=np.float32))
+            else:
+                if di < float(self._distance.view()[existing]):
+                    self._xyz.set_row(existing, xyz_w[i])
+                    self._rgb.set_row(existing, rgb_w[i])
+                    self._labels[existing] = lab_w[i]
+                    self._frame_indices[existing] = fi
+                    self._confidence[existing] = conf_w[i]
+                    self._distance[existing] = di
+
+    def to_semantic_cloud(self) -> SemanticPointCloud:
+        if self._xyz.size == 0:
+            return SemanticPointCloud.empty()
+        return SemanticPointCloud(
+            xyz=self._xyz.view().copy(),
+            rgb=self._rgb.view().copy(),
+            labels=self._labels.view().copy(),
+            frame_indices=self._frame_indices.view().copy(),
+            confidence=self._confidence.view().copy(),
+            distance_to_camera=self._distance.view().copy(),
+        )
+
 
 @dataclass(frozen=True)
 class PointFilterConfig:
@@ -18,8 +185,9 @@ class PointFilterConfig:
     min_confidence: float = 1e-5
     depth_edge_threshold: float | None = None
     voxel_size: float | None = 0.003
-    neighborhood_size_factor: float | None = None
-    neighborhood_filter_every_k_frames: int = 30
+    replacement_radius_factor: float = 1.0
+    replacement_radius_estimation_frames: int = 30
+    replacement_radius_override: float | None = None
 
 
 def build_semantic_reference_cloud(
@@ -30,15 +198,19 @@ def build_semantic_reference_cloud(
 ) -> SemanticPointCloud:
     cfg = config or PointFilterConfig()
     ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
-    xyz_parts: list[np.ndarray] = []
-    rgb_parts: list[np.ndarray] = []
-    label_parts: list[np.ndarray] = []
-    frame_parts: list[np.ndarray] = []
-    conf_parts: list[np.ndarray] = []
-    dist_parts: list[np.ndarray] = []
     frame_lookup = {frame.frame_index: frame for frame in frame_batch.frames}
-    active_neighborhood_size = _resolve_neighborhood_size(cfg, mapping.depth_maps)
-    filter_every_k = max(int(cfg.neighborhood_filter_every_k_frames), 0)
+    active_radius = _resolve_replacement_radius(cfg, mapping.depth_maps)
+
+    if active_radius is not None:
+        voxel_map = NearestCameraVoxelMap(active_radius)
+    else:
+        voxel_map = None
+        xyz_parts: list[np.ndarray] = []
+        rgb_parts: list[np.ndarray] = []
+        label_parts: list[np.ndarray] = []
+        frame_parts: list[np.ndarray] = []
+        conf_parts: list[np.ndarray] = []
+        dist_parts: list[np.ndarray] = []
 
     for result_i, frame_index in enumerate(mapping.frame_indices.tolist()):
         frame = frame_lookup.get(int(frame_index))
@@ -76,51 +248,40 @@ def build_semantic_reference_cloud(
         flat_valid = valid.reshape(-1)
         if not flat_valid.any():
             continue
-        xyz_parts.append(xyz[flat_valid])
-        rgb_parts.append(rgb.reshape(-1, 3)[flat_valid].astype(np.uint8))
-        label_parts.append(labels.reshape(-1)[flat_valid].astype(np.int32))
-        frame_parts.append(np.full(int(flat_valid.sum()), int(frame_index), dtype=np.int32))
+        xyz_f = xyz[flat_valid]
+        rgb_f = rgb.reshape(-1, 3)[flat_valid].astype(np.uint8)
+        lab_f = labels.reshape(-1)[flat_valid].astype(np.int32)
+        dist_f = depth.reshape(-1)[flat_valid].astype(np.float32)
         if confidence is not None:
-            conf_parts.append(confidence.reshape(-1)[flat_valid].astype(np.float32))
+            conf_f = confidence.reshape(-1)[flat_valid].astype(np.float32)
         else:
-            conf_parts.append(np.ones(int(flat_valid.sum()), dtype=np.float32))
-        dist_parts.append(depth.reshape(-1)[flat_valid].astype(np.float32))
-        if (
-            active_neighborhood_size is not None
-            and filter_every_k > 0
-            and ((result_i + 1) % filter_every_k == 0)
-        ):
-            partial_cloud = _concat_semantic_parts(
-                xyz_parts=xyz_parts,
-                rgb_parts=rgb_parts,
-                label_parts=label_parts,
-                frame_parts=frame_parts,
-                conf_parts=conf_parts,
-                dist_parts=dist_parts,
-            )
-            partial_cloud = nearest_camera_filter(partial_cloud, active_neighborhood_size)
-            xyz_parts = [partial_cloud.xyz]
-            rgb_parts = [partial_cloud.rgb]
-            label_parts = [partial_cloud.labels]
-            frame_parts = [partial_cloud.frame_indices] if partial_cloud.frame_indices is not None else []
-            conf_parts = [partial_cloud.confidence] if partial_cloud.confidence is not None else []
-            dist_parts = [partial_cloud.distance_to_camera] if partial_cloud.distance_to_camera is not None else []
+            conf_f = np.ones(int(flat_valid.sum()), dtype=np.float32)
 
-    if not xyz_parts:
-        return SemanticPointCloud.empty()
+        if voxel_map is not None:
+            voxel_map.add_points(xyz_f, rgb_f, lab_f, int(frame_index), conf_f, dist_f)
+        else:
+            n = int(xyz_f.shape[0])
+            xyz_parts.append(xyz_f)
+            rgb_parts.append(rgb_f)
+            label_parts.append(lab_f)
+            frame_parts.append(np.full(n, int(frame_index), dtype=np.int32))
+            conf_parts.append(conf_f)
+            dist_parts.append(dist_f)
 
-    cloud = _concat_semantic_parts(
-        xyz_parts=xyz_parts,
-        rgb_parts=rgb_parts,
-        label_parts=label_parts,
-        frame_parts=frame_parts,
-        conf_parts=conf_parts,
-        dist_parts=dist_parts,
-    )
-    # Always run one final thinning pass so points from the last processed frame
-    # are included even when the frame count is not a multiple of K.
-    if active_neighborhood_size is not None:
-        cloud = nearest_camera_filter(cloud, active_neighborhood_size)
+    if voxel_map is not None:
+        cloud = voxel_map.to_semantic_cloud()
+    else:
+        if not xyz_parts:
+            return SemanticPointCloud.empty()
+        cloud = SemanticPointCloud(
+            xyz=np.concatenate(xyz_parts, axis=0),
+            rgb=np.concatenate(rgb_parts, axis=0),
+            labels=np.concatenate(label_parts, axis=0),
+            frame_indices=np.concatenate(frame_parts, axis=0),
+            confidence=np.concatenate(conf_parts, axis=0),
+            distance_to_camera=np.concatenate(dist_parts, axis=0),
+        )
+
     if cfg.voxel_size is None or cfg.voxel_size <= 0:
         return cloud
     return voxel_reduce_semantic_cloud(cloud, cfg.voxel_size)
@@ -200,55 +361,45 @@ def nearest_camera_filter(cloud: SemanticPointCloud, neighborhood_size: float) -
     )
 
 
-def estimate_neighborhood_size_from_depth_maps(
+def estimate_replacement_radius(
     depth_maps: np.ndarray,
+    *,
+    first_k: int,
     min_depth: float = 0.05,
     max_depth: float = 8.0,
 ) -> float | None:
     depth = np.asarray(depth_maps, dtype=np.float32)
     if depth.size == 0:
         return None
-    valid = np.isfinite(depth)
-    valid &= depth >= float(min_depth)
-    valid &= depth <= float(max_depth)
+    k = max(1, int(first_k))
+    sample = depth[:k]
+    valid = np.isfinite(sample)
+    valid &= sample >= float(min_depth)
+    valid &= sample <= float(max_depth)
     if not np.any(valid):
         return None
-    median_depth = float(np.median(depth[valid]))
-    # Heuristic: neighborhood side length scales with scene depth.
-    # Clamp to keep practical defaults for reef mapping densities.
+    median_depth = float(np.median(sample[valid]))
     return float(np.clip(0.005 * median_depth, 0.002, 0.02))
 
 
-def _resolve_neighborhood_size(cfg: PointFilterConfig, depth_maps: np.ndarray) -> float | None:
-    base_size = estimate_neighborhood_size_from_depth_maps(
-        depth_maps=depth_maps,
+def _resolve_replacement_radius(cfg: PointFilterConfig, depth_maps: np.ndarray) -> float | None:
+    if cfg.replacement_radius_override is not None:
+        r = float(cfg.replacement_radius_override)
+        if not np.isfinite(r) or r <= 0:
+            return None
+        return r
+    factor = float(cfg.replacement_radius_factor)
+    if not np.isfinite(factor) or factor <= 0:
+        return None
+    base = estimate_replacement_radius(
+        depth_maps,
+        first_k=cfg.replacement_radius_estimation_frames,
         min_depth=cfg.min_depth,
         max_depth=cfg.max_depth,
     )
-    if base_size is None:
+    if base is None:
         return None
-    factor = 1.0 if cfg.neighborhood_size_factor is None else float(cfg.neighborhood_size_factor)
-    if not np.isfinite(factor) or factor <= 0:
-        return None
-    return float(base_size * factor)
-
-
-def _concat_semantic_parts(
-    xyz_parts: list[np.ndarray],
-    rgb_parts: list[np.ndarray],
-    label_parts: list[np.ndarray],
-    frame_parts: list[np.ndarray],
-    conf_parts: list[np.ndarray],
-    dist_parts: list[np.ndarray],
-) -> SemanticPointCloud:
-    return SemanticPointCloud(
-        xyz=np.concatenate(xyz_parts, axis=0),
-        rgb=np.concatenate(rgb_parts, axis=0),
-        labels=np.concatenate(label_parts, axis=0),
-        frame_indices=np.concatenate(frame_parts, axis=0),
-        confidence=np.concatenate(conf_parts, axis=0),
-        distance_to_camera=np.concatenate(dist_parts, axis=0),
-    )
+    return float(base * factor)
 
 
 def _resize_nearest(image: np.ndarray, size_wh: tuple[int, int]) -> np.ndarray:

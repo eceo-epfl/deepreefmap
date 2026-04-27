@@ -74,13 +74,17 @@ def reconstruct(
     viser: bool = typer.Option(False, help="Enable viser visualization."),
     viser_port: int = typer.Option(8080, help="Port for viser visualization server."),
     tsdf: bool = typer.Option(False, help="Enable optional TSDF fusion output."),
-    neighborhood_size: Optional[float] = typer.Option(
+    replacement_radius_factor: Optional[float] = typer.Option(
         None,
-        help="Multiplier applied to the auto neighborhood size estimated from depth-map statistics (1.0 = default thinning, >1 stronger, <1 weaker).",
+        help="Multiplier on the auto replacement radius from the first K depth maps (1.0 = default, >1 coarser voxels / stronger thinning, <1 finer).",
     ),
-    neighborhood_every_k_frames: int = typer.Option(
+    replacement_radius_estimation_frames: int = typer.Option(
         30,
-        help="Apply nearest-camera neighborhood thinning every K mapping frames during offline point-cloud construction.",
+        help="Number of leading depth maps used to estimate the default replacement radius (median depth heuristic).",
+    ),
+    replacement_radius_override: Optional[float] = typer.Option(
+        None,
+        help="Absolute replacement voxel size in meters (skips auto estimate when set).",
     ),
     loger_model_path: Optional[Path] = typer.Option(None, help="LoGeR checkpoint path (defaults to vendored)."),
     loger_window_size: int = typer.Option(32, help="LoGeR window size."),
@@ -123,8 +127,9 @@ def reconstruct(
         enable_viser=viser,
         viser_port=viser_port,
         enable_tsdf=tsdf,
-        neighborhood_size=neighborhood_size,
-        neighborhood_every_k_frames=neighborhood_every_k_frames,
+        replacement_radius_factor=replacement_radius_factor,
+        replacement_radius_estimation_frames=replacement_radius_estimation_frames,
+        replacement_radius_override=replacement_radius_override,
         mapping_options=mapping_options,
         classes_path=classes,
     )

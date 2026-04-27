@@ -59,8 +59,9 @@ def run_reconstruction(
     enable_viser: bool,
     viser_port: int = 8080,
     enable_tsdf: bool = False,
-    neighborhood_size: float | None = None,
-    neighborhood_every_k_frames: int = 30,
+    replacement_radius_factor: float | None = None,
+    replacement_radius_estimation_frames: int = 30,
+    replacement_radius_override: float | None = None,
     begin_s: float | None = None,
     end_s: float | None = None,
     mapping_options: dict[str, object] | None = None,
@@ -169,8 +170,11 @@ def run_reconstruction(
             mapping_result,
             classes_config,
             PointFilterConfig(
-                neighborhood_size_factor=neighborhood_size,
-                neighborhood_filter_every_k_frames=neighborhood_every_k_frames,
+                replacement_radius_factor=1.0
+                if replacement_radius_factor is None
+                else replacement_radius_factor,
+                replacement_radius_estimation_frames=replacement_radius_estimation_frames,
+                replacement_radius_override=replacement_radius_override,
             ),
         )
         save_semantic_cloud(output_dir / "semantic_reference_cloud.npz", reference_cloud)

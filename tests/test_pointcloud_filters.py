@@ -3,15 +3,15 @@ from pathlib import Path
 import numpy as np
 
 from deepreefmap.config.classes import ClassConfig, SemanticClass
-from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
+from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame, SemanticPointCloud
 from deepreefmap.pointcloud.filters import (
-    estimate_neighborhood_size_from_depth_maps,
     PointFilterConfig,
+    NearestCameraVoxelMap,
     build_semantic_reference_cloud,
+    estimate_replacement_radius,
     nearest_camera_filter,
     voxel_reduce_semantic_cloud,
 )
-from deepreefmap.pipeline.artifacts import SemanticPointCloud
 
 
 def _classes():
@@ -53,6 +53,39 @@ def test_build_semantic_reference_cloud_filters_labels_and_confidence():
     assert cloud.xyz.tolist() == [[0.0, 1.0, 2.0], [9.0, 10.0, 11.0]]
 
 
+def test_voxel_map_replaces_when_new_point_is_closer():
+    m = NearestCameraVoxelMap(1.0)
+    xyz = np.array([[0.0, 0.0, 0.0], [0.4, 0.0, 0.0]], dtype=np.float32)
+    rgb = np.array([[10, 20, 30], [100, 200, 255]], dtype=np.uint8)
+    labels = np.array([1, 2], dtype=np.int32)
+    conf = np.ones(2, dtype=np.float32)
+    dist = np.array([2.0, 1.0], dtype=np.float32)
+    m.add_points(xyz[:1], rgb[:1], labels[:1], 0, conf[:1], dist[:1])
+    m.add_points(xyz[1:], rgb[1:], labels[1:], 1, conf[1:], dist[1:])
+    cloud = m.to_semantic_cloud()
+    assert len(cloud) == 1
+    assert np.allclose(cloud.xyz[0], [0.4, 0.0, 0.0])
+    assert cloud.labels[0] == 2
+    assert cloud.rgb[0].tolist() == [100, 200, 255]
+    assert float(cloud.distance_to_camera[0]) == 1.0
+    assert int(cloud.frame_indices[0]) == 1
+
+
+def test_voxel_map_keeps_existing_when_new_point_is_farther():
+    m = NearestCameraVoxelMap(1.0)
+    xyz = np.array([[0.4, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=np.float32)
+    rgb = np.array([[1, 2, 3], [9, 9, 9]], dtype=np.uint8)
+    labels = np.array([5, 9], dtype=np.int32)
+    conf = np.ones(2, dtype=np.float32)
+    dist = np.array([1.0, 2.0], dtype=np.float32)
+    m.add_points(xyz[:1], rgb[:1], labels[:1], 0, conf[:1], dist[:1])
+    m.add_points(xyz[1:], rgb[1:], labels[1:], 1, conf[1:], dist[1:])
+    cloud = m.to_semantic_cloud()
+    assert len(cloud) == 1
+    assert np.allclose(cloud.xyz[0], [0.4, 0.0, 0.0])
+    assert cloud.labels[0] == 5
+
+
 def test_voxel_reduce_is_deterministic():
     cloud = SemanticPointCloud(
         xyz=np.array([[0.0, 0.0, 0.0], [0.001, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32),
@@ -86,7 +119,7 @@ def test_nearest_camera_filter_keeps_nearest_per_neighborhood():
     assert reduced.labels.tolist() == [2, 3]
 
 
-def test_build_semantic_reference_cloud_applies_nearest_camera_filter():
+def test_build_semantic_reference_cloud_applies_nearest_camera_replacement():
     frame = PreparedFrame(
         frame_index=0,
         image_rgb=np.full((2, 2, 3), 128, dtype=np.uint8),
@@ -117,7 +150,7 @@ def test_build_semantic_reference_cloud_applies_nearest_camera_filter():
         _classes(),
         PointFilterConfig(
             voxel_size=None,
-            neighborhood_size_factor=1.0,
+            replacement_radius_factor=1.0,
             confidence_percentile=None,
             min_confidence=0.0,
         ),
@@ -137,15 +170,33 @@ def test_build_semantic_reference_cloud_applies_nearest_camera_filter():
     )
 
 
-def test_estimate_neighborhood_size_from_depth_maps_uses_depth_statistics():
+def test_estimate_replacement_radius_uses_depth_statistics():
     depth_maps = np.array([[[1.0, 2.0], [3.0, np.nan]]], dtype=np.float32)
-    size = estimate_neighborhood_size_from_depth_maps(depth_maps, min_depth=0.05, max_depth=8.0)
+    size = estimate_replacement_radius(depth_maps, first_k=10, min_depth=0.05, max_depth=8.0)
     assert size is not None
-    # median([1,2,3]) == 2 -> 0.005 * 2 = 0.01 (within clamp range)
     assert np.isclose(size, 0.01)
 
 
-def test_build_semantic_reference_cloud_uses_auto_neighborhood_default():
+def test_estimate_replacement_radius_uses_only_first_k_depth_maps():
+    depth_maps = np.array(
+        [
+            [[2.0]],
+            [[2.0]],
+            [[6.0]],
+            [[6.0]],
+        ],
+        dtype=np.float32,
+    )
+    r2 = estimate_replacement_radius(depth_maps, first_k=2, min_depth=0.05, max_depth=8.0)
+    assert r2 is not None
+    assert np.isclose(r2, 0.01)
+    r4 = estimate_replacement_radius(depth_maps, first_k=4, min_depth=0.05, max_depth=8.0)
+    assert r4 is not None
+    # median([2,2,6,6]) == 4 -> 0.005 * 4 = 0.02
+    assert np.isclose(r4, 0.02)
+
+
+def test_build_semantic_reference_cloud_uses_auto_replacement_radius_default():
     frame = PreparedFrame(
         frame_index=0,
         image_rgb=np.full((2, 2, 3), 128, dtype=np.uint8),
@@ -176,14 +227,11 @@ def test_build_semantic_reference_cloud_uses_auto_neighborhood_default():
         _classes(),
         PointFilterConfig(
             voxel_size=None,
-            neighborhood_size_factor=None,
-            neighborhood_filter_every_k_frames=30,
             confidence_percentile=None,
             min_confidence=0.0,
         ),
     )
 
-    # auto neighborhood at depth=2m -> 0.01m, so first two points collide and one survives
     assert len(cloud) == 3
     assert np.allclose(
         cloud.xyz,
@@ -198,7 +246,7 @@ def test_build_semantic_reference_cloud_uses_auto_neighborhood_default():
     )
 
 
-def test_build_semantic_reference_cloud_applies_factor_and_final_pass():
+def test_build_semantic_reference_cloud_applies_radius_factor():
     frame0 = PreparedFrame(
         frame_index=0,
         image_rgb=np.full((1, 2, 3), 128, dtype=np.uint8),
@@ -252,15 +300,12 @@ def test_build_semantic_reference_cloud_applies_factor_and_final_pass():
         _classes(),
         PointFilterConfig(
             voxel_size=None,
-            neighborhood_size_factor=2.0,
-            neighborhood_filter_every_k_frames=2,
+            replacement_radius_factor=2.0,
             confidence_percentile=None,
             min_confidence=0.0,
         ),
     )
 
-    # base auto size at depth=2m is 0.01; factor 2.0 => 0.02.
-    # Each frame has two points within same neighborhood, so exactly one survives each frame.
     assert len(cloud) == 3
     assert np.allclose(
         cloud.xyz,
