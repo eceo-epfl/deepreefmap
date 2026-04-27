@@ -26,6 +26,8 @@ class ViserLiveApp:
             import viser
 
             self._server = viser.ViserServer(port=port)
+            with suppress(Exception):
+                self._server.gui.configure_theme(dark_mode=True)
             self.enabled = True
             self._semantic_color_toggle = self._server.gui.add_checkbox("Semantic cloud colors", False)
 
