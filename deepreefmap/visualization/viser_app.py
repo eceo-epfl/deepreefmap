@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from deepreefmap.visualization.final_cloud_index import build_final_cloud_index
+from deepreefmap.visualization.final_cloud_index import build_final_cloud_index, median_distance_to_camera
 from deepreefmap.visualization.live_frame_cloud import LiveFrameCloudCache
 from deepreefmap.visualization.viser_scene import ViserSceneController
 
@@ -223,12 +223,18 @@ class ViserLiveApp:
         self._seg_color_cache.clear()
         self._depth_color_cache.clear()
 
+        depth_viz_cap = median_distance_to_camera(reference_cloud)
         final_index = build_final_cloud_index(
             reference_cloud,
             list(frame_order),
             classes_config.id_to_color,
         )
-        live_cache = LiveFrameCloudCache(frame_batch, mapping_result, frame_order)
+        live_cache = LiveFrameCloudCache(
+            frame_batch,
+            mapping_result,
+            frame_order,
+            max_depth_for_viz=depth_viz_cap,
+        )
 
         k = np.asarray(mapping_result.intrinsics, dtype=np.float64)
         fy = float(max(k[1, 1], 1e-6))

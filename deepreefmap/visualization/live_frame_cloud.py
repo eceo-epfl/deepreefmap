@@ -53,11 +53,13 @@ class LiveFrameCloudCache:
         frame_order: tuple[int, ...],
         min_depth: float = _DEFAULT_MIN_DEPTH,
         max_depth: float = _DEFAULT_MAX_DEPTH,
+        max_depth_for_viz: float | None = None,
         lru_size: int = 8,
     ) -> None:
         self._frame_order = frame_order
         self._min_depth = float(min_depth)
         self._max_depth = float(max_depth)
+        self._max_depth_for_viz = None if max_depth_for_viz is None else float(max_depth_for_viz)
         self._lru_size = max(1, int(lru_size))
 
         self._mapping_frame_indices = np.asarray(mapping.frame_indices, dtype=np.int32).reshape(-1)
@@ -111,6 +113,8 @@ class LiveFrameCloudCache:
         keep_d = cv2.resize(keep, (w_d, h_d), interpolation=cv2.INTER_NEAREST) > 0
 
         valid = np.isfinite(depth) & (depth >= self._min_depth) & (depth <= self._max_depth) & keep_d
+        if self._max_depth_for_viz is not None:
+            valid &= depth <= self._max_depth_for_viz
         flat = valid.reshape(-1)
 
         xyz_w = depth_to_points(depth, self._intrinsics, pose_w_c).reshape(-1, 3).astype(np.float32, copy=False)

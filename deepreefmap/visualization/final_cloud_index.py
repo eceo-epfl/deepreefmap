@@ -11,6 +11,19 @@ if TYPE_CHECKING:
     from deepreefmap.pipeline.artifacts import SemanticPointCloud
 
 
+def median_distance_to_camera(cloud: "SemanticPointCloud") -> float | None:
+    """Median of finite positive `distance_to_camera` over the full reference cloud, or None if unavailable."""
+    if cloud.distance_to_camera is None:
+        return None
+    d = np.asarray(cloud.distance_to_camera, dtype=np.float64).reshape(-1)
+    if d.size != len(cloud):
+        return None
+    valid = np.isfinite(d) & (d > 0)
+    if not np.any(valid):
+        return None
+    return float(np.median(d[valid]))
+
+
 @dataclass(frozen=True)
 class FinalCloudIndex:
     """Per-class point arrays sorted by timeline rank, plus prefix counts per slider step."""
@@ -51,6 +64,23 @@ def build_final_cloud_index(
     if cloud.frame_indices is None:
         raise ValueError("reference cloud must have frame_indices for timeline visualization")
     frame_indices = np.asarray(cloud.frame_indices, dtype=np.int32).reshape(-1)
+
+    dist = None
+    if cloud.distance_to_camera is not None:
+        dist = np.asarray(cloud.distance_to_camera, dtype=np.float32).reshape(-1)
+        if dist.shape[0] != xyz.shape[0]:
+            dist = None
+
+    distance_cap = median_distance_to_camera(cloud)
+    if distance_cap is not None and dist is not None:
+        dist_keep = np.isfinite(dist) & (dist <= float(distance_cap))
+    else:
+        dist_keep = np.ones(xyz.shape[0], dtype=bool)
+
+    xyz = xyz[dist_keep]
+    rgb = rgb[dist_keep]
+    labels = labels[dist_keep]
+    frame_indices = frame_indices[dist_keep]
 
     frame_order_t = tuple(int(x) for x in frame_order)
     if not frame_order_t:
