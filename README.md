@@ -127,3 +127,4 @@ Each reconstruction writes cached and derived artifacts for inspection:
 - Offline rendering reads `run_manifest.json` and writes a lightweight QC video when cached artifacts are available.
 - In live `--viser` mode, click any camera frustum to inspect that frame's RGB, semantic segmentation, and depth panels.
 - Live `--viser` point cloud coloring can be toggled between RGB colors and semantic-class colors.
+- Live `--viser` controls include point-size adjustment, frame scrubbing, and playback (`Playing`, `FPS`, `Accumulate`).

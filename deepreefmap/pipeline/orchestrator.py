@@ -186,7 +186,15 @@ def run_reconstruction(
         data={"enable_viser": enable_viser, "constructor": "ViserLiveApp()"},
     )
     # #endregion
-    viewer = ViserLiveApp(class_colors=classes_config.id_to_color, port=viser_port) if enable_viser else None
+    viewer = (
+        ViserLiveApp(
+            class_colors=classes_config.id_to_color,
+            class_names=classes_config.id_to_name,
+            port=viser_port,
+        )
+        if enable_viser
+        else None
+    )
     if viewer is not None:
         for frame in frame_batch.frames:
             try:
@@ -195,10 +203,16 @@ def run_reconstruction(
                 continue
             viewer.update_frame(frame.frame_index, frame.image_rgb, frame.labels, est.depth, est.pose_w_c)
         if len(cloud_for_metrics) > 0:
+            sampled_frame_indices = (
+                cloud_for_metrics.frame_indices[::16]
+                if cloud_for_metrics.frame_indices is not None
+                else np.zeros_like(cloud_for_metrics.labels[::16], dtype=np.int32)
+            )
             viewer.add_points(
                 cloud_for_metrics.xyz[::16],
                 cloud_for_metrics.rgb[::16],
                 cloud_for_metrics.labels[::16],
+                sampled_frame_indices,
             )
 
     save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
