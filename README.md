@@ -25,7 +25,11 @@ uv sync --extra gopro --extra train
 
 ## LoGeR Setup (inside this repo)
 
-LoGeR is wired as a first-class local package via `pyproject.toml`.
+LoGeR upstream (`https://github.com/Junyi42/LoGeR`) ships no `pyproject.toml`
+or `setup.py`, so we vendor it as a git submodule under `third_party/LoGeR`
+and put it on `sys.path` from `deepreefmap.mapping.loger_backend`. The
+`loger` extra installs LoGeR's runtime dependencies (omitting demo-only
+packages like `gradio`/`trimesh`/`evo`).
 
 Initialize the submodule and install the LoGeR extra:
 

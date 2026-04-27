@@ -14,14 +14,28 @@ dependencies = [
   "open3d>=0.18.0",
   "transformers>=4.53.0",
   "huggingface_hub>=0.34.0",
-  "torch>=2.2.0",
-  "torchvision>=0.17.0",
+  # Keep PyTorch on CUDA 12.1 wheels for the workstation's NVIDIA 535 driver
+  # (CUDA 12.2). Newer torch releases may resolve to cu130 and fail CUDA init.
+  "torch==2.4.1",
+  "torchvision==0.19.1",
   "pycolmap>=3.13.0",
   "viser>=0.2.23",
 ]
 
 [project.optional-dependencies]
-loger = ["loger"]
+# LoGeR upstream (https://github.com/Junyi42/LoGeR) is a research repo with no
+# pyproject.toml/setup.py, so we cannot pip-install it. Instead, the LoGeR
+# backend imports it directly from third_party/LoGeR via sys.path. This extra
+# pulls in LoGeR's *runtime* dependencies (omitting demo-only ones like
+# gradio/trimesh/matplotlib/evo). Initialize the submodule with:
+#   git submodule update --init --recursive
+loger = [
+  "safetensors>=0.4.0",
+  "natsort>=8.4.0",
+  "einops>=0.7.0",
+  "roma>=1.5.0",
+  "accelerate>=0.30.0",
+]
 gopro = [
   "py-gpmf-parser>=0.1.1,<0.2.0; sys_platform == 'linux' and platform_machine == 'x86_64'"
 ]
@@ -37,6 +51,3 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["deepreefmap*"]
-
-[tool.uv.sources]
-loger = { path = "third_party/LoGeR", editable = true }
