@@ -17,8 +17,8 @@ class PointFilterConfig:
     confidence_percentile: float | None = 5.0
     min_confidence: float = 1e-5
     depth_edge_threshold: float | None = None
-    stride: int = 4
     voxel_size: float | None = 0.003
+    neighborhood_size: float | None = None
 
 
 def build_semantic_reference_cloud(
@@ -70,11 +70,6 @@ def build_semantic_reference_cloud(
             else:
                 threshold = cfg.min_confidence
             valid &= confidence >= max(float(threshold), cfg.min_confidence)
-        if cfg.stride > 1:
-            stride_mask = np.zeros_like(valid, dtype=bool)
-            stride_mask[:: cfg.stride, :: cfg.stride] = True
-            valid &= stride_mask
-
         flat_valid = valid.reshape(-1)
         if not flat_valid.any():
             continue
@@ -99,6 +94,8 @@ def build_semantic_reference_cloud(
         confidence=np.concatenate(conf_parts, axis=0),
         distance_to_camera=np.concatenate(dist_parts, axis=0),
     )
+    if cfg.neighborhood_size is not None and cfg.neighborhood_size > 0:
+        cloud = nearest_camera_filter(cloud, cfg.neighborhood_size)
     if cfg.voxel_size is None or cfg.voxel_size <= 0:
         return cloud
     return voxel_reduce_semantic_cloud(cloud, cfg.voxel_size)
@@ -139,6 +136,34 @@ def voxel_reduce_semantic_cloud(cloud: SemanticPointCloud, voxel_size: float) ->
             score += distances[group] * voxel_size * 0.01
         selected.append(int(group[int(np.argmin(score))]))
 
+    idx = np.asarray(selected, dtype=np.int64)
+    return SemanticPointCloud(
+        xyz=cloud.xyz[idx],
+        rgb=cloud.rgb[idx],
+        labels=cloud.labels[idx],
+        frame_indices=None if cloud.frame_indices is None else cloud.frame_indices[idx],
+        confidence=None if cloud.confidence is None else cloud.confidence[idx],
+        distance_to_camera=None if cloud.distance_to_camera is None else cloud.distance_to_camera[idx],
+    )
+
+
+def nearest_camera_filter(cloud: SemanticPointCloud, neighborhood_size: float) -> SemanticPointCloud:
+    if len(cloud) == 0 or neighborhood_size <= 0:
+        return cloud
+    if cloud.distance_to_camera is None:
+        return cloud
+    keys = np.floor(cloud.xyz / neighborhood_size).astype(np.int64)
+    order = np.lexsort((keys[:, 2], keys[:, 1], keys[:, 0]))
+    keys_sorted = keys[order]
+    split_points = np.flatnonzero(np.any(np.diff(keys_sorted, axis=0) != 0, axis=1)) + 1
+    groups = np.split(order, split_points)
+    selected: list[int] = []
+    for group in groups:
+        if group.size == 1:
+            selected.append(int(group[0]))
+            continue
+        nearest_idx = int(group[int(np.argmin(cloud.distance_to_camera[group]))])
+        selected.append(nearest_idx)
     idx = np.asarray(selected, dtype=np.int64)
     return SemanticPointCloud(
         xyz=cloud.xyz[idx],

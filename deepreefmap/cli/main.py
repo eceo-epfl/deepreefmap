@@ -74,6 +74,10 @@ def reconstruct(
     viser: bool = typer.Option(False, help="Enable viser visualization."),
     viser_port: int = typer.Option(8080, help="Port for viser visualization server."),
     tsdf: bool = typer.Option(False, help="Enable optional TSDF fusion output."),
+    neighborhood_size: Optional[float] = typer.Option(
+        None,
+        help="3D neighborhood size (meters). Keep only nearest-to-camera point per neighborhood.",
+    ),
     loger_model_path: Optional[Path] = typer.Option(None, help="LoGeR checkpoint path (defaults to vendored)."),
     loger_window_size: int = typer.Option(32, help="LoGeR window size."),
     loger_overlap_size: int = typer.Option(3, help="LoGeR overlap size."),
@@ -115,6 +119,7 @@ def reconstruct(
         enable_viser=viser,
         viser_port=viser_port,
         enable_tsdf=tsdf,
+        neighborhood_size=neighborhood_size,
         mapping_options=mapping_options,
         classes_path=classes,
     )

@@ -59,11 +59,11 @@ def run_reconstruction(
     enable_viser: bool,
     viser_port: int = 8080,
     enable_tsdf: bool = False,
+    neighborhood_size: float | None = None,
     begin_s: float | None = None,
     end_s: float | None = None,
     mapping_options: dict[str, object] | None = None,
     classes_path: Path = DEFAULT_CLASSES_PATH,
-    point_stride: int = 1,
     grid_bins: int = 2000,
     keep_viser_open: bool = True,
 ) -> None:
@@ -167,7 +167,7 @@ def run_reconstruction(
             frame_batch,
             mapping_result,
             classes_config,
-            PointFilterConfig(stride=point_stride),
+            PointFilterConfig(neighborhood_size=neighborhood_size),
         )
         save_semantic_cloud(output_dir / "semantic_reference_cloud.npz", reference_cloud)
 
@@ -240,6 +240,9 @@ def run_reconstruction(
                     cloud_for_metrics.rgb[::viewer_stride],
                     cloud_for_metrics.labels[::viewer_stride],
                     sampled_frame_indices,
+                    None
+                    if cloud_for_metrics.distance_to_camera is None
+                    else cloud_for_metrics.distance_to_camera[::viewer_stride],
                 )
 
         save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
