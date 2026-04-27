@@ -14,6 +14,12 @@ from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR
 app = typer.Typer(help="DeepReefMap command line interface")
 
 
+def _available_profiles() -> list[str]:
+    if not CAMERA_PROFILE_DIR.exists():
+        return []
+    return sorted(p.stem for p in CAMERA_PROFILE_DIR.glob("*.json"))
+
+
 @app.command("list-models")
 def list_models() -> None:
     typer.echo("Segmentation models:")
@@ -26,10 +32,10 @@ def list_models() -> None:
 
 @app.command("list-profiles")
 def list_profiles() -> None:
-    if not CAMERA_PROFILE_DIR.exists():
-        typer.echo("No camera_profiles directory yet.")
+    profiles = _available_profiles()
+    if not profiles:
+        typer.echo("No camera profiles found.")
         return
-    profiles = sorted(p.stem for p in CAMERA_PROFILE_DIR.glob("*.json"))
     for name in profiles:
         typer.echo(name)
 
@@ -45,12 +51,20 @@ def reconstruct(
     transect_length: Optional[float] = typer.Option(None, help="Transect length in meters."),
     transect_crop_width: Optional[float] = typer.Option(None, help="Crop width around transect in meters."),
     viser: bool = typer.Option(False, help="Enable live viser visualization."),
+    keep_viser_open: bool = typer.Option(True, help="Keep viser open after reconstruction until Ctrl-C."),
     tsdf: bool = typer.Option(False, help="Enable optional TSDF fusion output."),
     loger_model_path: Optional[Path] = typer.Option(None, help="Optional LoGeR checkpoint path."),
     loger_config_path: Optional[Path] = typer.Option(None, help="Optional LoGeR config yaml path."),
     loger_window_size: int = typer.Option(32, help="LoGeR window size."),
     loger_overlap_size: int = typer.Option(3, help="LoGeR overlap size."),
 ) -> None:
+    profile_path = CAMERA_PROFILE_DIR / f"{camera_profile}.json"
+    if not profile_path.exists():
+        available = _available_profiles()
+        hint = f"  Available: {', '.join(available)}" if available else "  No profiles found. Run 'deepreefmap calibrate' first."
+        typer.echo(f"Camera profile not found: {profile_path}\n{hint}", err=True)
+        raise typer.Exit(code=1)
+
     mapping_options: dict[str, object] = {}
     if mapping == "loger":
         mapping_options = {

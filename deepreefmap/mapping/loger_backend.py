@@ -4,6 +4,7 @@ from collections import deque
 from pathlib import Path
 import inspect
 import logging
+import sys
 import yaml
 
 import cv2
@@ -12,6 +13,16 @@ import numpy as np
 from deepreefmap.mapping.base import FrameEstimate, MappingBackend
 
 logger = logging.getLogger(__name__)
+
+
+# LoGeR upstream is a research repo with no pyproject.toml/setup.py; we vendor
+# it as a submodule under third_party/LoGeR and put its package directory on
+# sys.path so `import loger.*` resolves. Done at module import time so any
+# helper script (not just the backend) that imports this file gets the fix.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_LOGER_PATH = _REPO_ROOT / "third_party" / "LoGeR"
+if _LOGER_PATH.is_dir() and str(_LOGER_PATH) not in sys.path:
+    sys.path.insert(0, str(_LOGER_PATH))
 
 
 class LoGeRBackend(MappingBackend):
