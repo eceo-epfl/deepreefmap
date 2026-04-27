@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import suppress
-import html
 import time
 from pathlib import Path
 
@@ -66,16 +65,18 @@ class ViserLiveApp:
             self.enabled = True
             self._semantic_color_toggle = self._server.gui.add_checkbox("Semantic cloud colors", False)
             self._point_size_slider = self._server.gui.add_slider("Point size", 0.0001, 0.05, 0.0001, 0.002)
-            # Use a float-valued contiguous index slider. This avoids NaN->int coercion
-            # failures in viser when browser-side slider state momentarily becomes NaN.
-            self._frame_slider = self._server.gui.add_slider("Frame", 0.0, 0.0, 1.0, 0.0, disabled=True)
+            self._frame_slider = self._server.gui.add_slider("Frame", 0, 0, 1, 0, disabled=True)
             self._playing_toggle = self._server.gui.add_checkbox("Playing", False)
             self._fps_slider = self._server.gui.add_slider("FPS", 1.0, 60.0, 0.5, 8.0)
             self._accumulate_toggle = self._server.gui.add_checkbox("Accumulate", True)
+            self._stacked_handle = self._server.gui.add_image(
+                np.zeros((3, 3, 3), dtype=np.uint8),
+                label="RGB / Segmentation / Depth (stacked)",
+            )
             with self._server.gui.add_folder("Semantic legend"):
                 self._add_legend_swatch_block()
                 for class_id in sorted(self._class_colors):
-                    class_name = self._class_names.get(int(class_id), f"Class {int(class_id)}")
+                    class_name = self._legend_display_name(int(class_id))
                     toggle = self._server.gui.add_checkbox(class_name, True)
                     self._legend_toggles[int(class_id)] = toggle
                     @toggle.on_update
@@ -85,6 +86,7 @@ class ViserLiveApp:
                         self._refresh_cloud_only()
             self._refresh_enabled_class_ids()
             self._download_stacked_button = self._server.gui.add_button("Download stacked RGB/Seg/Depth")
+            self._download_stacked_button.disabled = True
             with self._server.gui.add_folder("Pipeline status"):
                 self._status_markdown_handle = self._server.gui.add_markdown("Stage: idle")
                 self._preprocess_progress_slider = self._server.gui.add_slider(
@@ -118,6 +120,7 @@ class ViserLiveApp:
             def _(_) -> None:
                 if self._suppress_frame_slider_callback:
                     return
+                self._sanitize_frame_slider_value()
                 self._user_selected_frame = True
                 self._render_current_state()
 
@@ -171,17 +174,14 @@ class ViserLiveApp:
         if frame_data is None:
             # Explicitly clear stale image context when selected frame has no RGB data.
             self._latest_stacked_image = None
+            self._sync_download_button_state()
             return
         self._selected_frame_index = int(frame_index)
         stacked = self._stacked_image_for_frame(int(frame_index))
         self._latest_stacked_image = stacked
-        if self._stacked_handle is None:
-            self._stacked_handle = self._server.gui.add_image(
-                stacked,
-                label="RGB / Segmentation / Depth (stacked)",
-            )
-            return
-        self._stacked_handle.image = stacked
+        self._sync_download_button_state()
+        if self._stacked_handle is not None:
+            self._stacked_handle.image = stacked
 
     def _stacked_image_for_frame(self, frame_index: int) -> np.ndarray:
         cached = self._stacked_image_cache.get(int(frame_index))
@@ -280,7 +280,7 @@ class ViserLiveApp:
             return
         self._render_current_state()
 
-    def _safe_slider_value(self) -> float | None:
+    def _safe_slider_value(self) -> int | None:
         if self._frame_slider is None:
             return None
         try:
@@ -289,18 +289,41 @@ class ViserLiveApp:
             return None
         if not np.isfinite(slider_value):
             return None
-        return slider_value
+        max_pos = max(len(self._frame_order) - 1, 0)
+        return int(np.clip(np.rint(slider_value), 0, max_pos))
+
+    def _sanitize_frame_slider_value(self) -> int | None:
+        if self._frame_slider is None or not self._frame_order:
+            return None
+        slider_pos = self._safe_slider_value()
+        if slider_pos is None:
+            if self._selected_frame_index in self._frame_order:
+                slider_pos = self._frame_order.index(int(self._selected_frame_index))
+            else:
+                slider_pos = 0
+        slider_pos = int(np.clip(slider_pos, 0, max(len(self._frame_order) - 1, 0)))
+        self._suppress_frame_slider_callback = True
+        try:
+            # Keep the UI slider pinned to a finite integer index.
+            self._frame_slider.value = int(slider_pos)
+        finally:
+            self._suppress_frame_slider_callback = False
+        return slider_pos
 
     def _current_frame(self) -> int | None:
         if not self._frame_order:
             return None
-        slider_value = self._safe_slider_value()
-        if slider_value is not None:
-            pos = int(np.clip(np.floor(slider_value + 0.5), 0, max(len(self._frame_order) - 1, 0)))
-            return int(self._frame_order[pos])
+        slider_pos = self._sanitize_frame_slider_value()
+        if slider_pos is not None:
+            return int(self._frame_order[slider_pos])
         if self._selected_frame_index in self._frame_order:
             return int(self._selected_frame_index)
         return int(self._frame_order[0])
+
+    def _sync_download_button_state(self) -> None:
+        if self._download_stacked_button is None:
+            return
+        self._download_stacked_button.disabled = self._latest_stacked_image is None
 
     def _set_current_frame(self, frame_index: int, user_initiated: bool = False) -> None:
         if frame_index not in self._frame_order:
@@ -312,7 +335,7 @@ class ViserLiveApp:
             pos = self._frame_order.index(int(frame_index))
             self._suppress_frame_slider_callback = True
             try:
-                self._frame_slider.value = float(pos)
+                self._frame_slider.value = int(pos)
             finally:
                 self._suppress_frame_slider_callback = False
         else:
@@ -323,26 +346,26 @@ class ViserLiveApp:
         if self._frame_slider is None or not self._frame_order:
             return
         self._frame_slider.disabled = False
-        self._frame_slider.min = 0.0
-        self._frame_slider.max = float(max(len(self._frame_order) - 1, 0))
+        self._frame_slider.min = 0
+        self._frame_slider.max = int(max(len(self._frame_order) - 1, 0))
         slider_value = self._safe_slider_value()
         if self._selected_frame_index is None:
             self._suppress_frame_slider_callback = True
             try:
-                self._frame_slider.value = float(max(len(self._frame_order) - 1, 0))
+                self._frame_slider.value = int(max(len(self._frame_order) - 1, 0))
             finally:
                 self._suppress_frame_slider_callback = False
             return
         if int(self._selected_frame_index) in self._frame_order:
             self._suppress_frame_slider_callback = True
             try:
-                self._frame_slider.value = float(self._frame_order.index(int(self._selected_frame_index)))
+                self._frame_slider.value = int(self._frame_order.index(int(self._selected_frame_index)))
             finally:
                 self._suppress_frame_slider_callback = False
         elif slider_value is None:
             self._suppress_frame_slider_callback = True
             try:
-                self._frame_slider.value = float(max(len(self._frame_order) - 1, 0))
+                self._frame_slider.value = int(max(len(self._frame_order) - 1, 0))
             finally:
                 self._suppress_frame_slider_callback = False
 
@@ -556,26 +579,17 @@ class ViserLiveApp:
     def _add_legend_swatch_block(self) -> None:
         if not self._class_colors:
             return
-        html_rows: list[str] = []
-        fallback_rows: list[str] = []
         for class_id in sorted(self._class_colors):
-            class_name = self._class_names.get(int(class_id), f"Class {int(class_id)}")
+            class_name = self._legend_display_name(int(class_id))
             r, g, b = self._class_colors[int(class_id)]
-            escaped_name = html.escape(class_name)
-            html_rows.append(
-                (
-                    f'<div style="display:flex;align-items:center;gap:8px;margin:2px 0;">'
-                    f'<span style="display:inline-block;width:11px;height:11px;'
-                    f'background:rgb({int(r)},{int(g)},{int(b)});border:1px solid #888;"></span>'
-                    f"<span>{escaped_name}</span></div>"
-                )
-            )
-            fallback_rows.append(f"- `{int(class_id)}` {class_name} (rgb({int(r)},{int(g)},{int(b)}))")
-        try:
-            self._server.gui.add_markdown("\n".join(html_rows))
-        except Exception:
+            swatch = np.zeros((10, 30, 3), dtype=np.uint8)
+            swatch[:, :] = np.asarray([int(r), int(g), int(b)], dtype=np.uint8)
             with suppress(Exception):
-                self._server.gui.add_markdown("### Class colors\n" + "\n".join(fallback_rows))
+                self._server.gui.add_image(swatch, label=f"{class_name} [{int(class_id)}]")
+
+    def _legend_display_name(self, class_id: int) -> str:
+        class_name = self._class_names.get(int(class_id), f"Class {int(class_id)}")
+        return " ".join(str(class_name).split())
 
     def close(self) -> None:
         if self._server is None:
