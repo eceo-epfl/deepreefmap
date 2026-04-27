@@ -8,7 +8,7 @@ import cv2
 
 
 class ViserLiveApp:
-    def __init__(self) -> None:
+    def __init__(self, port: int = 8080) -> None:
         self.enabled = False
         self._server = None
         self._pts_xyz: list[np.ndarray] = []
@@ -19,7 +19,7 @@ class ViserLiveApp:
         try:
             import viser
 
-            self._server = viser.ViserServer()
+            self._server = viser.ViserServer(port=port)
             self.enabled = True
         except Exception:
             self.enabled = False

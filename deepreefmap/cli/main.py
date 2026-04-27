@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional
 import json
+import time
 
 import typer
 
@@ -12,6 +13,23 @@ from deepreefmap.mapping.registry import list_mapping_backends
 from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR
 
 app = typer.Typer(help="DeepReefMap command line interface")
+
+
+def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict[str, object]) -> None:
+    try:
+        payload = {
+            "sessionId": "fd164a",
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with Path("/Users/jonathan/mit/deepreefmap_v2/.cursor/debug-fd164a.log").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload) + "\n")
+    except Exception:
+        pass
 
 
 def _available_profiles() -> list[str]:
@@ -54,11 +72,21 @@ def reconstruct(
     transect_crop_width: Optional[float] = typer.Option(None, help="Crop width around transect in meters."),
     taxonomy: Path = typer.Option(Path("configs/taxonomy_coralscapes.yaml"), help="Taxonomy YAML with class roles."),
     viser: bool = typer.Option(False, help="Enable viser visualization."),
+    viser_port: int = typer.Option(8080, help="Port for viser visualization server."),
     tsdf: bool = typer.Option(False, help="Enable optional TSDF fusion output."),
     loger_model_path: Optional[Path] = typer.Option(None, help="LoGeR checkpoint path (defaults to vendored)."),
     loger_window_size: int = typer.Option(32, help="LoGeR window size."),
     loger_overlap_size: int = typer.Option(3, help="LoGeR overlap size."),
 ) -> None:
+    # #region agent log
+    _debug_log(
+        run_id="pre-fix-1",
+        hypothesis_id="H1",
+        location="deepreefmap/cli/main.py:reconstruct",
+        message="CLI reconstruct args for viser",
+        data={"viser": viser, "has_viser_port_option": False},
+    )
+    # #endregion
     profile_path = CAMERA_PROFILE_DIR / f"{camera_profile}.json"
     if not profile_path.exists():
         available = _available_profiles()
@@ -85,6 +113,7 @@ def reconstruct(
         transect_length=transect_length,
         transect_crop_width=transect_crop_width,
         enable_viser=viser,
+        viser_port=viser_port,
         enable_tsdf=tsdf,
         mapping_options=mapping_options,
         taxonomy_path=taxonomy,

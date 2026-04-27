@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
+import json
 
 import cv2
 import numpy as np
@@ -27,6 +28,23 @@ from deepreefmap.visualization.viser_app import ViserLiveApp
 logger = logging.getLogger(__name__)
 
 
+def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict[str, object]) -> None:
+    try:
+        payload = {
+            "sessionId": "fd164a",
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with Path("/Users/jonathan/mit/deepreefmap_v2/.cursor/debug-fd164a.log").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload) + "\n")
+    except Exception:
+        pass
+
+
 def run_reconstruction(
     video_paths: list[str],
     fps: int,
@@ -37,6 +55,7 @@ def run_reconstruction(
     transect_length: float | None,
     transect_crop_width: float | None,
     enable_viser: bool,
+    viser_port: int = 8080,
     enable_tsdf: bool = False,
     begin_s: float | None = None,
     end_s: float | None = None,
@@ -149,7 +168,16 @@ def run_reconstruction(
     cover = compute_benthic_cover(grid.labels, taxonomy=taxonomy, counts=grid.counts)
     save_cover_report(output_dir / "benthic_cover.json", cover)
 
-    viewer = ViserLiveApp() if enable_viser else None
+    # #region agent log
+    _debug_log(
+        run_id="pre-fix-1",
+        hypothesis_id="H2",
+        location="deepreefmap/pipeline/orchestrator.py:run_reconstruction",
+        message="Viewer creation branch and constructor args",
+        data={"enable_viser": enable_viser, "constructor": "ViserLiveApp()"},
+    )
+    # #endregion
+    viewer = ViserLiveApp(port=viser_port) if enable_viser else None
     if viewer is not None:
         for frame in frame_batch.frames:
             try:
