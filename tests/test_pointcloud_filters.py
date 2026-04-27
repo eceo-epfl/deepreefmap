@@ -117,7 +117,7 @@ def test_build_semantic_reference_cloud_applies_nearest_camera_filter():
         _classes(),
         PointFilterConfig(
             voxel_size=None,
-            neighborhood_size=0.01,
+            neighborhood_size_factor=1.0,
             confidence_percentile=None,
             min_confidence=0.0,
         ),
@@ -176,7 +176,7 @@ def test_build_semantic_reference_cloud_uses_auto_neighborhood_default():
         _classes(),
         PointFilterConfig(
             voxel_size=None,
-            neighborhood_size=None,
+            neighborhood_size_factor=None,
             neighborhood_filter_every_k_frames=30,
             confidence_percentile=None,
             min_confidence=0.0,
@@ -192,6 +192,83 @@ def test_build_semantic_reference_cloud_uses_auto_neighborhood_default():
                 [0.000, 0.0, 0.0],
                 [0.020, 0.0, 0.0],
                 [0.030, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        ),
+    )
+
+
+def test_build_semantic_reference_cloud_applies_factor_and_final_pass():
+    frame0 = PreparedFrame(
+        frame_index=0,
+        image_rgb=np.full((1, 2, 3), 128, dtype=np.uint8),
+        labels=np.array([[1, 1]], dtype=np.int32),
+        keep_mask=np.array([[255, 255]], dtype=np.uint8),
+    )
+    frame1 = PreparedFrame(
+        frame_index=1,
+        image_rgb=np.full((1, 2, 3), 128, dtype=np.uint8),
+        labels=np.array([[1, 1]], dtype=np.int32),
+        keep_mask=np.array([[255, 255]], dtype=np.uint8),
+    )
+    frame2 = PreparedFrame(
+        frame_index=2,
+        image_rgb=np.full((1, 2, 3), 128, dtype=np.uint8),
+        labels=np.array([[1, 1]], dtype=np.int32),
+        keep_mask=np.array([[255, 255]], dtype=np.uint8),
+    )
+    mapping = MappingSequenceResult(
+        frame_indices=np.array([0, 1, 2], dtype=np.int32),
+        depth_maps=np.array(
+            [
+                [[2.0, 2.0]],
+                [[2.0, 2.0]],
+                [[2.0, 2.0]],
+            ],
+            dtype=np.float32,
+        ),
+        poses_w_c=np.repeat(np.eye(4, dtype=np.float32)[None], 3, axis=0),
+        intrinsics=np.eye(3, dtype=np.float32),
+        world_points=np.array(
+            [
+                [[[0.000, 0.0, 0.0], [0.004, 0.0, 0.0]]],
+                [[[0.050, 0.0, 0.0], [0.054, 0.0, 0.0]]],
+                [[[0.100, 0.0, 0.0], [0.104, 0.0, 0.0]]],
+            ],
+            dtype=np.float32,
+        ),
+        confidence=np.ones((3, 1, 2), dtype=np.float32),
+    )
+    batch = FrameBatch(
+        frames=(frame0, frame1, frame2),
+        intrinsics=np.eye(3, dtype=np.float32),
+        image_size=(2, 1),
+        clip_counts=(3,),
+    )
+
+    cloud = build_semantic_reference_cloud(
+        batch,
+        mapping,
+        _classes(),
+        PointFilterConfig(
+            voxel_size=None,
+            neighborhood_size_factor=2.0,
+            neighborhood_filter_every_k_frames=2,
+            confidence_percentile=None,
+            min_confidence=0.0,
+        ),
+    )
+
+    # base auto size at depth=2m is 0.01; factor 2.0 => 0.02.
+    # Each frame has two points within same neighborhood, so exactly one survives each frame.
+    assert len(cloud) == 3
+    assert np.allclose(
+        cloud.xyz,
+        np.array(
+            [
+                [0.000, 0.0, 0.0],
+                [0.050, 0.0, 0.0],
+                [0.100, 0.0, 0.0],
             ],
             dtype=np.float32,
         ),

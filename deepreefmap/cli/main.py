@@ -76,7 +76,7 @@ def reconstruct(
     tsdf: bool = typer.Option(False, help="Enable optional TSDF fusion output."),
     neighborhood_size: Optional[float] = typer.Option(
         None,
-        help="3D neighborhood size in meters. Defaults to an auto value estimated from depth-map statistics.",
+        help="Multiplier applied to the auto neighborhood size estimated from depth-map statistics (1.0 = default thinning, >1 stronger, <1 weaker).",
     ),
     neighborhood_every_k_frames: int = typer.Option(
         30,

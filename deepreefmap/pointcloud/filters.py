@@ -18,7 +18,7 @@ class PointFilterConfig:
     min_confidence: float = 1e-5
     depth_edge_threshold: float | None = None
     voxel_size: float | None = 0.003
-    neighborhood_size: float | None = None
+    neighborhood_size_factor: float | None = None
     neighborhood_filter_every_k_frames: int = 30
 
 
@@ -117,6 +117,8 @@ def build_semantic_reference_cloud(
         conf_parts=conf_parts,
         dist_parts=dist_parts,
     )
+    # Always run one final thinning pass so points from the last processed frame
+    # are included even when the frame count is not a multiple of K.
     if active_neighborhood_size is not None:
         cloud = nearest_camera_filter(cloud, active_neighborhood_size)
     if cfg.voxel_size is None or cfg.voxel_size <= 0:
@@ -218,13 +220,17 @@ def estimate_neighborhood_size_from_depth_maps(
 
 
 def _resolve_neighborhood_size(cfg: PointFilterConfig, depth_maps: np.ndarray) -> float | None:
-    if cfg.neighborhood_size is not None and cfg.neighborhood_size > 0:
-        return float(cfg.neighborhood_size)
-    return estimate_neighborhood_size_from_depth_maps(
+    base_size = estimate_neighborhood_size_from_depth_maps(
         depth_maps=depth_maps,
         min_depth=cfg.min_depth,
         max_depth=cfg.max_depth,
     )
+    if base_size is None:
+        return None
+    factor = 1.0 if cfg.neighborhood_size_factor is None else float(cfg.neighborhood_size_factor)
+    if not np.isfinite(factor) or factor <= 0:
+        return None
+    return float(base_size * factor)
 
 
 def _concat_semantic_parts(

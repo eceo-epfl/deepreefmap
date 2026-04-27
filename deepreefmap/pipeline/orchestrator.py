@@ -169,7 +169,7 @@ def run_reconstruction(
             mapping_result,
             classes_config,
             PointFilterConfig(
-                neighborhood_size=neighborhood_size,
+                neighborhood_size_factor=neighborhood_size,
                 neighborhood_filter_every_k_frames=neighborhood_every_k_frames,
             ),
         )
