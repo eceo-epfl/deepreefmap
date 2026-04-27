@@ -5,6 +5,7 @@ import numpy as np
 from deepreefmap.config.classes import ClassConfig, SemanticClass
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
 from deepreefmap.pointcloud.filters import (
+    estimate_neighborhood_size_from_depth_maps,
     PointFilterConfig,
     build_semantic_reference_cloud,
     nearest_camera_filter,
@@ -128,6 +129,67 @@ def test_build_semantic_reference_cloud_applies_nearest_camera_filter():
         np.array(
             [
                 [0.004, 0.0, 0.0],
+                [0.020, 0.0, 0.0],
+                [0.030, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        ),
+    )
+
+
+def test_estimate_neighborhood_size_from_depth_maps_uses_depth_statistics():
+    depth_maps = np.array([[[1.0, 2.0], [3.0, np.nan]]], dtype=np.float32)
+    size = estimate_neighborhood_size_from_depth_maps(depth_maps, min_depth=0.05, max_depth=8.0)
+    assert size is not None
+    # median([1,2,3]) == 2 -> 0.005 * 2 = 0.01 (within clamp range)
+    assert np.isclose(size, 0.01)
+
+
+def test_build_semantic_reference_cloud_uses_auto_neighborhood_default():
+    frame = PreparedFrame(
+        frame_index=0,
+        image_rgb=np.full((2, 2, 3), 128, dtype=np.uint8),
+        labels=np.array([[1, 1], [1, 1]], dtype=np.int32),
+        keep_mask=np.array([[255, 255], [255, 255]], dtype=np.uint8),
+    )
+    mapping = MappingSequenceResult(
+        frame_indices=np.array([0], dtype=np.int32),
+        depth_maps=np.array([[[2.0, 2.0], [2.0, 2.0]]], dtype=np.float32),
+        poses_w_c=np.eye(4, dtype=np.float32)[None],
+        intrinsics=np.eye(3, dtype=np.float32),
+        world_points=np.array(
+            [
+                [
+                    [[0.000, 0.000, 0.0], [0.004, 0.000, 0.0]],
+                    [[0.020, 0.000, 0.0], [0.030, 0.000, 0.0]],
+                ]
+            ],
+            dtype=np.float32,
+        ),
+        confidence=np.ones((1, 2, 2), dtype=np.float32),
+    )
+    batch = FrameBatch(frames=(frame,), intrinsics=np.eye(3, dtype=np.float32), image_size=(2, 2), clip_counts=(1,))
+
+    cloud = build_semantic_reference_cloud(
+        batch,
+        mapping,
+        _classes(),
+        PointFilterConfig(
+            voxel_size=None,
+            neighborhood_size=None,
+            neighborhood_filter_every_k_frames=30,
+            confidence_percentile=None,
+            min_confidence=0.0,
+        ),
+    )
+
+    # auto neighborhood at depth=2m -> 0.01m, so first two points collide and one survives
+    assert len(cloud) == 3
+    assert np.allclose(
+        cloud.xyz,
+        np.array(
+            [
+                [0.000, 0.0, 0.0],
                 [0.020, 0.0, 0.0],
                 [0.030, 0.0, 0.0],
             ],

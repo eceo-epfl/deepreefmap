@@ -19,6 +19,7 @@ class PointFilterConfig:
     depth_edge_threshold: float | None = None
     voxel_size: float | None = 0.003
     neighborhood_size: float | None = None
+    neighborhood_filter_every_k_frames: int = 30
 
 
 def build_semantic_reference_cloud(
@@ -36,6 +37,8 @@ def build_semantic_reference_cloud(
     conf_parts: list[np.ndarray] = []
     dist_parts: list[np.ndarray] = []
     frame_lookup = {frame.frame_index: frame for frame in frame_batch.frames}
+    active_neighborhood_size = _resolve_neighborhood_size(cfg, mapping.depth_maps)
+    filter_every_k = max(int(cfg.neighborhood_filter_every_k_frames), 0)
 
     for result_i, frame_index in enumerate(mapping.frame_indices.tolist()):
         frame = frame_lookup.get(int(frame_index))
@@ -82,20 +85,40 @@ def build_semantic_reference_cloud(
         else:
             conf_parts.append(np.ones(int(flat_valid.sum()), dtype=np.float32))
         dist_parts.append(depth.reshape(-1)[flat_valid].astype(np.float32))
+        if (
+            active_neighborhood_size is not None
+            and filter_every_k > 0
+            and ((result_i + 1) % filter_every_k == 0)
+        ):
+            partial_cloud = _concat_semantic_parts(
+                xyz_parts=xyz_parts,
+                rgb_parts=rgb_parts,
+                label_parts=label_parts,
+                frame_parts=frame_parts,
+                conf_parts=conf_parts,
+                dist_parts=dist_parts,
+            )
+            partial_cloud = nearest_camera_filter(partial_cloud, active_neighborhood_size)
+            xyz_parts = [partial_cloud.xyz]
+            rgb_parts = [partial_cloud.rgb]
+            label_parts = [partial_cloud.labels]
+            frame_parts = [partial_cloud.frame_indices] if partial_cloud.frame_indices is not None else []
+            conf_parts = [partial_cloud.confidence] if partial_cloud.confidence is not None else []
+            dist_parts = [partial_cloud.distance_to_camera] if partial_cloud.distance_to_camera is not None else []
 
     if not xyz_parts:
         return SemanticPointCloud.empty()
 
-    cloud = SemanticPointCloud(
-        xyz=np.concatenate(xyz_parts, axis=0),
-        rgb=np.concatenate(rgb_parts, axis=0),
-        labels=np.concatenate(label_parts, axis=0),
-        frame_indices=np.concatenate(frame_parts, axis=0),
-        confidence=np.concatenate(conf_parts, axis=0),
-        distance_to_camera=np.concatenate(dist_parts, axis=0),
+    cloud = _concat_semantic_parts(
+        xyz_parts=xyz_parts,
+        rgb_parts=rgb_parts,
+        label_parts=label_parts,
+        frame_parts=frame_parts,
+        conf_parts=conf_parts,
+        dist_parts=dist_parts,
     )
-    if cfg.neighborhood_size is not None and cfg.neighborhood_size > 0:
-        cloud = nearest_camera_filter(cloud, cfg.neighborhood_size)
+    if active_neighborhood_size is not None:
+        cloud = nearest_camera_filter(cloud, active_neighborhood_size)
     if cfg.voxel_size is None or cfg.voxel_size <= 0:
         return cloud
     return voxel_reduce_semantic_cloud(cloud, cfg.voxel_size)
@@ -172,6 +195,53 @@ def nearest_camera_filter(cloud: SemanticPointCloud, neighborhood_size: float) -
         frame_indices=None if cloud.frame_indices is None else cloud.frame_indices[idx],
         confidence=None if cloud.confidence is None else cloud.confidence[idx],
         distance_to_camera=None if cloud.distance_to_camera is None else cloud.distance_to_camera[idx],
+    )
+
+
+def estimate_neighborhood_size_from_depth_maps(
+    depth_maps: np.ndarray,
+    min_depth: float = 0.05,
+    max_depth: float = 8.0,
+) -> float | None:
+    depth = np.asarray(depth_maps, dtype=np.float32)
+    if depth.size == 0:
+        return None
+    valid = np.isfinite(depth)
+    valid &= depth >= float(min_depth)
+    valid &= depth <= float(max_depth)
+    if not np.any(valid):
+        return None
+    median_depth = float(np.median(depth[valid]))
+    # Heuristic: neighborhood side length scales with scene depth.
+    # Clamp to keep practical defaults for reef mapping densities.
+    return float(np.clip(0.005 * median_depth, 0.002, 0.02))
+
+
+def _resolve_neighborhood_size(cfg: PointFilterConfig, depth_maps: np.ndarray) -> float | None:
+    if cfg.neighborhood_size is not None and cfg.neighborhood_size > 0:
+        return float(cfg.neighborhood_size)
+    return estimate_neighborhood_size_from_depth_maps(
+        depth_maps=depth_maps,
+        min_depth=cfg.min_depth,
+        max_depth=cfg.max_depth,
+    )
+
+
+def _concat_semantic_parts(
+    xyz_parts: list[np.ndarray],
+    rgb_parts: list[np.ndarray],
+    label_parts: list[np.ndarray],
+    frame_parts: list[np.ndarray],
+    conf_parts: list[np.ndarray],
+    dist_parts: list[np.ndarray],
+) -> SemanticPointCloud:
+    return SemanticPointCloud(
+        xyz=np.concatenate(xyz_parts, axis=0),
+        rgb=np.concatenate(rgb_parts, axis=0),
+        labels=np.concatenate(label_parts, axis=0),
+        frame_indices=np.concatenate(frame_parts, axis=0),
+        confidence=np.concatenate(conf_parts, axis=0),
+        distance_to_camera=np.concatenate(dist_parts, axis=0),
     )
 
 

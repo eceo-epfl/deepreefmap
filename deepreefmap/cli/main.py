@@ -76,7 +76,11 @@ def reconstruct(
     tsdf: bool = typer.Option(False, help="Enable optional TSDF fusion output."),
     neighborhood_size: Optional[float] = typer.Option(
         None,
-        help="3D neighborhood size (meters). Keep only nearest-to-camera point per neighborhood.",
+        help="3D neighborhood size in meters. Defaults to an auto value estimated from depth-map statistics.",
+    ),
+    neighborhood_every_k_frames: int = typer.Option(
+        30,
+        help="Apply nearest-camera neighborhood thinning every K mapping frames during offline point-cloud construction.",
     ),
     loger_model_path: Optional[Path] = typer.Option(None, help="LoGeR checkpoint path (defaults to vendored)."),
     loger_window_size: int = typer.Option(32, help="LoGeR window size."),
@@ -120,6 +124,7 @@ def reconstruct(
         viser_port=viser_port,
         enable_tsdf=tsdf,
         neighborhood_size=neighborhood_size,
+        neighborhood_every_k_frames=neighborhood_every_k_frames,
         mapping_options=mapping_options,
         classes_path=classes,
     )

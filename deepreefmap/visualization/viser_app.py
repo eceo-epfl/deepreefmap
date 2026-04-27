@@ -8,9 +8,6 @@ from pathlib import Path
 import numpy as np
 import cv2
 
-from deepreefmap.pipeline.artifacts import SemanticPointCloud
-from deepreefmap.pointcloud.filters import nearest_camera_filter
-
 logger = logging.getLogger(__name__)
 
 _VISER_NAN_GUARD_PATCHED = False
@@ -74,7 +71,7 @@ class ViserLiveApp:
         self._selected_frame_index: int | None = None
         self._frame_order: list[int] = []
         self._frustums_by_frame: dict[int, object] = {}
-        self._points_by_frame: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+        self._points_by_frame: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
         self._accumulated_cache: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
         self._stacked_image_cache: dict[int, np.ndarray] = {}
         self._seg_color_cache: dict[int, np.ndarray] = {}
@@ -86,7 +83,6 @@ class ViserLiveApp:
         self._playing_toggle = None
         self._fps_slider = None
         self._accumulate_toggle = None
-        self._neighborhood_size_slider = None
         self._stacked_handle = None
         self._legend_toggles: dict[int, object] = {}
         self._enabled_class_ids = np.asarray([], dtype=np.int32)
@@ -95,7 +91,6 @@ class ViserLiveApp:
         self._last_cloud_frame: int | None = None
         self._last_cloud_accumulate: bool | None = None
         self._last_cloud_filter_signature: tuple[int, ...] | None = None
-        self._last_cloud_neighborhood_size: float | None = None
         self._suppress_frame_slider_callback = False
         self._user_selected_frame = False
         self._last_slider_pos: int | None = None
@@ -126,13 +121,6 @@ class ViserLiveApp:
             self._playing_toggle = self._server.gui.add_checkbox("Playing", False)
             self._fps_slider = self._server.gui.add_slider("FPS", 1.0, 60.0, 0.5, 8.0)
             self._accumulate_toggle = self._server.gui.add_checkbox("Accumulate", True)
-            self._neighborhood_size_slider = self._server.gui.add_slider(
-                "Nearest-camera neighborhood (m)",
-                0.0,
-                0.05,
-                0.0005,
-                0.0,
-            )
             self._stacked_handle = self._server.gui.add_image(
                 np.zeros((3, 3, 3), dtype=np.uint8),
                 label="RGB / Segmentation / Depth (stacked)",
@@ -204,11 +192,6 @@ class ViserLiveApp:
             @self._accumulate_toggle.on_update
             def _(_) -> None:
                 self._render_current_state()
-
-            @self._neighborhood_size_slider.on_update
-            def _(_) -> None:
-                self._accumulated_cache.clear()
-                self._refresh_cloud_only()
 
             @self._download_stacked_button.on_click
             def _(_) -> None:
@@ -329,7 +312,6 @@ class ViserLiveApp:
         rgb: np.ndarray,
         labels: np.ndarray,
         frame_indices: np.ndarray,
-        distance_to_camera: np.ndarray | None = None,
     ) -> None:
         if not self.enabled:
             return
@@ -341,22 +323,14 @@ class ViserLiveApp:
         frame_indices_raw = np.asarray(frame_indices).reshape(-1)
         if not (len(xyz_f32) == len(rgb_u8) == len(labels_i32) == len(frame_indices_raw)):
             return
-        if distance_to_camera is None:
-            distance_f32 = np.full((len(xyz_f32),), np.inf, dtype=np.float32)
-        else:
-            distance_f32 = np.asarray(distance_to_camera, dtype=np.float32).reshape(-1)
-            if len(distance_f32) != len(xyz_f32):
-                return
         finite_points = np.isfinite(xyz_f32).all(axis=1)
         finite_frames = np.isfinite(frame_indices_raw.astype(np.float64, copy=False))
-        finite_distances = np.isfinite(distance_f32)
-        valid = finite_points & finite_frames & finite_distances
+        valid = finite_points & finite_frames
         if not np.any(valid):
             return
         xyz_f32 = xyz_f32[valid]
         rgb_u8 = rgb_u8[valid]
         labels_i32 = labels_i32[valid]
-        distance_f32 = distance_f32[valid]
         frame_indices_i32 = frame_indices_raw[valid].astype(np.int32, copy=False)
         unique_frames = np.unique(frame_indices_i32)
         for frame_index in unique_frames.tolist():
@@ -364,14 +338,12 @@ class ViserLiveApp:
             xyz_part = xyz_f32[mask]
             rgb_part = rgb_u8[mask]
             labels_part = labels_i32[mask]
-            distance_part = distance_f32[mask]
             if frame_index in self._points_by_frame:
-                old_xyz, old_rgb, old_labels, old_distance = self._points_by_frame[frame_index]
+                old_xyz, old_rgb, old_labels = self._points_by_frame[frame_index]
                 xyz_part = np.concatenate([old_xyz, xyz_part], axis=0)
                 rgb_part = np.concatenate([old_rgb, rgb_part], axis=0)
                 labels_part = np.concatenate([old_labels, labels_part], axis=0)
-                distance_part = np.concatenate([old_distance, distance_part], axis=0)
-            self._points_by_frame[frame_index] = (xyz_part, rgb_part, labels_part, distance_part)
+            self._points_by_frame[frame_index] = (xyz_part, rgb_part, labels_part)
         self._accumulated_cache.clear()
         self._update_frame_slider_limits()
         if self._frame_order and (self._selected_frame_index is None or not self._user_selected_frame):
@@ -504,7 +476,6 @@ class ViserLiveApp:
             self._last_cloud_frame != int(current_frame)
             or self._last_cloud_accumulate != bool(accumulate)
             or self._last_cloud_filter_signature != filter_signature
-            or self._last_cloud_neighborhood_size != self._current_neighborhood_size()
         )
 
         if self._cloud_handle is None:
@@ -517,7 +488,6 @@ class ViserLiveApp:
             self._last_cloud_frame = int(current_frame)
             self._last_cloud_accumulate = bool(accumulate)
             self._last_cloud_filter_signature = filter_signature
-            self._last_cloud_neighborhood_size = self._current_neighborhood_size()
             return
         self._cloud_handle.visible = True
         if should_update_points:
@@ -527,7 +497,6 @@ class ViserLiveApp:
         self._last_cloud_frame = int(current_frame)
         self._last_cloud_accumulate = bool(accumulate)
         self._last_cloud_filter_signature = filter_signature
-        self._last_cloud_neighborhood_size = self._current_neighborhood_size()
 
     def _refresh_cloud_only(self) -> None:
         current_frame = self._current_frame()
@@ -566,16 +535,14 @@ class ViserLiveApp:
             empty_labels = np.zeros((0,), dtype=np.int32)
             return empty_xyz, empty_rgb, empty_labels
         if not accumulate:
-            xyz, rgb, labels, _ = self._points_by_frame.get(
+            return self._points_by_frame.get(
                 int(current_frame),
                 (
                     np.zeros((0, 3), dtype=np.float32),
                     np.zeros((0, 3), dtype=np.uint8),
                     np.zeros((0,), dtype=np.int32),
-                    np.zeros((0,), dtype=np.float32),
                 ),
             )
-            return xyz, rgb, labels
         if current_frame in self._accumulated_cache:
             return self._accumulated_cache[current_frame]
         if current_frame not in self._frame_order:
@@ -594,29 +561,8 @@ class ViserLiveApp:
         xyz = np.concatenate([self._points_by_frame[idx][0] for idx in frame_ids], axis=0)
         rgb = np.concatenate([self._points_by_frame[idx][1] for idx in frame_ids], axis=0)
         labels = np.concatenate([self._points_by_frame[idx][2] for idx in frame_ids], axis=0)
-        distances = np.concatenate([self._points_by_frame[idx][3] for idx in frame_ids], axis=0)
-        neighborhood_size = self._current_neighborhood_size()
-        if neighborhood_size is not None:
-            filtered = nearest_camera_filter(
-                SemanticPointCloud(
-                    xyz=xyz,
-                    rgb=rgb,
-                    labels=labels,
-                    distance_to_camera=distances,
-                ),
-                neighborhood_size,
-            )
-            xyz, rgb, labels = filtered.xyz, filtered.rgb, filtered.labels
         self._accumulated_cache[current_frame] = (xyz, rgb, labels)
         return self._accumulated_cache[current_frame]
-
-    def _current_neighborhood_size(self) -> float | None:
-        if self._neighborhood_size_slider is None:
-            return None
-        value = float(self._neighborhood_size_slider.value)
-        if not np.isfinite(value) or value <= 0:
-            return None
-        return value
 
     def _set_markdown_content(self, handle: object, content: str) -> None:
         if handle is None:
