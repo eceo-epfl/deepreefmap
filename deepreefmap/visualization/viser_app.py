@@ -160,7 +160,19 @@ class ViserLiveApp:
         self._side_by_side_handle.image = side_by_side
 
     def _compose_side_by_side(self, image_rgb: np.ndarray, seg_color: np.ndarray, depth_color: np.ndarray) -> np.ndarray:
-        return np.concatenate([image_rgb, seg_color, depth_color], axis=1)
+        # Mapping depth may be lower resolution than RGB/segmentation; unify panel sizes
+        # for side-by-side display.
+        target_h, target_w = image_rgb.shape[:2]
+        seg_display = self._resize_to_shape(seg_color, (target_h, target_w))
+        depth_display = self._resize_to_shape(depth_color, (target_h, target_w))
+        return np.concatenate([image_rgb, seg_display, depth_display], axis=1)
+
+    def _resize_to_shape(self, image: np.ndarray, shape_hw: tuple[int, int]) -> np.ndarray:
+        target_h, target_w = shape_hw
+        h, w = image.shape[:2]
+        if h == target_h and w == target_w:
+            return image
+        return cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
 
     def _colorize_depth(self, depth: np.ndarray) -> np.ndarray:
         d = np.asarray(depth, dtype=np.float32)
