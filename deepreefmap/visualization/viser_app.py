@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from contextlib import suppress
+import time
+
 import numpy as np
 import cv2
 
@@ -79,3 +82,23 @@ class ViserLiveApp:
             colors=all_rgb,
             point_size=0.002,
         )
+
+    def close(self) -> None:
+        if self._server is None:
+            return
+        with suppress(Exception):
+            self._server.stop()
+            # Let viser/websocket background threads finish printing before
+            # Python tears down stdout during interpreter shutdown.
+            time.sleep(0.2)
+        self.enabled = False
+        self._server = None
+
+    def wait_forever(self) -> None:
+        if not self.enabled:
+            return
+        try:
+            while True:
+                time.sleep(1.0)
+        except KeyboardInterrupt:
+            pass
