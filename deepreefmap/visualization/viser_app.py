@@ -65,7 +65,9 @@ class ViserLiveApp:
             self.enabled = True
             self._semantic_color_toggle = self._server.gui.add_checkbox("Semantic cloud colors", False)
             self._point_size_slider = self._server.gui.add_slider("Point size", 0.0001, 0.05, 0.0001, 0.002)
-            self._frame_slider = self._server.gui.add_slider("Frame", 0, 0, 1, 0, disabled=True)
+            # Keep this slider float-backed so transient NaN UI states do not trigger
+            # integer casting failures inside viser's websocket handler.
+            self._frame_slider = self._server.gui.add_slider("Frame", 0.0, 0.0, 1.0, 0.0, disabled=True)
             self._playing_toggle = self._server.gui.add_checkbox("Playing", False)
             self._fps_slider = self._server.gui.add_slider("FPS", 1.0, 60.0, 0.5, 8.0)
             self._accumulate_toggle = self._server.gui.add_checkbox("Accumulate", True)
@@ -285,21 +287,14 @@ class ViserLiveApp:
             return None
         if not self._frame_order:
             return None
+        max_pos = max(len(self._frame_order) - 1, 0)
         try:
             slider_value = float(self._frame_slider.value)
         except (TypeError, ValueError):
-            raise ValueError(f"Frame slider value is not numeric: {self._frame_slider.value!r}") from None
+            slider_value = float(max_pos)
         if not np.isfinite(slider_value):
-            raise ValueError(f"Frame slider produced non-finite value: {slider_value!r}")
-        rounded_value = float(np.rint(slider_value))
-        if not np.isclose(slider_value, rounded_value):
-            raise ValueError(f"Frame slider produced non-integer value: {slider_value!r}")
-        max_pos = max(len(self._frame_order) - 1, 0)
-        slider_pos = int(rounded_value)
-        if slider_pos < 0 or slider_pos > max_pos:
-            raise ValueError(
-                f"Frame slider index out of range: index={slider_pos}, allowed=[0, {max_pos}]"
-            )
+            slider_value = float(max_pos)
+        slider_pos = int(np.clip(np.rint(slider_value), 0, max_pos))
         return slider_pos
 
     def _validate_frame_slider_value(self, strict: bool = False) -> int | None:
@@ -310,7 +305,7 @@ class ViserLiveApp:
             # Write the normalized integer back for consistent UI state.
             self._suppress_frame_slider_callback = True
             try:
-                self._frame_slider.value = int(slider_pos)
+                self._frame_slider.value = float(int(slider_pos))
             finally:
                 self._suppress_frame_slider_callback = False
         return slider_pos
@@ -340,7 +335,7 @@ class ViserLiveApp:
             pos = self._frame_order.index(int(frame_index))
             self._suppress_frame_slider_callback = True
             try:
-                self._frame_slider.value = int(pos)
+                self._frame_slider.value = float(int(pos))
             finally:
                 self._suppress_frame_slider_callback = False
         else:
@@ -351,26 +346,27 @@ class ViserLiveApp:
         if self._frame_slider is None or not self._frame_order:
             return
         self._frame_slider.disabled = False
-        self._frame_slider.min = 0
-        self._frame_slider.max = int(max(len(self._frame_order) - 1, 0))
+        self._frame_slider.min = 0.0
+        self._frame_slider.max = float(int(max(len(self._frame_order) - 1, 0)))
+        self._frame_slider.step = 1.0
         slider_value = self._validate_frame_slider_value(strict=True)
         if self._selected_frame_index is None:
             self._suppress_frame_slider_callback = True
             try:
-                self._frame_slider.value = int(max(len(self._frame_order) - 1, 0))
+                self._frame_slider.value = float(int(max(len(self._frame_order) - 1, 0)))
             finally:
                 self._suppress_frame_slider_callback = False
             return
         if int(self._selected_frame_index) in self._frame_order:
             self._suppress_frame_slider_callback = True
             try:
-                self._frame_slider.value = int(self._frame_order.index(int(self._selected_frame_index)))
+                self._frame_slider.value = float(int(self._frame_order.index(int(self._selected_frame_index))))
             finally:
                 self._suppress_frame_slider_callback = False
         elif slider_value is None:
             self._suppress_frame_slider_callback = True
             try:
-                self._frame_slider.value = int(max(len(self._frame_order) - 1, 0))
+                self._frame_slider.value = float(int(max(len(self._frame_order) - 1, 0)))
             finally:
                 self._suppress_frame_slider_callback = False
 
