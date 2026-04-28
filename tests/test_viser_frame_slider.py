@@ -1,3 +1,5 @@
+import numpy as np
+
 from deepreefmap.visualization.viser_app import ViserLiveApp
 
 
@@ -20,3 +22,13 @@ def test_normalize_slider_position_handles_non_finite_inputs() -> None:
     assert app._normalize_slider_position(-float("inf"), max_pos=7) == 7
     assert app._normalize_slider_position("not-a-number", max_pos=7) == 7
     assert app._normalize_slider_position(None, max_pos=7) == 7
+
+
+def test_colorize_depth_dims_pixels_beyond_max_depth() -> None:
+    app = _app_without_init()
+    depth = np.array([[0.5, 1.5], [2.0, float("nan")]], dtype=np.float32)
+    rgb = ViserLiveApp._colorize_depth(app, depth, max_depth=1.0)
+    assert tuple(rgb[0, 0].tolist()) != (40, 40, 40)
+    assert tuple(rgb[0, 1]) == (40, 40, 40)
+    assert tuple(rgb[1, 0]) == (40, 40, 40)
+    assert tuple(rgb[1, 1].tolist()) == (0, 0, 0)

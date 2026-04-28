@@ -24,7 +24,7 @@ def _loger_star_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
 def create_mapping_backend(name: str, **kwargs: Any) -> MappingBackend:
     if name not in _BACKENDS:
         raise ValueError(f"Unsupported mapping backend: {name}")
-    if name == "scsfm":
+    if name == "scsfmlearner":
         return SCSfMBackend()
     if name == "loger":
         return LoGeRBackend(**kwargs)

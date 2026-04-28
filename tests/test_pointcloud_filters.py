@@ -53,6 +53,53 @@ def test_build_semantic_reference_cloud_filters_labels_and_confidence():
     assert cloud.xyz.tolist() == [[0.0, 1.0, 2.0], [9.0, 10.0, 11.0]]
 
 
+def test_replacement_radius_subsamples_without_scaling_xyz() -> None:
+    """Larger replacement voxel only drops/merges points; surviving xyz are always from the dense (no-voxel) cloud."""
+    rng = np.random.default_rng(42)
+    h, w = 8, 8
+    depth = (0.55 + 1.2 * rng.random((h, w), dtype=np.float64)).astype(np.float32)
+    intrinsic = np.array(
+        [[180.0, 0.0, (w - 1) * 0.5], [0.0, 180.0, (h - 1) * 0.5], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
+    mapping = MappingSequenceResult(
+        frame_indices=np.array([0], dtype=np.int32),
+        depth_maps=depth[None, ...],
+        poses_w_c=np.eye(4, dtype=np.float32)[None],
+        intrinsics=intrinsic,
+        world_points=None,
+    )
+    frame = PreparedFrame(
+        frame_index=0,
+        image_rgb=np.zeros((h, w, 3), dtype=np.uint8),
+        labels=np.ones((h, w), dtype=np.int32),
+        keep_mask=np.full((h, w), 255, dtype=np.uint8),
+    )
+    batch = FrameBatch(frames=(frame,), intrinsics=intrinsic, image_size=(w, h), clip_counts=(1,))
+
+    cfg_dense = PointFilterConfig(
+        replacement_radius_factor=0.0,
+        voxel_size=None,
+        confidence_percentile=None,
+        min_confidence=0.0,
+    )
+    cloud_dense = build_semantic_reference_cloud(batch, mapping, _classes(), cfg_dense)
+
+    cfg_voxel = PointFilterConfig(
+        replacement_radius_override=0.04,
+        voxel_size=None,
+        confidence_percentile=None,
+        min_confidence=0.0,
+    )
+    cloud_vox = build_semantic_reference_cloud(batch, mapping, _classes(), cfg_voxel)
+
+    assert len(cloud_vox) < len(cloud_dense)
+    tol = 5e-2
+    for i in range(len(cloud_vox)):
+        dist_min = float(np.linalg.norm(cloud_dense.xyz - cloud_vox.xyz[i], axis=1).min())
+        assert dist_min < tol, f"voxel cloud point {i} not drawn from dense candidates"
+
+
 def test_voxel_map_replaces_when_new_point_is_closer():
     m = NearestCameraVoxelMap(1.0)
     xyz = np.array([[0.0, 0.0, 0.0], [0.4, 0.0, 0.0]], dtype=np.float32)

@@ -66,6 +66,7 @@ class ViserSceneController:
         self._last_accumulate: bool | None = None
         self._last_semantic_colors: bool | None = None
         self._last_enabled: frozenset[int] | None = None
+        self._last_frustums_visible: bool | None = None
 
     def clear_dynamic_nodes(self) -> None:
         """Remove /final and /live subtrees if present (best-effort)."""
@@ -83,6 +84,7 @@ class ViserSceneController:
         self._last_accumulate = None
         self._last_semantic_colors = None
         self._last_enabled = None
+        self._last_frustums_visible = None
 
     def build(
         self,
@@ -156,6 +158,26 @@ class ViserSceneController:
             except Exception:
                 pass
 
+    def _sync_frustum_visibility(self, frustums_visible: bool, t: int) -> None:
+        """Highlight current frame when shown; set handle visibility for all frustums."""
+        fi = self._final_index
+        if not self._frustum_handles:
+            self._last_frustums_visible = frustums_visible
+            return
+        n_steps = len(fi.frame_order) if fi is not None else 0
+        if frustums_visible:
+            if fi is not None and n_steps > 0:
+                tt = int(np.clip(t, 0, n_steps - 1))
+                self.highlight_frustum(int(fi.frame_order[tt]))
+            else:
+                self.highlight_frustum(None)
+        for hnd in self._frustum_handles.values():
+            try:
+                hnd.visible = bool(frustums_visible)
+            except Exception:
+                pass
+        self._last_frustums_visible = frustums_visible
+
     def apply_state(
         self,
         timeline_t: int,
@@ -163,6 +185,8 @@ class ViserSceneController:
         enabled_classes: frozenset[int],
         semantic_colors: bool,
         point_size: float,
+        *,
+        frustums_visible: bool = True,
     ) -> None:
         """Update clouds from slider position and toggles."""
         if self._live_cloud_handle is None or self._live_cache is None or self._final_index is None:
@@ -186,6 +210,8 @@ class ViserSceneController:
             self._live_cloud_handle.point_size = float(point_size)
             for h in self._final_handles.values():
                 h.point_size = float(point_size)
+            if self._last_frustums_visible != frustums_visible:
+                self._sync_frustum_visibility(frustums_visible, t)
             return
 
         # --- Live cloud (always full frame at timeline t) ---
@@ -196,7 +222,7 @@ class ViserSceneController:
             self._live_cloud_handle.colors = empty_c
             self._live_cloud_handle.visible = False
             self._live_cloud_handle.point_size = float(point_size)
-            self.highlight_frustum(None)
+            self._sync_frustum_visibility(frustums_visible, t)
             for h in self._final_handles.values():
                 h.visible = False
                 h.point_size = float(point_size)
@@ -233,11 +259,7 @@ class ViserSceneController:
         self._live_cloud_handle.visible = xyz.shape[0] > 0
         self._live_cloud_handle.point_size = float(point_size)
 
-        if fi.frame_order:
-            cur_fid = int(fi.frame_order[t])
-            self.highlight_frustum(cur_fid)
-        else:
-            self.highlight_frustum(None)
+        self._sync_frustum_visibility(frustums_visible, t)
 
         # --- Final cloud per class ---
         for class_id, handle in self._final_handles.items():

@@ -66,6 +66,7 @@ class LiveFrameCloudCache:
         self._depth_maps = mapping.depth_maps
         self._poses_w_c = mapping.poses_w_c
         self._intrinsics = np.asarray(mapping.intrinsics, dtype=np.float64)
+        self._world_points = None if mapping.world_points is None else mapping.world_points
 
         self._frame_lookup = {int(f.frame_index): f for f in frame_batch.frames}
         self._mapping_index: dict[int, int] = {}
@@ -117,13 +118,13 @@ class LiveFrameCloudCache:
             valid &= depth <= self._max_depth_for_viz
         flat = valid.reshape(-1)
 
-        xyz_w = depth_to_points(depth, self._intrinsics, pose_w_c).reshape(-1, 3).astype(np.float32, copy=False)
-        rgb_flat = rgb_d.reshape(-1, 3).astype(np.uint8, copy=False)
-        lab_flat = labels_d.reshape(-1).astype(np.int32, copy=False)
-
-        xyz_w = xyz_w[flat]
-        rgb_flat = rgb_flat[flat]
-        lab_flat = lab_flat[flat]
+        if self._world_points is not None:
+            xyz_flat = np.asarray(self._world_points[mi], dtype=np.float32).reshape(-1, 3)
+        else:
+            xyz_flat = depth_to_points(depth, self._intrinsics, pose_w_c).reshape(-1, 3).astype(np.float32, copy=False)
+        xyz_w = xyz_flat[flat]
+        rgb_flat = rgb_d.reshape(-1, 3).astype(np.uint8, copy=False)[flat]
+        lab_flat = labels_d.reshape(-1).astype(np.int32, copy=False)[flat]
 
         self._cache[timeline_t] = (xyz_w, rgb_flat, lab_flat)
         self._cache.move_to_end(timeline_t)

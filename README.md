@@ -70,9 +70,9 @@ LoGeR processes the real ordered sequence with its own sliding-window memory.
 ```bash
 uv run deepreefmap list-models
 uv run deepreefmap list-profiles
-uv run deepreefmap calibrate VIDEO.mp4 --name gopro_profile --n-frames 100 --fps 10 --begin 12.0 --end 72.0
-uv run deepreefmap verify-calibration gopro_profile
-uv run deepreefmap reconstruct --videos GX010001.MP4,GX020001.MP4 --fps 10 --segmentation segformer-b5 --mapping scsfm --camera-profile gopro_profile --out out --viser --tsdf
+uv run deepreefmap calibrate VIDEO.mp4 --name <profile_name> --n-frames 100 --fps 10 --begin 12.0 --end 72.0
+uv run deepreefmap verify-calibration <profile_name>
+uv run deepreefmap reconstruct --videos GX010001.MP4,GX020001.MP4 --fps 10 --segmentation segformer-b5 --mapping scsfm --camera-profile gopro_hero_10 --out out --viser --tsdf
 uv run deepreefmap render-video --run-dir out
 ```
 
@@ -91,24 +91,7 @@ uv run deepreefmap reconstruct \
   --viser
 ```
 
-LoGeR-focused run:
-
-```bash
-uv run deepreefmap reconstruct \
-  --videos GX010001.MP4,GX020001.MP4 \
-  --fps 10 \
-  --segmentation segformer-b2 \
-  --mapping loger \
-  --camera-profile gopro_hero_10 \
-  --loger-model-path third_party/LoGeR/ckpts/LoGeR/latest.pt \
-  --loger-window-size 32 \
-  --loger-overlap-size 3 \
-  --classes configs/classes_coralscapes.yaml \
-  --out out_loger \
-  --viser
-```
-
-LoGeR Star (uses `third_party/LoGeR/ckpts/LoGeR_star/latest.pt` and matching config by default; override with `--loger-model-path` if needed):
+LoGeR* Star:
 
 ```bash
 uv run deepreefmap reconstruct \

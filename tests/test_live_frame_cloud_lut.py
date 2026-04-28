@@ -1,6 +1,11 @@
 import numpy as np
 
-from deepreefmap.visualization.live_frame_cloud import build_enabled_label_lut, mask_points_by_enabled_lut
+from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
+from deepreefmap.visualization.live_frame_cloud import (
+    LiveFrameCloudCache,
+    build_enabled_label_lut,
+    mask_points_by_enabled_lut,
+)
 
 
 def test_lut_masks_labels() -> None:
@@ -17,3 +22,32 @@ def test_lut_expands_for_large_label() -> None:
     m = mask_points_by_enabled_lut(labels, lut)
     assert m.shape == (1,)
     assert not bool(m[0])
+
+
+def test_live_frame_cloud_xyz_matches_world_points_when_present() -> None:
+    h, w = 2, 2
+    depth = np.ones((h, w), dtype=np.float32)
+    world = np.arange(12, dtype=np.float32).reshape(1, h, w, 3)
+    mapping = MappingSequenceResult(
+        frame_indices=np.array([7], dtype=np.int32),
+        depth_maps=depth[None, ...],
+        poses_w_c=np.eye(4, dtype=np.float32)[None],
+        intrinsics=np.eye(3, dtype=np.float32),
+        world_points=world,
+    )
+    frame = PreparedFrame(
+        frame_index=7,
+        image_rgb=np.zeros((h, w, 3), dtype=np.uint8),
+        labels=np.ones((h, w), dtype=np.int32),
+        keep_mask=np.full((h, w), 255, dtype=np.uint8),
+    )
+    batch = FrameBatch(frames=(frame,), intrinsics=np.eye(3, dtype=np.float32), image_size=(w, h), clip_counts=(1,))
+    cache = LiveFrameCloudCache(batch, mapping, (7,), max_depth_for_viz=None)
+    xyz, _, _ = cache.get_unmasked(0)
+    flat = (
+        np.isfinite(depth.reshape(-1))
+        & (depth.reshape(-1) >= 0.05)
+        & (depth.reshape(-1) <= 8.0)
+    )
+    expected = world.reshape(-1, 3)[flat]
+    assert np.array_equal(xyz, expected)
