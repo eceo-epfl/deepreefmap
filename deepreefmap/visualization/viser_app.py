@@ -12,7 +12,7 @@ import numpy as np
 
 from deepreefmap.visualization.final_cloud_index import build_final_cloud_index, median_distance_to_camera
 from deepreefmap.visualization.live_frame_cloud import LiveFrameCloudCache
-from deepreefmap.visualization.viser_scene import ViserSceneController
+from deepreefmap.visualization.viser_scene import ViserSceneController, rotation_to_wxyz
 
 if TYPE_CHECKING:
     from deepreefmap.config.classes import ClassConfig
@@ -88,11 +88,15 @@ class ViserLiveApp:
         self._fps_slider = None
         self._accumulate_toggle = None
         self._hide_frustums_toggle = None
+        self._view_current_camera_button = None
+        self._follow_camera_toggle = None
+        self._camera_backoff_slider = None
         self._stacked_handle = None
         self._legend_toggles: dict[int, object] = {}
         self._download_stacked_button = None
         self._latest_stacked_image: np.ndarray | None = None
         self._suppress_frame_slider_callback = False
+        self._camera_view_by_frame: dict[int, tuple[np.ndarray, float]] = {}
         self._status_markdown_handle = None
         self._outputs_markdown_handle = None
         self._preprocess_progress_slider = None
@@ -131,6 +135,13 @@ class ViserLiveApp:
             self._fps_slider = self._server.gui.add_slider("FPS", 1.0, 60.0, 0.5, 8.0)
             self._accumulate_toggle = self._server.gui.add_checkbox("Accumulate", True)
             self._hide_frustums_toggle = self._server.gui.add_checkbox("Hide camera frustums", False)
+            with self._server.gui.add_folder("Camera view"):
+                self._view_current_camera_button = self._server.gui.add_button("View from current camera")
+                self._follow_camera_toggle = self._server.gui.add_checkbox("Follow current camera", False)
+                self._camera_backoff_slider = self._server.gui.add_slider("Camera backoff", 0.0, 2.0, 0.01, 0.0)
+                self._view_current_camera_button.disabled = True
+                with suppress(Exception):
+                    self._follow_camera_toggle.disabled = True
             self._stacked_handle = self._server.gui.add_image(
                 np.zeros((3, 3, 3), dtype=np.uint8),
                 label="RGB / Segmentation / Depth (stacked)",
@@ -204,6 +215,20 @@ class ViserLiveApp:
             def _(_u) -> None:  # noqa: ARG001
                 self._mark_dirty()
 
+            @self._view_current_camera_button.on_click
+            def _(_u) -> None:  # noqa: ARG001
+                self._apply_camera_view_to_clients()
+
+            @self._follow_camera_toggle.on_update
+            def _(_u) -> None:  # noqa: ARG001
+                if bool(self._follow_camera_toggle is not None and self._follow_camera_toggle.value):
+                    self._apply_camera_view_to_clients()
+
+            @self._camera_backoff_slider.on_update
+            def _(_u) -> None:  # noqa: ARG001
+                if bool(self._follow_camera_toggle is not None and self._follow_camera_toggle.value):
+                    self._apply_camera_view_to_clients()
+
             @self._download_stacked_button.on_click
             def _(_u) -> None:  # noqa: ARG001
                 self._save_stacked_image()
@@ -237,6 +262,7 @@ class ViserLiveApp:
         self._stacked_image_cache.clear()
         self._seg_color_cache.clear()
         self._depth_color_cache.clear()
+        self._camera_view_by_frame.clear()
 
         depth_viz_cap = median_distance_to_camera(reference_cloud)
         final_index = build_final_cloud_index(
@@ -264,7 +290,9 @@ class ViserLiveApp:
                 continue
             h, w = frame.image_rgb.shape[:2]
             fov_y = float(2.0 * np.arctan(h / (2.0 * fy)))
-            frustum_specs.append((int(fid), np.asarray(est.pose_w_c, dtype=np.float64), w, h, fov_y))
+            pose_w_c = np.asarray(est.pose_w_c, dtype=np.float64)
+            frustum_specs.append((int(fid), pose_w_c, w, h, fov_y))
+            self._camera_view_by_frame[int(fid)] = (pose_w_c, fov_y)
 
         with self._render_lock:
             if self._scene_controller is None:
@@ -292,6 +320,11 @@ class ViserLiveApp:
 
         if self._download_stacked_button is not None:
             self._download_stacked_button.disabled = False
+        if self._view_current_camera_button is not None:
+            self._view_current_camera_button.disabled = False
+        if self._follow_camera_toggle is not None:
+            with suppress(Exception):
+                self._follow_camera_toggle.disabled = False
         self._mark_dirty()
 
         if self._render_thread is None or not self._render_thread.is_alive():
@@ -372,6 +405,42 @@ class ViserLiveApp:
                 min_confidence=min_conf,
             )
             self._refresh_image_panel_for_timeline(int(t))
+            if bool(self._follow_camera_toggle is not None and self._follow_camera_toggle.value):
+                self._apply_camera_view_to_clients(int(t))
+
+    @staticmethod
+    def _camera_view_params(
+        pose_w_c: np.ndarray,
+        fov_y: float,
+        backoff: float = 0.0,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float, float], float]:
+        pose = np.asarray(pose_w_c, dtype=np.float64)
+        position = pose[:3, 3].astype(np.float64, copy=True)
+        if backoff > 0.0:
+            forward = pose[:3, :3] @ np.array([0.0, 0.0, 1.0], dtype=np.float64)
+            norm = float(np.linalg.norm(forward))
+            if norm > 1e-8:
+                position -= (forward / norm) * float(backoff)
+        wxyz = rotation_to_wxyz(pose[:3, :3])
+        return tuple(float(v) for v in position.tolist()), wxyz, float(fov_y)
+
+    def _apply_camera_view_to_clients(self, slider_pos: int | None = None) -> None:
+        if self._server is None or not self._frame_order:
+            return
+        pos = self._safe_slider_value() if slider_pos is None else int(slider_pos)
+        if pos is None or pos < 0 or pos >= len(self._frame_order):
+            return
+        frame_index = int(self._frame_order[pos])
+        spec = self._camera_view_by_frame.get(frame_index)
+        if spec is None:
+            return
+        backoff = 0.0 if self._camera_backoff_slider is None else float(self._camera_backoff_slider.value)
+        position, wxyz, fov = self._camera_view_params(spec[0], spec[1], backoff=backoff)
+        for client in self._server.get_clients().values():
+            with suppress(Exception):
+                client.camera.position = np.asarray(position, dtype=np.float64)
+                client.camera.wxyz = wxyz
+                client.camera.fov = fov
 
     def _enabled_class_set(self) -> frozenset[int]:
         if not self._legend_toggles:
