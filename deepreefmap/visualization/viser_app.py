@@ -82,6 +82,7 @@ class ViserLiveApp:
 
         self._semantic_color_toggle = None
         self._point_size_slider = None
+        self._confidence_slider = None
         self._frame_slider = None
         self._playing_toggle = None
         self._fps_slider = None
@@ -122,6 +123,9 @@ class ViserLiveApp:
 
             self._semantic_color_toggle = self._server.gui.add_checkbox("Semantic cloud colors", False)
             self._point_size_slider = self._server.gui.add_slider("Point size", 0.0001, 0.05, 0.0001, 0.002)
+            self._confidence_slider = self._server.gui.add_slider(
+                "Min confidence (%)", 0.0, 100.0, 0.1, 0.0
+            )
             self._frame_slider = self._server.gui.add_slider("Frame", 0.0, 0.0, 1.0, 0.0, disabled=True)
             self._playing_toggle = self._server.gui.add_checkbox("Playing", False)
             self._fps_slider = self._server.gui.add_slider("FPS", 1.0, 60.0, 0.5, 8.0)
@@ -142,12 +146,13 @@ class ViserLiveApp:
                     toggle = self._server.gui.add_checkbox(
                         self._legend_checkbox_label(class_id_i),
                         True,
-                        order=order_base,
+                        order=order_base + 1.0,
                     )
                     self._legend_toggles[int(class_id)] = toggle
 
                     @toggle.on_update
                     def _(_u, _cid: int = int(class_id)) -> None:  # noqa: ARG001
+                        logger.debug("Legend toggle for class %d → enabled=%s", _cid, self._legend_toggles[_cid].value)
                         self._mark_dirty()
 
             self._download_stacked_button = self._server.gui.add_button("Download stacked RGB/Seg/Depth")
@@ -177,6 +182,10 @@ class ViserLiveApp:
                 self._mark_dirty()
 
             @self._point_size_slider.on_update
+            def _(_u) -> None:  # noqa: ARG001
+                self._mark_dirty()
+
+            @self._confidence_slider.on_update
             def _(_u) -> None:  # noqa: ARG001
                 self._mark_dirty()
 
@@ -352,6 +361,7 @@ class ViserLiveApp:
             hide_frustums = bool(self._hide_frustums_toggle is not None and self._hide_frustums_toggle.value)
             enabled = self._enabled_class_set()
             ps = 0.002 if self._point_size_slider is None else float(self._point_size_slider.value)
+            min_conf = 0.0 if self._confidence_slider is None else float(self._confidence_slider.value) / 100.0
             self._scene_controller.apply_state(
                 timeline_t=int(t),
                 accumulate=accumulate,
@@ -359,6 +369,7 @@ class ViserLiveApp:
                 semantic_colors=semantic,
                 point_size=ps,
                 frustums_visible=not hide_frustums,
+                min_confidence=min_conf,
             )
             self._refresh_image_panel_for_timeline(int(t))
 

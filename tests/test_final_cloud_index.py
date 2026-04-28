@@ -49,6 +49,32 @@ def test_final_cloud_index_excludes_points_beyond_median_distance() -> None:
     assert idx.xyz_by_class[5].shape[0] == 2
 
 
+def test_final_cloud_index_carries_confidence_per_class() -> None:
+    xyz = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0]], dtype=np.float32)
+    rgb = np.zeros((3, 3), dtype=np.uint8)
+    labels = np.array([4, 4, 4], dtype=np.int32)
+    frame_indices = np.array([0, 0, 1], dtype=np.int32)
+    confidence = np.array([0.2, 0.8, 0.5], dtype=np.float32)
+    cloud = SemanticPointCloud(
+        xyz=xyz, rgb=rgb, labels=labels, frame_indices=frame_indices, confidence=confidence
+    )
+    idx = build_final_cloud_index(cloud, [0, 1], {4: (1, 2, 3)})
+    conf = idx.conf_by_class[4]
+    assert conf.dtype == np.float32
+    # Sorted by timeline rank: rank-0 points (0.2, 0.8) then rank-1 (0.5).
+    assert conf[2] == 0.5
+
+
+def test_final_cloud_index_fills_confidence_when_missing() -> None:
+    xyz = np.zeros((1, 3), dtype=np.float32)
+    rgb = np.zeros((1, 3), dtype=np.uint8)
+    labels = np.array([2], dtype=np.int32)
+    frame_indices = np.array([0], dtype=np.int32)
+    cloud = SemanticPointCloud(xyz=xyz, rgb=rgb, labels=labels, frame_indices=frame_indices)
+    idx = build_final_cloud_index(cloud, [0], {2: (1, 2, 3)})
+    assert idx.conf_by_class[2].tolist() == [1.0]
+
+
 def test_accumulate_off_means_zero_prefix_semantics_via_prefix_array() -> None:
     """prefix_end[t] at max t equals total points in class."""
     xyz = np.random.randn(5, 3).astype(np.float32)

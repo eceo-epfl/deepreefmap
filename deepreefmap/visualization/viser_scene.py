@@ -67,6 +67,7 @@ class ViserSceneController:
         self._last_semantic_colors: bool | None = None
         self._last_enabled: frozenset[int] | None = None
         self._last_frustums_visible: bool | None = None
+        self._last_min_confidence: float | None = None
 
     def clear_dynamic_nodes(self) -> None:
         """Remove /final and /live subtrees if present (best-effort)."""
@@ -85,6 +86,7 @@ class ViserSceneController:
         self._last_semantic_colors = None
         self._last_enabled = None
         self._last_frustums_visible = None
+        self._last_min_confidence = None
 
     def build(
         self,
@@ -187,6 +189,7 @@ class ViserSceneController:
         point_size: float,
         *,
         frustums_visible: bool = True,
+        min_confidence: float = 0.0,
     ) -> None:
         """Update clouds from slider position and toggles."""
         if self._live_cloud_handle is None or self._live_cache is None or self._final_index is None:
@@ -199,12 +202,14 @@ class ViserSceneController:
         else:
             t = int(np.clip(timeline_t, 0, n_steps - 1))
 
+        min_conf = float(max(0.0, min(1.0, float(min_confidence))))
         need_update = (
             self._last_timeline_t is None
             or self._last_timeline_t != t
             or self._last_accumulate != accumulate
             or self._last_semantic_colors != semantic_colors
             or self._last_enabled != enabled_classes
+            or self._last_min_confidence != min_conf
         )
         if not need_update:
             self._live_cloud_handle.point_size = float(point_size)
@@ -233,18 +238,21 @@ class ViserSceneController:
             return
 
         try:
-            xyz_u, rgb_u, lab_u = self._live_cache.get_unmasked(t)
+            xyz_u, rgb_u, lab_u, conf_u = self._live_cache.get_unmasked(t)
         except Exception as exc:
             logger.warning("Live frame cloud failed at t=%s: %s", t, exc)
             xyz_u = np.zeros((0, 3), dtype=np.float32)
             rgb_u = np.zeros((0, 3), dtype=np.uint8)
             lab_u = np.zeros((0,), dtype=np.int32)
+            conf_u = np.zeros((0,), dtype=np.float32)
 
         max_id = self._max_label_id
         if lab_u.size:
             max_id = max(max_id, int(lab_u.max()))
         lut = build_enabled_label_lut(max_id, set(enabled_classes))
         m = mask_points_by_enabled_lut(lab_u, lut)
+        if min_conf > 0.0 and conf_u.size:
+            m &= conf_u >= min_conf
         xyz = xyz_u[m]
         lab = lab_u[m]
         if semantic_colors:
@@ -262,29 +270,55 @@ class ViserSceneController:
         self._sync_frustum_visibility(frustums_visible, t)
 
         # --- Final cloud per class ---
+        empty_xyz = np.zeros((0, 3), dtype=np.float32)
+        empty_c = np.zeros((0, 3), dtype=np.uint8)
         for class_id, handle in self._final_handles.items():
             cid = int(class_id)
             if cid not in enabled_classes:
+                # Belt-and-suspenders: clear geometry too in case the client
+                # caches the previous points and ignores `visible=False`.
+                handle.points = empty_xyz
+                handle.colors = empty_c
                 handle.visible = False
                 continue
 
             xyz_c = fi.xyz_by_class.get(cid)
             if xyz_c is None or xyz_c.shape[0] == 0:
+                handle.points = empty_xyz
+                handle.colors = empty_c
                 handle.visible = False
                 continue
 
             n = int(fi.prefix_end_by_class[cid][t]) if accumulate else 0
             if n <= 0:
+                handle.points = empty_xyz
+                handle.colors = empty_c
+                handle.visible = False
+                continue
+
+            src = fi.semrgb_by_class[cid] if semantic_colors else fi.rgb_by_class[cid]
+            pts = xyz_c[:n]
+            cols = src[:n]
+            if min_conf > 0.0:
+                conf_c = fi.conf_by_class.get(cid)
+                if conf_c is not None:
+                    keep = conf_c[:n] >= min_conf
+                    pts = pts[keep]
+                    cols = cols[keep]
+
+            if pts.shape[0] == 0:
+                handle.points = empty_xyz
+                handle.colors = empty_c
                 handle.visible = False
                 continue
 
             handle.visible = True
-            handle.points = xyz_c[:n]
-            src = fi.semrgb_by_class[cid] if semantic_colors else fi.rgb_by_class[cid]
-            handle.colors = src[:n]
+            handle.points = pts
+            handle.colors = cols
             handle.point_size = float(point_size)
 
         self._last_timeline_t = t
         self._last_accumulate = accumulate
         self._last_semantic_colors = semantic_colors
         self._last_enabled = enabled_classes
+        self._last_min_confidence = min_conf

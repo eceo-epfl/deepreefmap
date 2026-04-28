@@ -43,7 +43,7 @@ def test_live_frame_cloud_xyz_matches_world_points_when_present() -> None:
     )
     batch = FrameBatch(frames=(frame,), intrinsics=np.eye(3, dtype=np.float32), image_size=(w, h), clip_counts=(1,))
     cache = LiveFrameCloudCache(batch, mapping, (7,), max_depth_for_viz=None)
-    xyz, _, _ = cache.get_unmasked(0)
+    xyz, _, _, conf = cache.get_unmasked(0)
     flat = (
         np.isfinite(depth.reshape(-1))
         & (depth.reshape(-1) >= 0.05)
@@ -51,3 +51,29 @@ def test_live_frame_cloud_xyz_matches_world_points_when_present() -> None:
     )
     expected = world.reshape(-1, 3)[flat]
     assert np.array_equal(xyz, expected)
+    # Mapping has no confidence map → live cache fills with 1.0 to keep filtering inert.
+    assert conf.shape == (xyz.shape[0],)
+    assert np.allclose(conf, 1.0)
+
+
+def test_live_frame_cloud_passes_through_confidence() -> None:
+    h, w = 2, 2
+    depth = np.ones((h, w), dtype=np.float32)
+    confidence = np.array([[0.1, 0.4], [0.7, 0.95]], dtype=np.float32)[None, ...]
+    mapping = MappingSequenceResult(
+        frame_indices=np.array([3], dtype=np.int32),
+        depth_maps=depth[None, ...],
+        poses_w_c=np.eye(4, dtype=np.float32)[None],
+        intrinsics=np.eye(3, dtype=np.float32),
+        confidence=confidence,
+    )
+    frame = PreparedFrame(
+        frame_index=3,
+        image_rgb=np.zeros((h, w, 3), dtype=np.uint8),
+        labels=np.ones((h, w), dtype=np.int32),
+        keep_mask=np.full((h, w), 255, dtype=np.uint8),
+    )
+    batch = FrameBatch(frames=(frame,), intrinsics=np.eye(3, dtype=np.float32), image_size=(w, h), clip_counts=(1,))
+    cache = LiveFrameCloudCache(batch, mapping, (3,), max_depth_for_viz=None)
+    _, _, _, conf = cache.get_unmasked(0)
+    assert sorted(conf.tolist()) == sorted(confidence.reshape(-1).tolist())

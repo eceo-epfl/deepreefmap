@@ -37,6 +37,8 @@ class FinalCloudIndex:
     xyz_by_class: dict[int, np.ndarray]
     rgb_by_class: dict[int, np.ndarray]
     semrgb_by_class: dict[int, np.ndarray]
+    conf_by_class: dict[int, np.ndarray]
+    """For class c, conf_by_class[c] is a 1-D float32 confidence per point (1.0 if cloud has no confidence)."""
     prefix_end_by_class: dict[int, np.ndarray]
     """For class c, prefix_end_by_class[c][t] = number of points with timeline_rank <= t."""
 
@@ -55,6 +57,7 @@ def build_final_cloud_index(
             xyz_by_class={},
             rgb_by_class={},
             semrgb_by_class={},
+            conf_by_class={},
             prefix_end_by_class={},
         )
 
@@ -64,6 +67,12 @@ def build_final_cloud_index(
     if cloud.frame_indices is None:
         raise ValueError("reference cloud must have frame_indices for timeline visualization")
     frame_indices = np.asarray(cloud.frame_indices, dtype=np.int32).reshape(-1)
+    if cloud.confidence is not None:
+        conf_all = np.asarray(cloud.confidence, dtype=np.float32).reshape(-1)
+        if conf_all.shape[0] != xyz.shape[0]:
+            conf_all = np.ones(xyz.shape[0], dtype=np.float32)
+    else:
+        conf_all = np.ones(xyz.shape[0], dtype=np.float32)
 
     dist = None
     if cloud.distance_to_camera is not None:
@@ -81,6 +90,7 @@ def build_final_cloud_index(
     rgb = rgb[dist_keep]
     labels = labels[dist_keep]
     frame_indices = frame_indices[dist_keep]
+    conf_all = conf_all[dist_keep]
 
     frame_order_t = tuple(int(x) for x in frame_order)
     if not frame_order_t:
@@ -90,6 +100,7 @@ def build_final_cloud_index(
             xyz_by_class={},
             rgb_by_class={},
             semrgb_by_class={},
+            conf_by_class={},
             prefix_end_by_class={},
         )
 
@@ -100,11 +111,13 @@ def build_final_cloud_index(
     rgb = rgb[in_timeline]
     labels = labels[in_timeline]
     ranks = ranks[in_timeline]
+    conf_all = conf_all[in_timeline]
 
     n_steps = len(frame_order_t)
     xyz_by_class: dict[int, np.ndarray] = {}
     rgb_by_class: dict[int, np.ndarray] = {}
     semrgb_by_class: dict[int, np.ndarray] = {}
+    conf_by_class: dict[int, np.ndarray] = {}
     prefix_end_by_class: dict[int, np.ndarray] = {}
 
     unique_labels = sorted(int(x) for x in np.unique(labels).tolist())
@@ -115,10 +128,12 @@ def build_final_cloud_index(
         xyz_c = xyz[m]
         rgb_c = rgb[m]
         ranks_c = ranks[m]
+        conf_c = conf_all[m]
         order = np.argsort(ranks_c, kind="mergesort")
         xyz_c = xyz_c[order]
         rgb_c = rgb_c[order]
         ranks_c = ranks_c[order]
+        conf_c = conf_c[order]
 
         color = class_colors.get(int(class_id), (128, 128, 128))
         sem = np.full_like(rgb_c, fill_value=0, dtype=np.uint8)
@@ -134,6 +149,7 @@ def build_final_cloud_index(
         xyz_by_class[cid] = xyz_c
         rgb_by_class[cid] = rgb_c
         semrgb_by_class[cid] = sem
+        conf_by_class[cid] = conf_c.astype(np.float32, copy=False)
         prefix_end_by_class[cid] = prefix_end
 
     class_ids = tuple(sorted(xyz_by_class.keys()))
@@ -143,5 +159,6 @@ def build_final_cloud_index(
         xyz_by_class=xyz_by_class,
         rgb_by_class=rgb_by_class,
         semrgb_by_class=semrgb_by_class,
+        conf_by_class=conf_by_class,
         prefix_end_by_class=prefix_end_by_class,
     )

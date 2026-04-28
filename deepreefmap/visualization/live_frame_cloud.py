@@ -67,13 +67,14 @@ class LiveFrameCloudCache:
         self._poses_w_c = mapping.poses_w_c
         self._intrinsics = np.asarray(mapping.intrinsics, dtype=np.float64)
         self._world_points = None if mapping.world_points is None else mapping.world_points
+        self._confidence = None if mapping.confidence is None else mapping.confidence
 
         self._frame_lookup = {int(f.frame_index): f for f in frame_batch.frames}
         self._mapping_index: dict[int, int] = {}
         for i, fid in enumerate(self._mapping_frame_indices.tolist()):
             self._mapping_index[int(fid)] = int(i)
 
-        self._cache: OrderedDict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = OrderedDict()
+        self._cache: OrderedDict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = OrderedDict()
 
     def mapping_index_for_timeline(self, timeline_t: int) -> int:
         if timeline_t < 0 or timeline_t >= len(self._frame_order):
@@ -83,8 +84,11 @@ class LiveFrameCloudCache:
             raise KeyError(f"No mapping result for frame_index={frame_idx}")
         return int(self._mapping_index[frame_idx])
 
-    def get_unmasked(self, timeline_t: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Return (xyz Nx3 float32, rgb Nx3 uint8, labels N int32) for full valid depth pixels."""
+    def get_unmasked(self, timeline_t: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Return (xyz Nx3 float32, rgb Nx3 uint8, labels N int32, confidence N float32).
+
+        Confidence is 1.0 everywhere when the mapping result has no per-frame confidence map.
+        """
         if timeline_t in self._cache:
             self._cache.move_to_end(timeline_t)
             return self._cache[timeline_t]
@@ -95,7 +99,8 @@ class LiveFrameCloudCache:
             empty_xyz = np.zeros((0, 3), dtype=np.float32)
             empty_rgb = np.zeros((0, 3), dtype=np.uint8)
             empty_lab = np.zeros((0,), dtype=np.int32)
-            self._cache[timeline_t] = (empty_xyz, empty_rgb, empty_lab)
+            empty_conf = np.zeros((0,), dtype=np.float32)
+            self._cache[timeline_t] = (empty_xyz, empty_rgb, empty_lab, empty_conf)
             self._cache.move_to_end(timeline_t)
             self._trim()
             return self._cache[timeline_t]
@@ -126,10 +131,20 @@ class LiveFrameCloudCache:
         rgb_flat = rgb_d.reshape(-1, 3).astype(np.uint8, copy=False)[flat]
         lab_flat = labels_d.reshape(-1).astype(np.int32, copy=False)[flat]
 
-        self._cache[timeline_t] = (xyz_w, rgb_flat, lab_flat)
+        if self._confidence is not None:
+            conf_full = np.asarray(self._confidence[mi], dtype=np.float32)
+            if conf_full.shape != (h_d, w_d):
+                conf_d = cv2.resize(conf_full, (w_d, h_d), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+            else:
+                conf_d = conf_full
+            conf_flat = conf_d.reshape(-1).astype(np.float32, copy=False)[flat]
+        else:
+            conf_flat = np.ones(int(flat.sum()), dtype=np.float32)
+
+        self._cache[timeline_t] = (xyz_w, rgb_flat, lab_flat, conf_flat)
         self._cache.move_to_end(timeline_t)
         self._trim()
-        return xyz_w, rgb_flat, lab_flat
+        return xyz_w, rgb_flat, lab_flat, conf_flat
 
     def _trim(self) -> None:
         while len(self._cache) > self._lru_size:
