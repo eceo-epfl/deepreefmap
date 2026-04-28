@@ -17,6 +17,7 @@ from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_se
 from deepreefmap.io.video import iter_video_frames
 from deepreefmap.mapping.registry import create_mapping_backend
 from deepreefmap.pipeline.artifacts import FrameBatch, PreparedFrame
+from deepreefmap.pipeline import preprocess_cache
 from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_reference_cloud
 from deepreefmap.pointcloud.grid_ortho import aggregate_cloud_to_ortho_grid
 from deepreefmap.pointcloud.transect_crop import crop_grid_around_transect
@@ -68,6 +69,7 @@ def run_reconstruction(
     classes_path: Path = DEFAULT_CLASSES_PATH,
     grid_bins: int = 2000,
     keep_viser_open: bool = True,
+    enable_preprocess_cache: bool = True,
 ) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -97,8 +99,25 @@ def run_reconstruction(
         profile = CameraProfile.load(camera_profile_name)
         rectifier = Rectifier(profile)
 
-        logger.info("Loading segmentation model '%s'", segmentation_name)
-        segmentation = create_segmentation_model(segmentation_name)
+        cache_dir: Path | None = None
+        if enable_preprocess_cache:
+            try:
+                cache_key = preprocess_cache.compute_cache_key(
+                    video_paths=[Path(p) for p in video_paths],
+                    fps=fps,
+                    camera_profile_name=camera_profile_name,
+                    segmentation_name=segmentation_name,
+                    classes_path=classes_path,
+                )
+                cache_dir = preprocess_cache.cache_dir_for(cache_key)
+                preprocess_cache.ensure_cache_dirs(cache_dir)
+                logger.info("Preprocess cache enabled at %s", cache_dir)
+            except Exception as exc:
+                logger.warning("Preprocess cache setup failed (%s); disabling cache.", exc)
+                cache_dir = None
+
+        # Segmentation model is created lazily on the first cache miss.
+        segmentation_factory = lambda: create_segmentation_model(segmentation_name)
 
         logger.info("Initializing mapping backend '%s'", mapping_name)
         mapping = create_mapping_backend(mapping_name, **(mapping_options or {}))
@@ -133,11 +152,12 @@ def run_reconstruction(
             begin_s=begin_s,
             end_s=end_s,
             rectifier=rectifier,
-            segmentation=segmentation,
+            segmentation_factory=segmentation_factory,
             classes_config=classes_config,
             output_dir=output_dir,
             total_frames_hint=estimated_total,
             progress_callback=progress_cb,
+            cache_dir=cache_dir,
         )
         frame_count = len(frame_batch.frames)
         if frame_count == 0:
@@ -270,11 +290,12 @@ def _prepare_frames(
     begin_s: float | None,
     end_s: float | None,
     rectifier: Rectifier,
-    segmentation,
+    segmentation_factory: Callable[[], object],
     classes_config: ClassConfig,
     output_dir: Path,
     total_frames_hint: int | None = None,
     progress_callback: Callable[[int, int | None, int, float], None] | None = None,
+    cache_dir: Path | None = None,
 ) -> FrameBatch:
     frames_dir = output_dir / "frames"
     labels_dir = output_dir / "labels"
@@ -284,6 +305,7 @@ def _prepare_frames(
     masks_dir.mkdir(parents=True, exist_ok=True)
     ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
     prepared: list[PreparedFrame] = []
+    segmentation = None  # loaded lazily on first cache miss
     if total_frames_hint is not None:
         logger.info("Frame preparation progress will be reported as current/%d", total_frames_hint)
     else:
@@ -291,47 +313,60 @@ def _prepare_frames(
     for idx, frame in iter_video_frames(video_paths, target_fps=fps, begin_s=begin_s, end_s=end_s):
         t_frame = time.monotonic()
         prepared_count = len(prepared) + 1
-        rectified = rectifier.rectify(frame)
-        labels = segmentation.predict(rectified).labels.astype(np.int32)
-        keep_mask = (~np.isin(labels, list(ignore_labels))).astype(np.uint8) * 255
-        keep_mask = cv2.blur(keep_mask, (5, 5))
-        keep_mask = np.where(keep_mask >= 255, 255, 0).astype(np.uint8)
         stem = f"{idx:08d}"
         image_path = frames_dir / f"{stem}.png"
         labels_path = labels_dir / f"{stem}.npy"
         mask_path = masks_dir / f"{stem}.png"
-        cv2.imwrite(str(image_path), cv2.cvtColor(rectified, cv2.COLOR_RGB2BGR))
-        np.save(labels_path, labels)
-        cv2.imwrite(str(mask_path), keep_mask)
-        prepared.append(
-            PreparedFrame(
-                frame_index=idx,
-                image_rgb=rectified,
-                labels=labels,
-                keep_mask=keep_mask,
-                image_path=image_path,
-                labels_path=labels_path,
-                mask_path=mask_path,
+
+        cached = None
+        if cache_dir is not None:
+            cached = preprocess_cache.try_load_frame(
+                cache_dir, idx, image_path, labels_path, mask_path
             )
-        )
+
+        if cached is not None:
+            prepared.append(cached)
+            source = "cache"
+        else:
+            if segmentation is None:
+                logger.info("Loading segmentation model (lazy on first cache miss)")
+                segmentation = segmentation_factory()
+            rectified = rectifier.rectify(frame)
+            labels = segmentation.predict(rectified).labels.astype(np.int32)
+            keep_mask = (~np.isin(labels, list(ignore_labels))).astype(np.uint8) * 255
+            keep_mask = cv2.blur(keep_mask, (5, 5))
+            keep_mask = np.where(keep_mask >= 255, 255, 0).astype(np.uint8)
+            cv2.imwrite(str(image_path), cv2.cvtColor(rectified, cv2.COLOR_RGB2BGR))
+            np.save(labels_path, labels)
+            cv2.imwrite(str(mask_path), keep_mask)
+            prepared.append(
+                PreparedFrame(
+                    frame_index=idx,
+                    image_rgb=rectified,
+                    labels=labels,
+                    keep_mask=keep_mask,
+                    image_path=image_path,
+                    labels_path=labels_path,
+                    mask_path=mask_path,
+                )
+            )
+            if cache_dir is not None:
+                preprocess_cache.save_frame(cache_dir, idx, image_path, labels_path, mask_path)
+            source = "computed"
+
+        elapsed_frame = time.monotonic() - t_frame
         if total_frames_hint is not None:
             logger.info(
-                "Prepared sampled frame %d/%d (source_idx=%d): rectified + segmented + masked in %.1fs",
-                prepared_count,
-                total_frames_hint,
-                idx,
-                time.monotonic() - t_frame,
+                "Prepared sampled frame %d/%d (source_idx=%d, %s) in %.2fs",
+                prepared_count, total_frames_hint, idx, source, elapsed_frame,
             )
         else:
             logger.info(
-                "Prepared sampled frame %d (source_idx=%d of unknown total): rectified + segmented + masked in %.1fs",
-                prepared_count,
-                idx,
-                time.monotonic() - t_frame,
+                "Prepared sampled frame %d (source_idx=%d of unknown total, %s) in %.2fs",
+                prepared_count, idx, source, elapsed_frame,
             )
         if progress_callback is not None:
-            elapsed = time.monotonic() - t_frame
-            progress_callback(prepared_count, total_frames_hint, idx, elapsed)
+            progress_callback(prepared_count, total_frames_hint, idx, elapsed_frame)
     image_size = (prepared[0].image_rgb.shape[1], prepared[0].image_rgb.shape[0]) if prepared else (0, 0)
     return FrameBatch(
         frames=tuple(prepared),
