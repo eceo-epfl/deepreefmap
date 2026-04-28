@@ -72,3 +72,46 @@ def test_crop_grid_around_transect_sets_pixel_size():
 
     assert cropped.pixel_size_m is not None
     assert cropped.rgb.shape[0] < grid.rgb.shape[0]
+
+
+def test_crop_grid_around_vertical_transect_uses_transect_direction():
+    grid = OrthoGrid(
+        rgb=np.zeros((12, 12, 3), dtype=np.uint8),
+        labels=np.zeros((12, 12), dtype=np.int32),
+        height=np.zeros((12, 12), dtype=np.float32),
+        counts=np.ones((12, 12), dtype=np.int32),
+        frame_index=np.zeros((12, 12), dtype=np.int32),
+        cell_size=1.0,
+    )
+    grid.labels[2:9, 6] = 15
+
+    cropped = crop_grid_around_transect(grid, 15, None, transect_length_m=6.0, crop_width_m=4.0)
+
+    assert np.isclose(cropped.pixel_size_m, 1.0)
+    assert cropped.labels.shape[0] > cropped.labels.shape[1]
+    assert 15 in cropped.labels
+
+
+def test_crop_grid_masks_pixels_outside_diagonal_transect_corridor():
+    grid = OrthoGrid(
+        rgb=np.ones((20, 20, 3), dtype=np.uint8) * 255,
+        labels=np.ones((20, 20), dtype=np.int32),
+        height=np.ones((20, 20), dtype=np.float32),
+        counts=np.ones((20, 20), dtype=np.int32),
+        frame_index=np.zeros((20, 20), dtype=np.int32),
+        cell_size=1.0,
+    )
+    for idx in range(3, 17):
+        grid.labels[idx, idx] = 15
+
+    cropped = crop_grid_around_transect(
+        grid,
+        15,
+        None,
+        transect_length_m=float(np.sqrt(13**2 + 13**2)),
+        crop_width_m=3.0,
+    )
+
+    assert cropped.counts[0, -1] == 0
+    assert cropped.frame_index[0, -1] == -1
+    assert cropped.counts[cropped.counts.shape[0] // 2, cropped.counts.shape[1] // 2] > 0
