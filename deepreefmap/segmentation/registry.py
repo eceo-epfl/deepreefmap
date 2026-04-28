@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 import numpy as np
 from deepreefmap.segmentation.base import SegmentationModel, SegmentationOutput
 from deepreefmap.segmentation.dinov3_dpt import DinoV3DPTWrapper
@@ -13,6 +15,9 @@ class _DummySegmentation(SegmentationModel):
         h, w = image_rgb.shape[:2]
         labels = np.zeros((h, w), dtype=np.uint8)
         return SegmentationOutput(labels=labels)
+
+    def predict_batch(self, images_rgb: Sequence[np.ndarray]) -> list[SegmentationOutput]:
+        return [self.predict(image_rgb) for image_rgb in images_rgb]
 
 
 _MODELS: dict[str, tuple[int, int]] = {

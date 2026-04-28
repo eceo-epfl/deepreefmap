@@ -9,6 +9,7 @@ from typing import Callable
 import cv2
 import imageio.v3 as iio
 import numpy as np
+from tqdm.auto import tqdm
 
 from deepreefmap.camera.intrinsics import CameraProfile
 from deepreefmap.camera.rectification import Rectifier
@@ -70,6 +71,7 @@ def run_reconstruction(
     grid_bins: int = 2000,
     keep_viser_open: bool = True,
     require_gravity_telemetry: bool = False,
+    preprocess_batch_size: int = 4,
 ) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -141,6 +143,7 @@ def run_reconstruction(
             output_dir=output_dir,
             total_frames_hint=estimated_total,
             progress_callback=progress_cb,
+            batch_size=preprocess_batch_size,
         )
         frame_count = len(frame_batch.frames)
         if frame_count == 0:
@@ -315,6 +318,7 @@ def _prepare_frames(
     output_dir: Path,
     total_frames_hint: int | None = None,
     progress_callback: Callable[[int, int | None, int, float], None] | None = None,
+    batch_size: int = 4,
 ) -> FrameBatch:
     frames_dir = output_dir / "frames"
     labels_dir = output_dir / "labels"
@@ -324,54 +328,69 @@ def _prepare_frames(
     masks_dir.mkdir(parents=True, exist_ok=True)
     ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
     prepared: list[PreparedFrame] = []
+    pending: list[tuple[int, np.ndarray]] = []
+    batch_size = max(1, int(batch_size))
     if total_frames_hint is not None:
         logger.info("Frame preparation progress will be reported as current/%d", total_frames_hint)
     else:
         logger.info("Frame preparation progress will be reported as current/unknown_total")
-    for idx, frame in iter_video_frames(video_paths, target_fps=fps, begin_s=begin_s, end_s=end_s):
-        t_frame = time.monotonic()
-        prepared_count = len(prepared) + 1
-        rectified = rectifier.rectify(frame)
-        labels = segmentation.predict(rectified).labels.astype(np.int32)
-        keep_mask = (~np.isin(labels, list(ignore_labels))).astype(np.uint8) * 255
-        keep_mask = cv2.blur(keep_mask, (5, 5))
-        keep_mask = np.where(keep_mask >= 255, 255, 0).astype(np.uint8)
-        stem = f"{idx:08d}"
-        image_path = frames_dir / f"{stem}.png"
-        labels_path = labels_dir / f"{stem}.npy"
-        mask_path = masks_dir / f"{stem}.png"
-        cv2.imwrite(str(image_path), cv2.cvtColor(rectified, cv2.COLOR_RGB2BGR))
-        np.save(labels_path, labels)
-        cv2.imwrite(str(mask_path), keep_mask)
-        prepared.append(
-            PreparedFrame(
-                frame_index=idx,
-                image_rgb=rectified,
-                labels=labels,
-                keep_mask=keep_mask,
-                image_path=image_path,
-                labels_path=labels_path,
-                mask_path=mask_path,
+    progress_bar = tqdm(
+        total=total_frames_hint,
+        desc="Preparing frames",
+        unit="frame",
+        dynamic_ncols=True,
+    )
+
+    def flush_pending() -> None:
+        if not pending:
+            return
+        t_batch = time.monotonic()
+        batch = list(pending)
+        pending.clear()
+        labels_batch = [out.labels.astype(np.int32) for out in segmentation.predict_batch([frame for _, frame in batch])]
+        if len(labels_batch) != len(batch):
+            raise RuntimeError(f"Segmentation returned {len(labels_batch)} outputs for batch of {len(batch)} frames")
+        elapsed = time.monotonic() - t_batch
+        first_idx = int(batch[0][0])
+        last_idx = int(batch[-1][0])
+        for (idx, rectified), labels in zip(batch, labels_batch, strict=True):
+            prepared_count = len(prepared) + 1
+            ignore_list = list(ignore_labels)
+            keep_mask = (~np.isin(labels, ignore_list)).astype(np.uint8) * 255
+            keep_mask = cv2.blur(keep_mask, (5, 5))
+            keep_mask = np.where(keep_mask >= 255, 255, 0).astype(np.uint8)
+            stem = f"{idx:08d}"
+            image_path = frames_dir / f"{stem}.png"
+            labels_path = labels_dir / f"{stem}.npy"
+            mask_path = masks_dir / f"{stem}.png"
+            cv2.imwrite(str(image_path), cv2.cvtColor(rectified, cv2.COLOR_RGB2BGR))
+            np.save(labels_path, labels)
+            cv2.imwrite(str(mask_path), keep_mask)
+            prepared.append(
+                PreparedFrame(
+                    frame_index=idx,
+                    image_rgb=rectified,
+                    labels=labels,
+                    keep_mask=keep_mask,
+                    image_path=image_path,
+                    labels_path=labels_path,
+                    mask_path=mask_path,
+                )
             )
-        )
-        if total_frames_hint is not None:
-            logger.info(
-                "Prepared sampled frame %d/%d (source_idx=%d): rectified + segmented + masked in %.1fs",
-                prepared_count,
-                total_frames_hint,
-                idx,
-                time.monotonic() - t_frame,
-            )
-        else:
-            logger.info(
-                "Prepared sampled frame %d (source_idx=%d of unknown total): rectified + segmented + masked in %.1fs",
-                prepared_count,
-                idx,
-                time.monotonic() - t_frame,
-            )
-        if progress_callback is not None:
-            elapsed = time.monotonic() - t_frame
-            progress_callback(prepared_count, total_frames_hint, idx, elapsed)
+            if progress_callback is not None:
+                progress_callback(prepared_count, total_frames_hint, idx, elapsed)
+        progress_bar.set_postfix_str(f"source_idx={first_idx}..{last_idx}, batch={elapsed:.1f}s")
+        progress_bar.update(len(batch))
+
+    try:
+        for idx, frame in iter_video_frames(video_paths, target_fps=fps, begin_s=begin_s, end_s=end_s):
+            rectified = rectifier.rectify(frame)
+            pending.append((idx, rectified))
+            if len(pending) >= batch_size:
+                flush_pending()
+        flush_pending()
+    finally:
+        progress_bar.close()
     image_size = (prepared[0].image_rgb.shape[1], prepared[0].image_rgb.shape[0]) if prepared else (0, 0)
     return FrameBatch(
         frames=tuple(prepared),

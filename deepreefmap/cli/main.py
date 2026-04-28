@@ -106,6 +106,10 @@ def reconstruct(
         False,
         help="Fail reconstruction if gravity telemetry cannot be loaded/aligned.",
     ),
+    preprocess_batch_size: int = typer.Option(
+        4,
+        help="Number of rectified frames to segment together during frame preparation.",
+    ),
 ) -> None:
     # #region agent log
     _debug_log(
@@ -162,6 +166,7 @@ def reconstruct(
         grid_bins=grid_bins,
         keep_viser_open=keep_viser_open,
         require_gravity_telemetry=require_gravity_telemetry,
+        preprocess_batch_size=preprocess_batch_size,
     )
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 import json
 from pathlib import Path
 
@@ -53,16 +54,23 @@ class SegformerWrapper(SegmentationModel):
         self._model = SegformerForSemanticSegmentation.from_pretrained(root, config=config).to(self._device).eval()
 
     def predict(self, image_rgb: np.ndarray) -> SegmentationOutput:
+        return self.predict_batch([image_rgb])[0]
+
+    def predict_batch(self, images_rgb: Sequence[np.ndarray]) -> list[SegmentationOutput]:
         self._lazy_load()
         import torch
         from PIL import Image
 
-        image = Image.fromarray(image_rgb)
+        if not images_rgb:
+            return []
+
+        images = [Image.fromarray(image_rgb) for image_rgb in images_rgb]
         with torch.no_grad():
-            inputs = self._processor(images=image, return_tensors="pt")
+            inputs = self._processor(images=images, return_tensors="pt")
             inputs = {k: v.to(self._device) for k, v in inputs.items()}
             outputs = self._model(**inputs)
-            pred = self._processor.post_process_semantic_segmentation(
-                outputs, target_sizes=[(image_rgb.shape[0], image_rgb.shape[1])]
-            )[0]
-        return SegmentationOutput(labels=pred.cpu().numpy().astype(np.uint8))
+            preds = self._processor.post_process_semantic_segmentation(
+                outputs,
+                target_sizes=[(image_rgb.shape[0], image_rgb.shape[1]) for image_rgb in images_rgb],
+            )
+        return [SegmentationOutput(labels=pred.cpu().numpy().astype(np.uint8)) for pred in preds]

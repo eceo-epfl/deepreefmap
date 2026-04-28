@@ -20,6 +20,7 @@ dependencies = [
   "torchvision==0.19.1",
   "pycolmap>=3.13.0",
   "viser>=0.2.23",
+  "tqdm>=4.67.3",
 ]
 
 [project.optional-dependencies]

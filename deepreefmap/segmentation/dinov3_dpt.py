@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 import importlib.util
 
@@ -32,15 +33,24 @@ class DinoV3DPTWrapper(SegmentationModel):
         self._model = mod.Dinov3DPTSegmenter.from_pretrained(root, map_location=self._device).eval()
 
     def predict(self, image_rgb: np.ndarray) -> SegmentationOutput:
+        return self.predict_batch([image_rgb])[0]
+
+    def predict_batch(self, images_rgb: Sequence[np.ndarray]) -> list[SegmentationOutput]:
         self._lazy_load()
         import torch
         from PIL import Image
 
-        image = Image.fromarray(image_rgb)
+        if not images_rgb:
+            return []
+
+        images = [Image.fromarray(image_rgb) for image_rgb in images_rgb]
         with torch.no_grad():
-            batch = self._model.processor(images=image, return_tensors="pt", do_resize=False)["pixel_values"].to(self._device)
+            batch = self._model.processor(images=images, return_tensors="pt", do_resize=False)["pixel_values"].to(self._device)
             logits = self._model(batch)
-            pred = logits.argmax(dim=1)[0].cpu().numpy().astype(np.uint8)
-        if pred.shape != image_rgb.shape[:2]:
-            pred = np.array(Image.fromarray(pred).resize((image_rgb.shape[1], image_rgb.shape[0]), resample=Image.NEAREST))
-        return SegmentationOutput(labels=pred)
+            preds = logits.argmax(dim=1).cpu().numpy().astype(np.uint8)
+        outputs = []
+        for pred, image_rgb in zip(preds, images_rgb, strict=True):
+            if pred.shape != image_rgb.shape[:2]:
+                pred = np.array(Image.fromarray(pred).resize((image_rgb.shape[1], image_rgb.shape[0]), resample=Image.NEAREST))
+            outputs.append(SegmentationOutput(labels=pred))
+        return outputs
