@@ -72,7 +72,7 @@ uv run deepreefmap list-models
 uv run deepreefmap list-profiles
 uv run deepreefmap calibrate VIDEO.mp4 --name <profile_name> --n-frames 100 --fps 10 --begin 12.0 --end 72.0
 uv run deepreefmap verify-calibration <profile_name>
-uv run deepreefmap reconstruct --videos GX010001.MP4,GX020001.MP4 --fps 10 --segmentation segformer-b5 --mapping scsfm --camera-profile gopro_hero_10 --out out --viser --tsdf
+uv run deepreefmap reconstruct --videos GX010001.MP4,GX020001.MP4 --fps 10 --segmentation segformer-b5 --mapping scsfmlearner --camera-profile gopro_hero_10 --out out --viser --tsdf
 uv run deepreefmap render-video --run-dir out
 ```
 

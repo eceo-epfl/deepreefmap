@@ -79,7 +79,6 @@ class ViserLiveApp:
         self._stacked_image_cache: dict[int, np.ndarray] = {}
         self._seg_color_cache: dict[int, np.ndarray] = {}
         self._depth_color_cache: dict[int, np.ndarray] = {}
-        self._depth_viz_cap: float | None = None
 
         self._semantic_color_toggle = None
         self._point_size_slider = None
@@ -231,7 +230,6 @@ class ViserLiveApp:
         self._depth_color_cache.clear()
 
         depth_viz_cap = median_distance_to_camera(reference_cloud)
-        self._depth_viz_cap = depth_viz_cap
         final_index = build_final_cloud_index(
             reference_cloud,
             list(frame_order),
@@ -397,7 +395,7 @@ class ViserLiveApp:
             self._seg_color_cache[int(frame_index)] = seg_color
         depth_color = self._depth_color_cache.get(int(frame_index))
         if depth_color is None:
-            depth_color = self._colorize_depth(depth, self._depth_viz_cap)
+            depth_color = self._colorize_depth(depth)
             self._depth_color_cache[int(frame_index)] = depth_color
         stacked = self._compose_stacked(image_rgb, seg_color, depth_color)
         self._stacked_image_cache[int(frame_index)] = stacked
@@ -421,39 +419,21 @@ class ViserLiveApp:
             return image
         return cv2.resize(image, (target_w, target_h), interpolation=interpolation)
 
-    def _colorize_depth(self, depth: np.ndarray, max_depth: float | None = None) -> np.ndarray:
-        """False-color depth. When ``max_depth`` is set (same cap as live 3D), clip colormap to that range and dim pixels beyond it."""
+    def _colorize_depth(self, depth: np.ndarray) -> np.ndarray:
+        """False-color depth for the 2D panel (full range); 3D live cloud clipping stays in ``LiveFrameCloudCache``."""
         d = np.asarray(depth, dtype=np.float32)
         valid = np.isfinite(d)
-        h, w = d.shape[:2]
-        out = np.zeros((h, w, 3), dtype=np.uint8)
-        if not np.any(valid):
-            return out
-
-        beyond = np.zeros_like(valid, dtype=bool)
-        grad_valid = valid
-        if max_depth is not None and np.isfinite(float(max_depth)):
-            md = float(max_depth)
-            beyond = valid & (d > md)
-            grad_valid = valid & (d <= md)
-
-        if not np.any(grad_valid):
-            out[beyond] = (40, 40, 40)
-            return out
-
-        lo, hi = np.percentile(d[grad_valid], [2, 98])
-        if max_depth is not None and np.isfinite(float(max_depth)):
-            hi = min(float(hi), float(max_depth))
+        if valid.sum() == 0:
+            return np.zeros((d.shape[0], d.shape[1], 3), dtype=np.uint8)
+        lo, hi = np.percentile(d[valid], [2, 98])
         if hi <= lo:
             hi = lo + 1e-6
-
         norm = np.zeros_like(d, dtype=np.float32)
-        norm[grad_valid] = np.clip((d[grad_valid] - lo) / (hi - lo), 0.0, 1.0)
+        norm[valid] = np.clip((d[valid] - lo) / (hi - lo), 0.0, 1.0)
         color_bgr = cv2.applyColorMap((norm * 255.0).astype(np.uint8), cv2.COLORMAP_TURBO)
         rgb = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2RGB)
-        out[grad_valid] = rgb[grad_valid]
-        out[beyond] = (40, 40, 40)
-        return out
+        rgb[~valid] = 0
+        return rgb
 
     def _colorize_seg(self, seg: np.ndarray) -> np.ndarray:
         s = np.asarray(seg, dtype=np.int32)
