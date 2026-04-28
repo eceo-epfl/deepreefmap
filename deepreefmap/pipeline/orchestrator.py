@@ -13,7 +13,7 @@ import numpy as np
 from deepreefmap.camera.intrinsics import CameraProfile
 from deepreefmap.camera.rectification import Rectifier
 from deepreefmap.config.classes import ClassConfig, DEFAULT_CLASSES_PATH, load_classes
-from deepreefmap.io.exports import save_ortho_grid, save_semantic_cloud
+from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_semantic_cloud
 from deepreefmap.io.video import iter_video_frames
 from deepreefmap.mapping.registry import create_mapping_backend
 from deepreefmap.pipeline.artifacts import FrameBatch, PreparedFrame
@@ -177,13 +177,13 @@ def run_reconstruction(
                 replacement_radius_override=replacement_radius_override,
             ),
         )
-        save_semantic_cloud(output_dir / "semantic_reference_cloud.npz", reference_cloud)
+        save_semantic_cloud(output_dir / "semantic_reference_cloud.ply", reference_cloud)
 
         cloud_for_metrics = reference_cloud
         output_files = [
             "run_manifest.json",
             "mapping_outputs.npz",
-            "semantic_reference_cloud.npz",
+            "semantic_reference_cloud.ply",
             "ortho.png",
             "ortho.npz",
             "benthic_cover.json",
@@ -201,12 +201,12 @@ def run_reconstruction(
                 mapping_result.intrinsics,
                 masks=masks_for_depth,
             )
-            np.savez_compressed(output_dir / "tsdf_cloud.npz", xyz=tsdf_xyz, rgb=tsdf_rgb)
+            save_geometry_cloud(output_dir / "tsdf_cloud.ply", tsdf_xyz, tsdf_rgb)
             semantic_tsdf = align_tsdf_to_reference(tsdf_xyz, tsdf_rgb, reference_cloud)
-            save_semantic_cloud(output_dir / "semantic_tsdf_cloud.npz", semantic_tsdf)
+            save_semantic_cloud(output_dir / "semantic_tsdf_cloud.ply", semantic_tsdf)
             if len(semantic_tsdf) > 0:
                 cloud_for_metrics = semantic_tsdf
-            output_files += ["tsdf_cloud.npz", "semantic_tsdf_cloud.npz"]
+            output_files += ["tsdf_cloud.ply", "semantic_tsdf_cloud.ply"]
 
         logger.info("Building aggregated ortho grid...")
         if viewer is not None:

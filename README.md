@@ -111,8 +111,8 @@ Each reconstruction writes cached and derived artifacts for inspection:
 
 - `frames/`, `labels/`, `masks/`: rectified RGB frames, semantic labels, and class-derived keep masks.
 - `mapping_outputs.npz`: depth, poses, intrinsics, confidence, and frame indices.
-- `semantic_reference_cloud.npz`: filtered semantic reference point cloud.
-- `tsdf_cloud.npz` and `semantic_tsdf_cloud.npz`: geometry and semantics when `--tsdf` is enabled.
+- `semantic_reference_cloud.ply`: filtered semantic reference point cloud (binary PLY with `label`, `confidence`, `frame_index` per vertex).
+- `tsdf_cloud.ply` and `semantic_tsdf_cloud.ply`: geometry and semantics when `--tsdf` is enabled.
 - `ortho.png` and `ortho.npz`: aggregated ortho grid used for reporting.
 - `benthic_cover.json`: class-aware class counts and fractions.
 - `run_manifest.json`: single canonical run manifest (schema, summary fields, frame paths, mapping refs).
