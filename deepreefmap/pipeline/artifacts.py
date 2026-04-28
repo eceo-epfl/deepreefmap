@@ -27,6 +27,7 @@ class FrameBatch:
     intrinsics: np.ndarray
     image_size: tuple[int, int]
     clip_counts: tuple[int, ...]
+    gravity_vectors: np.ndarray | None = None
 
     @property
     def frame_indices(self) -> list[int]:
@@ -55,6 +56,7 @@ class MappingSequenceResult:
     local_points: np.ndarray | None = None
     confidence: np.ndarray | None = None
     scale_type: ScaleType = "unknown"
+    gravity_vectors: np.ndarray | None = None
 
     def estimate_for_index(self, frame_index: int):
         from deepreefmap.mapping.base import FrameEstimate

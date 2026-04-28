@@ -26,6 +26,7 @@ from deepreefmap.pointcloud.tsdf_align import align_tsdf_to_reference
 from deepreefmap.postproc.benthic_cover import compute_benthic_cover
 from deepreefmap.postproc.reports import save_cover_report, save_run_manifest
 from deepreefmap.segmentation.registry import create_segmentation_model
+from deepreefmap.telemetry.gopro import extract_gravity_vectors_for_video_selection
 from deepreefmap.visualization.viser_app import ViserLiveApp
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,8 @@ def run_reconstruction(
                 cache_dir = None
 
         # Segmentation model is created lazily on the first cache miss.
-        segmentation_factory = lambda: create_segmentation_model(segmentation_name)
+        def segmentation_factory() -> object:
+            return create_segmentation_model(segmentation_name)
 
         logger.info("Initializing mapping backend '%s'", mapping_name)
         mapping = create_mapping_backend(mapping_name, **(mapping_options or {}))
@@ -139,13 +141,14 @@ def run_reconstruction(
         t_start = time.monotonic()
         progress_cb: Callable[[int, int | None, int, float], None] | None = None
         if viewer is not None:
-            progress_cb = lambda current, total, frame_idx, elapsed_s: viewer.update_progress(
-                "preprocess",
-                current=current,
-                total=total,
-                message=f"Rectify+segment+mask ({elapsed_s:.1f}s)",
-                frame_index=frame_idx,
-            )
+            def progress_cb(current: int, total: int | None, frame_idx: int, elapsed_s: float) -> None:
+                viewer.update_progress(
+                    "preprocess",
+                    current=current,
+                    total=total,
+                    message=f"Rectify+segment+mask ({elapsed_s:.1f}s)",
+                    frame_index=frame_idx,
+                )
         frame_batch = _prepare_frames(
             video_paths=[Path(p) for p in video_paths],
             fps=fps,
@@ -162,6 +165,27 @@ def run_reconstruction(
         frame_count = len(frame_batch.frames)
         if frame_count == 0:
             raise RuntimeError("No frames processed")
+        gravity_vectors = extract_gravity_vectors_for_video_selection(
+            [Path(p) for p in video_paths],
+            target_fps=fps,
+            begin_s=begin_s,
+            end_s=end_s,
+        )
+        if gravity_vectors is not None and gravity_vectors.shape[0] == frame_count:
+            frame_batch = FrameBatch(
+                frames=frame_batch.frames,
+                intrinsics=frame_batch.intrinsics,
+                image_size=frame_batch.image_size,
+                clip_counts=frame_batch.clip_counts,
+                gravity_vectors=gravity_vectors,
+            )
+            logger.info("Loaded GoPro gravity telemetry for %d sampled frames", frame_count)
+        elif gravity_vectors is not None:
+            logger.warning(
+                "Ignoring gravity telemetry: got %d vectors for %d sampled frames",
+                gravity_vectors.shape[0],
+                frame_count,
+            )
         if viewer is not None:
             viewer.set_stage("preprocess", "completed", f"Prepared {frame_count} sampled frames")
 
@@ -171,7 +195,11 @@ def run_reconstruction(
             viewer.set_stage("mapping", "running", "3D mapping pipeline in progress")
             viewer.update_progress("mapping", current=0, total=frame_count, message="Starting mapping")
         active_stage = "mapping"
-        mapping_result = mapping.process_sequence(frame_batch.frame_indices, frame_batch.images)
+        mapping_result = mapping.process_sequence(
+            frame_batch.frame_indices,
+            frame_batch.images,
+            gravity_vectors=frame_batch.gravity_vectors,
+        )
         if viewer is not None:
             viewer.update_progress("mapping", current=frame_count, total=frame_count, message="Mapping complete")
             viewer.set_stage("mapping", "completed", "3D mapping complete")
@@ -182,6 +210,7 @@ def run_reconstruction(
             poses_w_c=mapping_result.poses_w_c,
             intrinsics=mapping_result.intrinsics,
             confidence=np.asarray([]) if mapping_result.confidence is None else mapping_result.confidence,
+            gravity_vectors=np.asarray([]) if mapping_result.gravity_vectors is None else mapping_result.gravity_vectors,
         )
 
         logger.info("Building filtered semantic reference cloud...")
@@ -267,6 +296,7 @@ def run_reconstruction(
             reference_cloud_size=len(reference_cloud),
             metric_cloud_size=len(cloud_for_metrics),
             pixel_size_m=grid.pixel_size_m,
+            gravity_telemetry=mapping_result.gravity_vectors is not None,
             output_files=output_files,
         ))
         if viewer is not None:
@@ -468,6 +498,7 @@ def _build_manifest(
     reference_cloud_size: int,
     metric_cloud_size: int,
     pixel_size_m: float | None,
+    gravity_telemetry: bool,
     output_files: list[str],
 ) -> dict[str, object]:
     return {
@@ -480,6 +511,7 @@ def _build_manifest(
         "semantic_reference_points": reference_cloud_size,
         "metric_points": metric_cloud_size,
         "pixel_size_m": pixel_size_m,
+        "gravity_telemetry": gravity_telemetry,
         "output_files": output_files,
         "frame_indices": frame_batch.frame_indices,
         "frame_paths": [_rel(output_dir, frame.image_path) for frame in frame_batch.frames],

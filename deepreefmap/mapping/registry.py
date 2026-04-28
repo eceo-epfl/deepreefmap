@@ -6,7 +6,7 @@ from deepreefmap.mapping.loger_backend import LoGeRBackend
 from deepreefmap.mapping.scsfm_backend import SCSfMBackend
 
 
-_BACKENDS: tuple[str, ...] = ("scsfm", "loger", "loger_star")
+_BACKENDS: tuple[str, ...] = ("scsfm", "scsfmlearner", "loger", "loger_star")
 
 _LOGER_CKPTS = Path(__file__).resolve().parents[2] / "third_party" / "LoGeR" / "ckpts"
 
@@ -24,7 +24,7 @@ def _loger_star_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
 def create_mapping_backend(name: str, **kwargs: Any) -> MappingBackend:
     if name not in _BACKENDS:
         raise ValueError(f"Unsupported mapping backend: {name}")
-    if name == "scsfmlearner":
+    if name in {"scsfm", "scsfmlearner"}:
         return SCSfMBackend()
     if name == "loger":
         return LoGeRBackend(**kwargs)

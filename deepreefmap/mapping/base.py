@@ -3,6 +3,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from deepreefmap.mapping.gravity import align_poses_to_gravity
+
 
 @dataclass
 class FrameEstimate:
@@ -32,6 +34,7 @@ class MappingBackend(ABC):
         self,
         frame_indices: list[int],
         images_rgb: list[np.ndarray],
+        gravity_vectors: np.ndarray | None = None,
     ):
         """Return depth + pose estimates for an ordered image sequence.
 
@@ -58,13 +61,17 @@ class MappingBackend(ABC):
                 ],
                 axis=0,
             )
+        poses_w_c = np.stack([est.pose_w_c for est in estimates], axis=0).astype(np.float32)
+        if gravity_vectors is not None:
+            poses_w_c = align_poses_to_gravity(poses_w_c, gravity_vectors)
         return MappingSequenceResult(
             frame_indices=np.asarray([est.frame_index for est in estimates], dtype=np.int32),
             depth_maps=np.stack([est.depth for est in estimates], axis=0).astype(np.float32),
-            poses_w_c=np.stack([est.pose_w_c for est in estimates], axis=0).astype(np.float32),
+            poses_w_c=poses_w_c,
             intrinsics=estimates[0].intrinsics.astype(np.float32),
             world_points=None,
             local_points=None,
             confidence=confidence,
             scale_type=estimates[0].scale_type,
+            gravity_vectors=None if gravity_vectors is None else gravity_vectors.astype(np.float32),
         )

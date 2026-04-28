@@ -133,7 +133,10 @@ class LoGeRBackend(MappingBackend):
         self,
         frame_indices: list[int],
         images_rgb: list[np.ndarray],
+        gravity_vectors: np.ndarray | None = None,
     ) -> MappingSequenceResult:
+        if gravity_vectors is not None:
+            logger.info("Gravity telemetry is available but LoGeR pose output is left unchanged.")
         if not images_rgb:
             raise RuntimeError("LoGeR cannot process an empty sequence")
         try:
@@ -230,6 +233,7 @@ class LoGeRBackend(MappingBackend):
                 local_points=local_points.astype(np.float32),
                 confidence=confidence,
                 scale_type="relative",
+                gravity_vectors=None if gravity_vectors is None else gravity_vectors.astype(np.float32),
             )
         except Exception as exc:
             raise RuntimeError("LoGeR sequence inference failed") from exc
