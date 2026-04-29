@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import logging
 import time
 from pathlib import Path
@@ -196,6 +197,8 @@ def run_reconstruction(
                         "clip_counts": list(frame_batch.clip_counts),
                     },
                 )
+        _release_segmentation_gpu_memory(segmentation)
+        segmentation = None
         frame_count = len(frame_batch.frames)
         if frame_count == 0:
             raise RuntimeError("No frames processed")
@@ -584,6 +587,33 @@ def _estimate_selected_frame_count(
             break
 
     return total
+
+
+def _release_segmentation_gpu_memory(segmentation: object | None) -> None:
+    """Best-effort release of segmentation model GPU allocations before mapping."""
+    if segmentation is None:
+        return
+    model = getattr(segmentation, "_model", None)
+    if model is not None and hasattr(model, "to"):
+        try:
+            model.to("cpu")
+        except Exception:
+            pass
+    for attr_name in ("_model", "_processor", "_device"):
+        if hasattr(segmentation, attr_name):
+            try:
+                setattr(segmentation, attr_name, None)
+            except Exception:
+                pass
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
 
 
 def _rel(output_dir: Path, path: Path | None) -> str | None:

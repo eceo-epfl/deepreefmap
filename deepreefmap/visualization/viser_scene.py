@@ -150,15 +150,11 @@ class ViserSceneController:
         return list(self._frustum_handles.items())
 
     def highlight_frustum(self, frame_index: int | None) -> None:
-        """Dim non-current frustums; highlight current (optional)."""
+        """Keep all frustums in a neutral grey tone."""
         for fid, hnd in self._frustum_handles.items():
             try:
-                if frame_index is None:
-                    hnd.color = (0.45, 0.45, 0.45)
-                elif int(fid) == int(frame_index):
-                    hnd.color = (0.95, 0.55, 0.15)
-                else:
-                    hnd.color = (0.45, 0.45, 0.45)
+                _ = fid, frame_index
+                hnd.color = (0.45, 0.45, 0.45)
             except Exception:
                 pass
 
