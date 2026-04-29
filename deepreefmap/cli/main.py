@@ -94,11 +94,11 @@ def reconstruct(
     loger_overlap_size: int = typer.Option(3, help="LoGeR overlap size."),
     scsfmlearner_checkpoint_path: Optional[Path] = typer.Option(
         None,
-        help="SC-SfMLearner checkpoint path.",
+        help="SC-SfMLearner training checkpoint path (.pt containing both disp_state_dict and pose_state_dict).",
     ),
     scsfmlearner_pose_checkpoint_path: Optional[Path] = typer.Option(
         None,
-        help="Optional separate SC-SfMLearner pose checkpoint path.",
+        help="Optional separate pose checkpoint path (legacy override; defaults to --scsfmlearner-checkpoint-path).",
     ),
     scsfmlearner_width: int = typer.Option(
         512,
@@ -157,14 +157,19 @@ def reconstruct(
         if scsfmlearner_checkpoint_path is None:
             typer.echo("`--scsfmlearner-checkpoint-path` is required for mapping=scsfmlearner.", err=True)
             raise typer.Exit(code=1)
+        if not scsfmlearner_checkpoint_path.exists():
+            typer.echo(f"SC-SfMLearner checkpoint not found: {scsfmlearner_checkpoint_path}", err=True)
+            raise typer.Exit(code=1)
+        pose_checkpoint_path = scsfmlearner_pose_checkpoint_path or scsfmlearner_checkpoint_path
+        if not pose_checkpoint_path.exists():
+            typer.echo(f"SC-SfMLearner pose checkpoint not found: {pose_checkpoint_path}", err=True)
+            raise typer.Exit(code=1)
         if scsfmlearner_width <= 0 or scsfmlearner_height <= 0:
             typer.echo("`--scsfmlearner-width` and `--scsfmlearner-height` must be positive.", err=True)
             raise typer.Exit(code=1)
         mapping_options = {
             "checkpoint_path": str(scsfmlearner_checkpoint_path),
-            "pose_checkpoint_path": (
-                str(scsfmlearner_pose_checkpoint_path) if scsfmlearner_pose_checkpoint_path else None
-            ),
+            "pose_checkpoint_path": str(pose_checkpoint_path),
             "target_width": scsfmlearner_width,
             "target_height": scsfmlearner_height,
         }
