@@ -15,7 +15,6 @@ class SCSfMLearnerBackend(MappingBackend):
         self,
         *,
         checkpoint_path: str,
-        pose_checkpoint_path: str | None = None,
         target_width: int = 512,
         target_height: int = 256,
         device: str | None = None,
@@ -23,7 +22,6 @@ class SCSfMLearnerBackend(MappingBackend):
         self.name = "scsfmlearner"
         self.default_window_size = 3
         self._checkpoint_path = checkpoint_path
-        self._pose_checkpoint_path = pose_checkpoint_path
         self._target_size = (int(target_width), int(target_height))
         self._device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         if self._target_size[0] <= 0 or self._target_size[1] <= 0:
@@ -52,32 +50,28 @@ class SCSfMLearnerBackend(MappingBackend):
         return scaled
 
     def _load_models(self) -> None:
-        disp_path = Path(self._checkpoint_path)
-        if not disp_path.exists():
-            raise FileNotFoundError(f"SC-SfMLearner depth checkpoint not found: {disp_path}")
-
-        pose_path = Path(self._pose_checkpoint_path) if self._pose_checkpoint_path else disp_path
-        if not pose_path.exists():
-            raise FileNotFoundError(f"SC-SfMLearner pose checkpoint not found: {pose_path}")
+        checkpoint_path = Path(self._checkpoint_path)
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"SC-SfMLearner checkpoint not found: {checkpoint_path}")
 
         self._disp_net = DispResNet(num_layers=18, pretrained=False).to(self._device)
         self._pose_net = PoseResNet(num_layers=18, pretrained=False).to(self._device)
 
-        disp_ckpt = torch.load(disp_path, map_location=self._device)
-        if "disp_state_dict" in disp_ckpt:
-            self._disp_net.load_state_dict(disp_ckpt["disp_state_dict"], strict=True)
-        elif "state_dict" in disp_ckpt:
-            self._disp_net.load_state_dict(disp_ckpt["state_dict"], strict=True)
-        else:
-            self._disp_net.load_state_dict(disp_ckpt, strict=True)
+        checkpoint = torch.load(checkpoint_path, map_location=self._device)
+        if not isinstance(checkpoint, dict):
+            raise RuntimeError(
+                f"SC-SfMLearner checkpoint must be a dict with keys "
+                f"`disp_state_dict` and `pose_state_dict`, got {type(checkpoint).__name__}."
+            )
+        if "disp_state_dict" not in checkpoint or "pose_state_dict" not in checkpoint:
+            available_keys = ", ".join(sorted(str(k) for k in checkpoint.keys()))
+            raise KeyError(
+                "SC-SfMLearner checkpoint is missing required keys. "
+                f"Expected `disp_state_dict` and `pose_state_dict`; found: [{available_keys}]."
+            )
 
-        pose_ckpt = torch.load(pose_path, map_location=self._device)
-        if "pose_state_dict" in pose_ckpt:
-            self._pose_net.load_state_dict(pose_ckpt["pose_state_dict"], strict=True)
-        elif "state_dict" in pose_ckpt:
-            self._pose_net.load_state_dict(pose_ckpt["state_dict"], strict=True)
-        else:
-            self._pose_net.load_state_dict(pose_ckpt, strict=True)
+        self._disp_net.load_state_dict(checkpoint["disp_state_dict"], strict=True)
+        self._pose_net.load_state_dict(checkpoint["pose_state_dict"], strict=True)
 
         self._disp_net.eval()
         self._pose_net.eval()
