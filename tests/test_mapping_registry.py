@@ -17,6 +17,19 @@ def test_create_scsfmlearner_backend_uses_registered_name():
         backend = create_mapping_backend("scsfmlearner", checkpoint_path="dummy.pt")
     assert isinstance(backend, SCSfMLearnerBackend)
     assert backend.name == "scsfmlearner"
+    assert backend._target_size == (512, 256)
+
+
+def test_create_scsfmlearner_backend_accepts_custom_target_size():
+    with patch.object(SCSfMLearnerBackend, "_load_models", lambda self: None):
+        backend = create_mapping_backend(
+            "scsfmlearner",
+            checkpoint_path="dummy.pt",
+            target_width=320,
+            target_height=192,
+        )
+    assert isinstance(backend, SCSfMLearnerBackend)
+    assert backend._target_size == (320, 192)
 
 
 def test_create_loger_star_uses_star_checkpoint_defaults():

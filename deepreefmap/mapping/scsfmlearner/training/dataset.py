@@ -16,14 +16,6 @@ def _load_image(path: Path) -> np.ndarray:
     return image.astype(np.float32)
 
 
-def _default_intrinsics(height: int, width: int) -> np.ndarray:
-    fx = 0.8 * width
-    fy = 0.8 * height
-    cx = width * 0.5
-    cy = height * 0.5
-    return np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
-
-
 @dataclass(frozen=True)
 class FramePair:
     sequence_name: str
@@ -60,11 +52,7 @@ class ImageSequenceDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tenso
                 continue
             intrinsics_path = sequence / "cam.txt"
             intrinsics = None
-            if intrinsics_path.exists():
-                intrinsics = np.loadtxt(intrinsics_path, dtype=np.float32).reshape(3, 3)
-            if intrinsics is None:
-                sample_img = _load_image(images[0])
-                intrinsics = _default_intrinsics(sample_img.shape[0], sample_img.shape[1])
+            intrinsics = np.loadtxt(intrinsics_path, dtype=np.float32).reshape(3, 3)
             for idx in range(0, len(images) - self.skip_frames):
                 samples.append(FramePair(sequence.name, images[idx], images[idx + self.skip_frames], intrinsics.copy()))
         return samples

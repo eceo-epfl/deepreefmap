@@ -100,6 +100,14 @@ def reconstruct(
         None,
         help="Optional separate SC-SfMLearner pose checkpoint path.",
     ),
+    scsfmlearner_width: int = typer.Option(
+        512,
+        help="SC-SfMLearner mapping width (independent of global processing width).",
+    ),
+    scsfmlearner_height: int = typer.Option(
+        256,
+        help="SC-SfMLearner mapping height (independent of global processing height).",
+    ),
     grid_bins: int = typer.Option(2000, help="Number of bins used to build the ortho grid."),
     keep_viser_open: bool = typer.Option(
         True,
@@ -149,11 +157,16 @@ def reconstruct(
         if scsfmlearner_checkpoint_path is None:
             typer.echo("`--scsfmlearner-checkpoint-path` is required for mapping=scsfmlearner.", err=True)
             raise typer.Exit(code=1)
+        if scsfmlearner_width <= 0 or scsfmlearner_height <= 0:
+            typer.echo("`--scsfmlearner-width` and `--scsfmlearner-height` must be positive.", err=True)
+            raise typer.Exit(code=1)
         mapping_options = {
             "checkpoint_path": str(scsfmlearner_checkpoint_path),
             "pose_checkpoint_path": (
                 str(scsfmlearner_pose_checkpoint_path) if scsfmlearner_pose_checkpoint_path else None
             ),
+            "target_width": scsfmlearner_width,
+            "target_height": scsfmlearner_height,
         }
     run_reconstruction(
         video_paths=[v.strip() for v in videos.split(",") if v.strip()],
