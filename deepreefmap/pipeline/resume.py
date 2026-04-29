@@ -39,6 +39,8 @@ def preprocess_key(
     camera_profile_name: str,
     segmentation_name: str,
     classes_path: Path,
+    processing_width: int | None = None,
+    processing_height: int | None = None,
 ) -> str:
     classes_bytes = Path(classes_path).read_bytes()
     return _hash_payload({
@@ -49,6 +51,8 @@ def preprocess_key(
         "end_s": end_s,
         "camera_profile": camera_profile_name,
         "segmentation": segmentation_name,
+        "processing_width": processing_width,
+        "processing_height": processing_height,
         "classes_sha256": hashlib.sha256(classes_bytes).hexdigest(),
     })
 

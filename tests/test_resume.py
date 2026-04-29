@@ -38,6 +38,7 @@ def test_preprocess_key_changes_with_inputs(fake_video: Path, classes_file: Path
     assert k0 != resume_mod.preprocess_key(**{**base, "segmentation_name": "seg-b"})
     assert k0 != resume_mod.preprocess_key(**{**base, "camera_profile_name": "cam-b"})
     assert k0 != resume_mod.preprocess_key(**{**base, "begin_s": 1.0})
+    assert k0 != resume_mod.preprocess_key(**{**base, "processing_width": 320, "processing_height": 180})
 
 
 def test_preprocess_key_changes_with_video_mtime(fake_video: Path, classes_file: Path) -> None:

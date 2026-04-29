@@ -71,6 +71,8 @@ def run_reconstruction(
     keep_viser_open: bool = True,
     require_gravity_telemetry: bool = False,
     preprocess_batch_size: int = 4,
+    processing_width: int | None = None,
+    processing_height: int | None = None,
 ) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -99,6 +101,12 @@ def run_reconstruction(
         logger.info("Loading camera profile '%s'", camera_profile_name)
         profile = CameraProfile.load(camera_profile_name)
         rectifier = Rectifier(profile)
+        processing_image_size = _resolve_processing_image_size(
+            profile.image_size,
+            processing_width=processing_width,
+            processing_height=processing_height,
+        )
+        processing_intrinsics = _scale_intrinsics(profile.k, profile.image_size, processing_image_size)
 
         prep_key = resume_mod.preprocess_key(
             video_paths=[Path(p) for p in video_paths],
@@ -108,6 +116,8 @@ def run_reconstruction(
             camera_profile_name=camera_profile_name,
             segmentation_name=segmentation_name,
             classes_path=classes_path,
+            processing_width=processing_image_size[0],
+            processing_height=processing_image_size[1],
         )
         prep_sidecar = resume_mod.read_sidecar(output_dir, resume_mod.STAGE_PREPROCESS)
         prep_hit = prep_sidecar is not None and prep_sidecar.get("key") == prep_key
@@ -150,7 +160,7 @@ def run_reconstruction(
         frame_batch: FrameBatch | None = None
         if prep_hit:
             assert prep_sidecar is not None
-            frame_batch = resume_mod.load_prepared_frames(output_dir, prep_sidecar, profile.k)
+            frame_batch = resume_mod.load_prepared_frames(output_dir, prep_sidecar, processing_intrinsics)
             if frame_batch is None:
                 logger.warning("Resume: preprocess artifacts incomplete, recomputing.")
                 resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_PREPROCESS)
@@ -173,6 +183,8 @@ def run_reconstruction(
                 total_frames_hint=estimated_total,
                 progress_callback=progress_cb,
                 batch_size=preprocess_batch_size,
+                processing_image_size=processing_image_size,
+                processing_intrinsics=processing_intrinsics,
             )
             if len(frame_batch.frames) > 0:
                 resume_mod.write_sidecar(
@@ -245,7 +257,7 @@ def run_reconstruction(
         if mapping_result is None:
             logger.info("Initializing mapping backend '%s'", mapping_name)
             mapping = create_mapping_backend(mapping_name, **(mapping_options or {}))
-            mapping.initialize(image_size=profile.image_size, intrinsics=profile.k)
+            mapping.initialize(image_size=processing_image_size, intrinsics=processing_intrinsics)
             logger.info("Running mapping backend '%s' on %d prepared frames...", mapping_name, frame_count)
             if viewer is not None:
                 viewer.set_stage("mapping", "running", "3D mapping pipeline in progress")
@@ -392,6 +404,8 @@ def _prepare_frames(
     total_frames_hint: int | None = None,
     progress_callback: Callable[[int, int | None, int, float], None] | None = None,
     batch_size: int = 4,
+    processing_image_size: tuple[int, int] | None = None,
+    processing_intrinsics: np.ndarray | None = None,
 ) -> FrameBatch:
     frames_dir = output_dir / "frames"
     labels_dir = output_dir / "labels"
@@ -456,8 +470,11 @@ def _prepare_frames(
         progress_bar.update(len(batch))
 
     try:
+        target_w, target_h = processing_image_size if processing_image_size is not None else rectifier.profile.image_size
         for idx, frame in iter_video_frames(video_paths, target_fps=fps, begin_s=begin_s, end_s=end_s):
             rectified = rectifier.rectify(frame)
+            if rectified.shape[1] != target_w or rectified.shape[0] != target_h:
+                rectified = cv2.resize(rectified, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
             pending.append((idx, rectified))
             if len(pending) >= batch_size:
                 flush_pending()
@@ -467,10 +484,35 @@ def _prepare_frames(
     image_size = (prepared[0].image_rgb.shape[1], prepared[0].image_rgb.shape[0]) if prepared else (0, 0)
     return FrameBatch(
         frames=tuple(prepared),
-        intrinsics=rectifier.profile.k,
+        intrinsics=rectifier.profile.k if processing_intrinsics is None else processing_intrinsics,
         image_size=image_size,
         clip_counts=(len(prepared),),
     )
+
+
+def _resolve_processing_image_size(
+    native_image_size: tuple[int, int],
+    *,
+    processing_width: int | None,
+    processing_height: int | None,
+) -> tuple[int, int]:
+    if processing_width is None and processing_height is None:
+        return native_image_size
+    if processing_width is None or processing_height is None:
+        raise ValueError("processing_width and processing_height must be provided together")
+    if processing_width <= 0 or processing_height <= 0:
+        raise ValueError("processing_width and processing_height must be positive")
+    return (int(processing_width), int(processing_height))
+
+
+def _scale_intrinsics(k: np.ndarray, original_size: tuple[int, int], target_size: tuple[int, int]) -> np.ndarray:
+    orig_w, orig_h = original_size
+    target_w, target_h = target_size
+    scaled = k.astype(np.float32).copy()
+    scaled[0, :] *= float(target_w) / max(float(orig_w), 1.0)
+    scaled[1, :] *= float(target_h) / max(float(orig_h), 1.0)
+    scaled[2] = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    return scaled
 
 
 def _resize_rgb(image_rgb: np.ndarray, depth_shape_hw: tuple[int, int]) -> np.ndarray:

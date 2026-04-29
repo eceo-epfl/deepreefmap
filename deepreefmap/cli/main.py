@@ -113,6 +113,14 @@ def reconstruct(
         4,
         help="Number of rectified frames to segment together during frame preparation.",
     ),
+    processing_width: Optional[int] = typer.Option(
+        None,
+        help="Width to resize rectified frames to before segmentation/mapping.",
+    ),
+    processing_height: Optional[int] = typer.Option(
+        None,
+        help="Height to resize rectified frames to before segmentation/mapping.",
+    ),
 ) -> None:
     # #region agent log
     _debug_log(
@@ -170,6 +178,8 @@ def reconstruct(
         keep_viser_open=keep_viser_open,
         require_gravity_telemetry=require_gravity_telemetry,
         preprocess_batch_size=preprocess_batch_size,
+        processing_width=processing_width,
+        processing_height=processing_height,
     )
 
 
