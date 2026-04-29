@@ -17,7 +17,8 @@ from deepreefmap.config.classes import ClassConfig, DEFAULT_CLASSES_PATH, load_c
 from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_semantic_cloud
 from deepreefmap.io.video import iter_video_frames
 from deepreefmap.mapping.registry import create_mapping_backend
-from deepreefmap.pipeline.artifacts import FrameBatch, PreparedFrame
+from deepreefmap.pipeline import resume as resume_mod
+from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
 from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_reference_cloud
 from deepreefmap.pointcloud.grid_ortho import aggregate_cloud_to_ortho_grid
 from deepreefmap.pointcloud.transect_crop import crop_grid_around_transect
@@ -101,12 +102,28 @@ def run_reconstruction(
         profile = CameraProfile.load(camera_profile_name)
         rectifier = Rectifier(profile)
 
-        logger.info("Loading segmentation model '%s'", segmentation_name)
-        segmentation = create_segmentation_model(segmentation_name)
+        prep_key = resume_mod.preprocess_key(
+            video_paths=[Path(p) for p in video_paths],
+            fps=fps,
+            begin_s=begin_s,
+            end_s=end_s,
+            camera_profile_name=camera_profile_name,
+            segmentation_name=segmentation_name,
+            classes_path=classes_path,
+        )
+        prep_sidecar = resume_mod.read_sidecar(output_dir, resume_mod.STAGE_PREPROCESS)
+        prep_hit = prep_sidecar is not None and prep_sidecar.get("key") == prep_key
+        if not prep_hit:
+            # Preprocess invalidated → mapping cache also invalid (depends on prep key).
+            resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_PREPROCESS)
+            resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_MAPPING)
 
-        logger.info("Initializing mapping backend '%s'", mapping_name)
-        mapping = create_mapping_backend(mapping_name, **(mapping_options or {}))
-        mapping.initialize(image_size=profile.image_size, intrinsics=profile.k)
+        if not prep_hit:
+            logger.info("Loading segmentation model '%s'", segmentation_name)
+            segmentation = create_segmentation_model(segmentation_name)
+        else:
+            segmentation = None
+            logger.info("Resume: preprocess cache hit, skipping segmentation model load.")
         if viewer is not None:
             viewer.set_stage("startup", "completed", "Backends initialized")
 
@@ -132,19 +149,43 @@ def run_reconstruction(
                     message=f"Rectify+segment+mask ({elapsed_s:.1f}s)",
                     frame_index=frame_idx,
                 )
-        frame_batch = _prepare_frames(
-            video_paths=[Path(p) for p in video_paths],
-            fps=fps,
-            begin_s=begin_s,
-            end_s=end_s,
-            rectifier=rectifier,
-            segmentation=segmentation,
-            classes_config=classes_config,
-            output_dir=output_dir,
-            total_frames_hint=estimated_total,
-            progress_callback=progress_cb,
-            batch_size=preprocess_batch_size,
-        )
+        frame_batch: FrameBatch | None = None
+        if prep_hit:
+            assert prep_sidecar is not None
+            frame_batch = resume_mod.load_prepared_frames(output_dir, prep_sidecar, profile.k)
+            if frame_batch is None:
+                logger.warning("Resume: preprocess artifacts incomplete, recomputing.")
+                resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_PREPROCESS)
+                resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_MAPPING)
+                prep_hit = False
+                logger.info("Loading segmentation model '%s'", segmentation_name)
+                segmentation = create_segmentation_model(segmentation_name)
+            else:
+                logger.info("Resume: loaded %d preprocessed frames from %s", len(frame_batch.frames), output_dir)
+        if frame_batch is None:
+            frame_batch = _prepare_frames(
+                video_paths=[Path(p) for p in video_paths],
+                fps=fps,
+                begin_s=begin_s,
+                end_s=end_s,
+                rectifier=rectifier,
+                segmentation=segmentation,
+                classes_config=classes_config,
+                output_dir=output_dir,
+                total_frames_hint=estimated_total,
+                progress_callback=progress_cb,
+                batch_size=preprocess_batch_size,
+            )
+            if len(frame_batch.frames) > 0:
+                resume_mod.write_sidecar(
+                    output_dir,
+                    resume_mod.STAGE_PREPROCESS,
+                    prep_key,
+                    extra={
+                        "frame_indices": frame_batch.frame_indices,
+                        "clip_counts": list(frame_batch.clip_counts),
+                    },
+                )
         frame_count = len(frame_batch.frames)
         if frame_count == 0:
             raise RuntimeError("No frames processed")
@@ -183,28 +224,56 @@ def run_reconstruction(
             viewer.set_stage("preprocess", "completed", f"Prepared {frame_count} sampled frames")
 
         logger.info("Prepared %d sampled frames in %.1fs", frame_count, time.monotonic() - t_start)
-        logger.info("Running mapping backend '%s' on %d prepared frames...", mapping_name, frame_count)
-        if viewer is not None:
-            viewer.set_stage("mapping", "running", "3D mapping pipeline in progress")
-            viewer.update_progress("mapping", current=0, total=frame_count, message="Starting mapping")
-        active_stage = "mapping"
-        mapping_result = mapping.process_sequence(
-            frame_batch.frame_indices,
-            frame_batch.images,
-            gravity_vectors=frame_batch.gravity_vectors,
+
+        map_key = resume_mod.mapping_key(
+            preprocess_key_str=prep_key,
+            mapping_name=mapping_name,
+            mapping_options=mapping_options,
+            gravity_available=frame_batch.gravity_vectors is not None,
         )
-        if viewer is not None:
-            viewer.update_progress("mapping", current=frame_count, total=frame_count, message="Mapping complete")
-            viewer.set_stage("mapping", "completed", "3D mapping complete")
-        np.savez_compressed(
-            output_dir / "mapping_outputs.npz",
-            frame_indices=mapping_result.frame_indices,
-            depth=mapping_result.depth_maps,
-            poses_w_c=mapping_result.poses_w_c,
-            intrinsics=mapping_result.intrinsics,
-            confidence=np.asarray([]) if mapping_result.confidence is None else mapping_result.confidence,
-            gravity_vectors=np.asarray([]) if mapping_result.gravity_vectors is None else mapping_result.gravity_vectors,
-        )
+        map_sidecar = resume_mod.read_sidecar(output_dir, resume_mod.STAGE_MAPPING)
+        map_hit = map_sidecar is not None and map_sidecar.get("key") == map_key
+        mapping_result: MappingSequenceResult | None = None
+        if map_hit:
+            mapping_result = resume_mod.load_mapping_result(output_dir)
+            if mapping_result is None:
+                logger.warning("Resume: mapping artifacts incomplete, recomputing.")
+                resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_MAPPING)
+                map_hit = False
+            else:
+                logger.info("Resume: loaded mapping result from %s", output_dir / "mapping_outputs.npz")
+                if viewer is not None:
+                    viewer.set_stage("mapping", "completed", "Loaded from cache")
+        if mapping_result is None:
+            logger.info("Initializing mapping backend '%s'", mapping_name)
+            mapping = create_mapping_backend(mapping_name, **(mapping_options or {}))
+            mapping.initialize(image_size=profile.image_size, intrinsics=profile.k)
+            logger.info("Running mapping backend '%s' on %d prepared frames...", mapping_name, frame_count)
+            if viewer is not None:
+                viewer.set_stage("mapping", "running", "3D mapping pipeline in progress")
+                viewer.update_progress("mapping", current=0, total=frame_count, message="Starting mapping")
+            active_stage = "mapping"
+            mapping_result = mapping.process_sequence(
+                frame_batch.frame_indices,
+                frame_batch.images,
+                gravity_vectors=frame_batch.gravity_vectors,
+            )
+            if viewer is not None:
+                viewer.update_progress("mapping", current=frame_count, total=frame_count, message="Mapping complete")
+                viewer.set_stage("mapping", "completed", "3D mapping complete")
+            np.savez_compressed(
+                output_dir / "mapping_outputs.npz",
+                frame_indices=mapping_result.frame_indices,
+                depth=mapping_result.depth_maps,
+                poses_w_c=mapping_result.poses_w_c,
+                intrinsics=mapping_result.intrinsics,
+                confidence=np.asarray([]) if mapping_result.confidence is None else mapping_result.confidence,
+                gravity_vectors=np.asarray([]) if mapping_result.gravity_vectors is None else mapping_result.gravity_vectors,
+                world_points=np.asarray([]) if mapping_result.world_points is None else mapping_result.world_points,
+                local_points=np.asarray([]) if mapping_result.local_points is None else mapping_result.local_points,
+                scale_type=np.asarray(mapping_result.scale_type),
+            )
+            resume_mod.write_sidecar(output_dir, resume_mod.STAGE_MAPPING, map_key)
 
         logger.info("Building filtered semantic reference cloud...")
         reference_cloud = build_semantic_reference_cloud(
