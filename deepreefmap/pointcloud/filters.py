@@ -128,7 +128,7 @@ class NearestCameraVoxelMap:
         iy = np.floor(xyz[:, 1] / r).astype(np.int64, copy=False)
         iz = np.floor(xyz[:, 2] / r).astype(np.int64, copy=False)
         order = np.lexsort((distance, iz, iy, ix))
-        cx, cy, cz, cd = ix[order], iy[order], iz[order], distance[order]
+        cx, cy, cz = ix[order], iy[order], iz[order]
         same_cell = (np.diff(cx) == 0) & (np.diff(cy) == 0) & (np.diff(cz) == 0)
         first_in_cell = np.concatenate([[True], ~same_cell])
         w = order[first_in_cell]
@@ -201,16 +201,12 @@ def build_semantic_reference_cloud(
     frame_lookup = {frame.frame_index: frame for frame in frame_batch.frames}
     active_radius = _resolve_replacement_radius(cfg, mapping.depth_maps)
 
-    if active_radius is not None:
-        voxel_map = NearestCameraVoxelMap(active_radius)
-    else:
-        voxel_map = None
-        xyz_parts: list[np.ndarray] = []
-        rgb_parts: list[np.ndarray] = []
-        label_parts: list[np.ndarray] = []
-        frame_parts: list[np.ndarray] = []
-        conf_parts: list[np.ndarray] = []
-        dist_parts: list[np.ndarray] = []
+    xyz_parts: list[np.ndarray] = []
+    rgb_parts: list[np.ndarray] = []
+    label_parts: list[np.ndarray] = []
+    frame_parts: list[np.ndarray] = []
+    conf_parts: list[np.ndarray] = []
+    dist_parts: list[np.ndarray] = []
 
     for result_i, frame_index in enumerate(mapping.frame_indices.tolist()):
         frame = frame_lookup.get(int(frame_index))
@@ -257,30 +253,28 @@ def build_semantic_reference_cloud(
         else:
             conf_f = np.ones(int(flat_valid.sum()), dtype=np.float32)
 
-        if voxel_map is not None:
-            voxel_map.add_points(xyz_f, rgb_f, lab_f, int(frame_index), conf_f, dist_f)
-        else:
-            n = int(xyz_f.shape[0])
-            xyz_parts.append(xyz_f)
-            rgb_parts.append(rgb_f)
-            label_parts.append(lab_f)
-            frame_parts.append(np.full(n, int(frame_index), dtype=np.int32))
-            conf_parts.append(conf_f)
-            dist_parts.append(dist_f)
+        n = int(xyz_f.shape[0])
+        xyz_parts.append(xyz_f)
+        rgb_parts.append(rgb_f)
+        label_parts.append(lab_f)
+        frame_parts.append(np.full(n, int(frame_index), dtype=np.int32))
+        conf_parts.append(conf_f)
+        dist_parts.append(dist_f)
 
-    if voxel_map is not None:
-        cloud = voxel_map.to_semantic_cloud()
-    else:
-        if not xyz_parts:
-            return SemanticPointCloud.empty()
-        cloud = SemanticPointCloud(
-            xyz=np.concatenate(xyz_parts, axis=0),
-            rgb=np.concatenate(rgb_parts, axis=0),
-            labels=np.concatenate(label_parts, axis=0),
-            frame_indices=np.concatenate(frame_parts, axis=0),
-            confidence=np.concatenate(conf_parts, axis=0),
-            distance_to_camera=np.concatenate(dist_parts, axis=0),
-        )
+    if not xyz_parts:
+        return SemanticPointCloud.empty()
+
+    cloud = SemanticPointCloud(
+        xyz=np.concatenate(xyz_parts, axis=0),
+        rgb=np.concatenate(rgb_parts, axis=0),
+        labels=np.concatenate(label_parts, axis=0),
+        frame_indices=np.concatenate(frame_parts, axis=0),
+        confidence=np.concatenate(conf_parts, axis=0),
+        distance_to_camera=np.concatenate(dist_parts, axis=0),
+    )
+
+    if active_radius is not None:
+        cloud = nearest_camera_replace_semantic_cloud(cloud, active_radius)
 
     if cfg.voxel_size is None or cfg.voxel_size <= 0:
         return cloud
@@ -302,27 +296,25 @@ def voxel_reduce_semantic_cloud(cloud: SemanticPointCloud, voxel_size: float) ->
     if len(cloud) == 0:
         return cloud
     keys = np.floor(cloud.xyz / voxel_size).astype(np.int64)
-    order = np.lexsort((keys[:, 2], keys[:, 1], keys[:, 0]))
+    order = _voxel_sort_order(keys)
     keys_sorted = keys[order]
-    split_points = np.flatnonzero(np.any(np.diff(keys_sorted, axis=0) != 0, axis=1)) + 1
-    groups = np.split(order, split_points)
+    group_starts = np.concatenate([[0], np.flatnonzero(np.any(np.diff(keys_sorted, axis=0) != 0, axis=1)) + 1])
+    group_sizes = np.diff(np.concatenate([group_starts, [keys_sorted.shape[0]]])).astype(np.float32)
 
-    selected: list[int] = []
-    confidence = cloud.confidence
-    distances = cloud.distance_to_camera
-    for group in groups:
-        if group.size == 1:
-            selected.append(int(group[0]))
-            continue
-        center = cloud.xyz[group].mean(axis=0)
-        score = np.linalg.norm(cloud.xyz[group] - center, axis=1)
-        if confidence is not None:
-            score -= confidence[group] * voxel_size
-        if distances is not None:
-            score += distances[group] * voxel_size * 0.01
-        selected.append(int(group[int(np.argmin(score))]))
+    xyz_s = cloud.xyz[order]
+    centers = np.add.reduceat(xyz_s, group_starts, axis=0) / group_sizes[:, None]
+    score = np.linalg.norm(xyz_s - np.repeat(centers, group_sizes.astype(np.int64), axis=0), axis=1)
+    if cloud.confidence is not None:
+        score -= cloud.confidence[order] * voxel_size
+    if cloud.distance_to_camera is not None:
+        score += cloud.distance_to_camera[order] * voxel_size * 0.01
 
-    idx = np.asarray(selected, dtype=np.int64)
+    best = np.minimum.reduceat(score, group_starts)
+    candidate_mask = score == np.repeat(best, group_sizes.astype(np.int64))
+    candidate_indices = np.flatnonzero(candidate_mask)
+    candidate_groups = np.searchsorted(group_starts, candidate_indices, side="right") - 1
+    _, first_candidate_positions = np.unique(candidate_groups, return_index=True)
+    idx = order[candidate_indices[first_candidate_positions]]
     return SemanticPointCloud(
         xyz=cloud.xyz[idx],
         rgb=cloud.rgb[idx],
@@ -331,6 +323,30 @@ def voxel_reduce_semantic_cloud(cloud: SemanticPointCloud, voxel_size: float) ->
         confidence=None if cloud.confidence is None else cloud.confidence[idx],
         distance_to_camera=None if cloud.distance_to_camera is None else cloud.distance_to_camera[idx],
     )
+
+
+def nearest_camera_replace_semantic_cloud(cloud: SemanticPointCloud, radius: float) -> SemanticPointCloud:
+    if len(cloud) == 0 or radius <= 0 or not np.isfinite(radius):
+        return cloud
+    if cloud.distance_to_camera is None:
+        return cloud
+    keys = np.floor(cloud.xyz / float(radius)).astype(np.int64)
+    distance = np.asarray(cloud.distance_to_camera, dtype=np.float32).reshape(-1)
+    order = np.lexsort((np.arange(len(cloud), dtype=np.int64), distance, keys[:, 2], keys[:, 1], keys[:, 0]))
+    keys_sorted = keys[order]
+    selected = order[np.concatenate([[True], np.any(np.diff(keys_sorted, axis=0) != 0, axis=1)])]
+    return SemanticPointCloud(
+        xyz=cloud.xyz[selected],
+        rgb=cloud.rgb[selected],
+        labels=cloud.labels[selected],
+        frame_indices=None if cloud.frame_indices is None else cloud.frame_indices[selected],
+        confidence=None if cloud.confidence is None else cloud.confidence[selected],
+        distance_to_camera=cloud.distance_to_camera[selected],
+    )
+
+
+def _voxel_sort_order(keys: np.ndarray) -> np.ndarray:
+    return np.lexsort((np.arange(keys.shape[0], dtype=np.int64), keys[:, 2], keys[:, 1], keys[:, 0]))
 
 
 def nearest_camera_filter(cloud: SemanticPointCloud, neighborhood_size: float) -> SemanticPointCloud:

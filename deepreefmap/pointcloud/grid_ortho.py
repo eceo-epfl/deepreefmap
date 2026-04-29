@@ -66,28 +66,95 @@ def aggregate_cloud_to_ortho_grid(
     width = int(coords[:, 0].max() + 1)
     height = int(coords[:, 1].max() + 1)
 
-    rgb = np.zeros((height, width, 3), dtype=np.uint8)
-    labels = np.zeros((height, width), dtype=np.int32)
-    z_img = np.zeros((height, width), dtype=np.float32)
-    counts = np.zeros((height, width), dtype=np.int32)
-    frame_index = np.zeros((height, width), dtype=np.int32)
     distance_to_camera = _valid_distance_to_camera(cloud)
 
     keys = coords[:, 1].astype(np.int64) * width + coords[:, 0].astype(np.int64)
-    order = np.argsort(keys)
-    split_points = np.flatnonzero(np.diff(keys[order]) != 0) + 1
-    groups = np.split(order, split_points)
+    flat_size = height * width
 
-    for group in groups:
-        y = int(coords[group[0], 1])
-        x = int(coords[group[0], 0])
-        top = _camera_facing_group(group, heights, distance_to_camera)
-        labels[y, x] = _mode_int(cloud.labels[top])
-        z_img[y, x] = float(heights[top].mean())
-        rgb[y, x] = np.clip(cloud.rgb[top].mean(axis=0), 0, 255).astype(np.uint8)
-        counts[y, x] = int(group.size)
-        if cloud.frame_indices is not None:
-            frame_index[y, x] = int(round(float(cloud.frame_indices[top].mean())))
+    if distance_to_camera is None:
+        order = np.argsort(keys)
+    else:
+        order = np.lexsort((np.where(np.isfinite(distance_to_camera), distance_to_camera, np.inf), keys))
+
+    keys_s = keys[order]
+    group_starts = np.concatenate([[0], np.flatnonzero(np.diff(keys_s) != 0) + 1])
+    group_sizes = np.diff(np.concatenate([group_starts, [keys_s.size]])).astype(np.int64)
+    unique_keys = keys_s[group_starts]
+    group_ids_s = np.repeat(np.arange(group_starts.size, dtype=np.int64), group_sizes)
+    ranks_s = np.arange(keys_s.size, dtype=np.int64) - np.repeat(group_starts, group_sizes)
+
+    heights_s = heights[order].astype(np.float32, copy=False)
+    labels_s = np.asarray(cloud.labels, dtype=np.int32).reshape(-1)[order]
+    rgb_s = np.asarray(cloud.rgb, dtype=np.uint8).reshape(-1, 3)[order]
+
+    if distance_to_camera is not None:
+        dist_s = distance_to_camera[order]
+        finite_s = np.isfinite(dist_s)
+        finite_counts = np.add.reduceat(finite_s.astype(np.int64), group_starts)
+        finite_counts_s = np.repeat(finite_counts, group_sizes)
+        top_counts_s = (finite_counts_s + 1) // 2
+        top_mask = (finite_counts_s > 0) & finite_s & (ranks_s < top_counts_s)
+        if np.any(finite_counts == 0):
+            height_means = np.add.reduceat(heights_s, group_starts) / group_sizes
+            height_means_s = np.repeat(height_means, group_sizes)
+            top_mask |= (finite_counts_s == 0) & (heights_s >= height_means_s)
+    else:
+        height_means = np.add.reduceat(heights_s, group_starts) / group_sizes
+        top_mask = heights_s >= np.repeat(height_means, group_sizes)
+
+    top_group_ids = group_ids_s[top_mask]
+    top_group_starts = np.concatenate([[0], np.flatnonzero(np.diff(top_group_ids) != 0) + 1])
+    top_group_sizes = np.diff(np.concatenate([top_group_starts, [top_group_ids.size]])).astype(np.float32)
+    top_unique_group_ids = top_group_ids[top_group_starts]
+    top_keys = unique_keys[top_unique_group_ids]
+    top_heights = heights_s[top_mask]
+    top_rgb = rgb_s[top_mask].astype(np.float32)
+
+    rgb_flat = np.zeros((flat_size, 3), dtype=np.uint8)
+    labels_flat = np.zeros(flat_size, dtype=np.int32)
+    z_flat = np.zeros(flat_size, dtype=np.float32)
+    counts_flat = np.zeros(flat_size, dtype=np.int32)
+    frame_flat = np.zeros(flat_size, dtype=np.int32)
+
+    counts_flat[unique_keys] = group_sizes.astype(np.int32)
+    z_flat[top_keys] = (np.add.reduceat(top_heights, top_group_starts) / top_group_sizes).astype(np.float32)
+    rgb_flat[top_keys] = np.clip(
+        np.add.reduceat(top_rgb, top_group_starts) / top_group_sizes[:, None],
+        0,
+        255,
+    ).astype(np.uint8)
+
+    if cloud.frame_indices is not None:
+        frames_s = np.asarray(cloud.frame_indices, dtype=np.int32).reshape(-1)[order][top_mask].astype(np.float32)
+        frame_flat[top_keys] = np.rint(np.add.reduceat(frames_s, top_group_starts) / top_group_sizes).astype(np.int32)
+
+    labels_top = labels_s[top_mask]
+    label_order = np.lexsort((labels_top, top_group_ids))
+    label_groups = top_group_ids[label_order]
+    label_values = labels_top[label_order]
+    label_run_starts = np.concatenate(
+        [[0], np.flatnonzero((np.diff(label_groups) != 0) | (np.diff(label_values) != 0)) + 1]
+    )
+    label_run_counts = np.diff(np.concatenate([label_run_starts, [label_values.size]])).astype(np.int64)
+    label_run_groups = label_groups[label_run_starts]
+    label_run_values = label_values[label_run_starts]
+    label_group_starts = np.concatenate([[0], np.flatnonzero(np.diff(label_run_groups) != 0) + 1])
+    max_counts = np.maximum.reduceat(label_run_counts, label_group_starts)
+    max_counts_by_run = np.repeat(
+        max_counts,
+        np.diff(np.concatenate([label_group_starts, [label_run_groups.size]])),
+    )
+    mode_candidates = label_run_counts == max_counts_by_run
+    candidate_indices = np.flatnonzero(mode_candidates)
+    _, first_candidate_positions = np.unique(label_run_groups[candidate_indices], return_index=True)
+    mode_indices = candidate_indices[first_candidate_positions]
+    labels_flat[unique_keys[label_run_groups[mode_indices]]] = label_run_values[mode_indices]
+
+    rgb = rgb_flat.reshape(height, width, 3)
+    labels = labels_flat.reshape(height, width)
+    z_img = z_flat.reshape(height, width)
+    counts = counts_flat.reshape(height, width)
+    frame_index = frame_flat.reshape(height, width)
 
     return OrthoGrid(
         rgb=rgb,

@@ -1,9 +1,11 @@
 from pathlib import Path
+import threading
 
 import numpy as np
 
 import deepreefmap.visualization.viser_app as viser_app_mod
 from deepreefmap.config.classes import ClassConfig, SemanticClass
+from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame, SemanticPointCloud
 from deepreefmap.pointcloud.grid_ortho import OrthoGrid
 from deepreefmap.postproc.ortho_outputs import OrthoOutputs
 from deepreefmap.visualization.viser_app import ViserLiveApp
@@ -118,6 +120,11 @@ class _FakeEvent:
         self.called = True
 
 
+class _FakeRenderThread:
+    def is_alive(self):
+        return True
+
+
 def test_refresh_ortho_crop_preview_uses_toggle_and_slider_values(monkeypatch) -> None:
     app = _app_without_init()
     grid = OrthoGrid(
@@ -169,6 +176,113 @@ def test_refresh_ortho_crop_preview_uses_toggle_and_slider_values(monkeypatch) -
     assert app._dirty.called is True
     assert app._ortho_image_handle.image is not None
     assert "State: **cropped**" in app._crop_summary_markdown_handle.content
+
+
+def test_set_data_reuses_precomputed_ortho_grid(monkeypatch) -> None:
+    class FakeSceneController:
+        def __init__(self, scene):
+            self.scene = scene
+
+        def build(self, *args, **kwargs):
+            return None
+
+        def iter_frustum_handles(self):
+            return []
+
+    class FakeServer:
+        scene = object()
+
+    app = _app_without_init()
+    app.enabled = True
+    app._server = FakeServer()
+    app._frame_order = ()
+    app._frame_panel_data = {}
+    app._stacked_image_cache = {}
+    app._seg_color_cache = {}
+    app._depth_color_cache = {}
+    app._camera_view_by_frame = {}
+    app._scene_controller = None
+    app._render_lock = threading.Lock()
+    app._render_thread = _FakeRenderThread()
+    app._download_stacked_button = None
+    app._view_current_camera_button = None
+    app._follow_camera_toggle = None
+    app._frame_slider = None
+    app._point_size_slider = _FakeHandle(0.002)
+    app._crop_enabled_toggle = _FakeHandle(False)
+    app._transect_length_slider = _FakeHandle(10.0)
+    app._crop_width_slider = _FakeHandle(2.0)
+    app._ortho_image_handle = _FakeHandle()
+    app._crop_summary_markdown_handle = _FakeHandle()
+    app._current_ortho_outputs = None
+    app._active_crop_params = None
+    app._ortho_crop_selection = None
+    app._crop_revision = 0
+    app._dirty = _FakeEvent()
+
+    grid = OrthoGrid(
+        rgb=np.zeros((2, 2, 3), dtype=np.uint8),
+        labels=np.ones((2, 2), dtype=np.int32),
+        height=np.zeros((2, 2), dtype=np.float32),
+        counts=np.ones((2, 2), dtype=np.int32),
+        frame_index=np.zeros((2, 2), dtype=np.int32),
+        cell_size=1.0,
+    )
+    frame_batch = FrameBatch(
+        frames=(
+            PreparedFrame(
+                frame_index=0,
+                image_rgb=np.zeros((2, 2, 3), dtype=np.uint8),
+                labels=np.ones((2, 2), dtype=np.int32),
+                keep_mask=np.ones((2, 2), dtype=np.uint8),
+            ),
+        ),
+        intrinsics=np.eye(3, dtype=np.float32),
+        image_size=(2, 2),
+        clip_counts=(1,),
+    )
+    mapping_result = MappingSequenceResult(
+        frame_indices=np.array([0], dtype=np.int32),
+        depth_maps=np.ones((1, 2, 2), dtype=np.float32),
+        poses_w_c=np.eye(4, dtype=np.float32)[None],
+        intrinsics=np.eye(3, dtype=np.float32),
+    )
+    reference_cloud = SemanticPointCloud(
+        xyz=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32),
+        rgb=np.zeros((2, 3), dtype=np.uint8),
+        labels=np.ones(2, dtype=np.int32),
+    )
+    classes_config = ClassConfig(
+        classes=(SemanticClass(1, "reef", (10, 20, 30), frozenset()),),
+        path=Path("test"),
+    )
+
+    monkeypatch.setattr(
+        viser_app_mod,
+        "aggregate_cloud_to_ortho_grid",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("duplicate ortho aggregation")),
+    )
+    monkeypatch.setattr(viser_app_mod, "build_final_cloud_index", lambda *args, **kwargs: object())
+    monkeypatch.setattr(viser_app_mod, "LiveFrameCloudCache", lambda *args, **kwargs: object())
+    monkeypatch.setattr(viser_app_mod, "ViserSceneController", FakeSceneController)
+    monkeypatch.setattr(viser_app_mod, "build_transect_crop_geometry", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        viser_app_mod,
+        "apply_ortho_crop",
+        lambda base_grid, *args, **kwargs: OrthoOutputs(grid=base_grid, cover={"classes": {}, "denominator": 4.0}, cropped=False),
+    )
+
+    ViserLiveApp.set_data(
+        app,
+        frame_batch=frame_batch,
+        mapping_result=mapping_result,
+        reference_cloud=reference_cloud,
+        classes_config=classes_config,
+        ortho_bins=2000,
+        ortho_grid=grid,
+    )
+
+    assert app._ortho_base_grid is grid
 
 
 def test_point_cloud_crop_filter_returns_none_when_crop_disabled() -> None:

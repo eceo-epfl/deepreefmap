@@ -302,6 +302,7 @@ class ViserLiveApp:
         classes_config: "ClassConfig",
         ortho_bins: int = 1000,
         ortho_cloud: "SemanticPointCloud | None" = None,
+        ortho_grid: OrthoGrid | None = None,
     ) -> None:
         """Build scene graph and caches after reconstruction (single bulk load)."""
         if not self.enabled or self._server is None:
@@ -337,8 +338,10 @@ class ViserLiveApp:
             frame_order,
             max_depth_for_viz=depth_viz_cap,
         )
-        ortho_source = reference_cloud if ortho_cloud is None else ortho_cloud
-        self._ortho_base_grid = aggregate_cloud_to_ortho_grid(ortho_source, bins=ortho_bins)
+        if ortho_grid is None:
+            ortho_source = reference_cloud if ortho_cloud is None else ortho_cloud
+            ortho_grid = aggregate_cloud_to_ortho_grid(ortho_source, bins=ortho_bins)
+        self._ortho_base_grid = ortho_grid
         self._ortho_classes_config = classes_config
         self._ortho_crop_geometry = build_transect_crop_geometry(
             labels=self._ortho_base_grid.labels,

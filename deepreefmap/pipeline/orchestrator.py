@@ -286,7 +286,6 @@ def run_reconstruction(
                 replacement_radius_override=replacement_radius_override,
             ),
         )
-        save_semantic_cloud(output_dir / "semantic_reference_cloud.ply", reference_cloud)
 
         cloud_for_metrics = reference_cloud
         output_files = [
@@ -310,12 +309,14 @@ def run_reconstruction(
                 mapping_result.intrinsics,
                 masks=masks_for_depth,
             )
-            save_geometry_cloud(output_dir / "tsdf_cloud.ply", tsdf_xyz, tsdf_rgb)
             semantic_tsdf = align_tsdf_to_reference(tsdf_xyz, tsdf_rgb, reference_cloud)
-            save_semantic_cloud(output_dir / "semantic_tsdf_cloud.ply", semantic_tsdf)
             if len(semantic_tsdf) > 0:
                 cloud_for_metrics = semantic_tsdf
             output_files += ["tsdf_cloud.ply", "semantic_tsdf_cloud.ply"]
+        else:
+            tsdf_xyz = None
+            tsdf_rgb = None
+            semantic_tsdf = None
 
         logger.info("Building aggregated ortho grid...")
         if viewer is not None:
@@ -328,10 +329,6 @@ def run_reconstruction(
         )
         ortho_outputs = build_ortho_outputs(cloud_for_metrics, classes_config, bins=grid_bins, crop=crop)
         grid = ortho_outputs.grid
-        cv2.imwrite(str(output_dir / "ortho.png"), cv2.cvtColor(grid.rgb, cv2.COLOR_RGB2BGR))
-        save_ortho_grid(output_dir / "ortho.npz", grid)
-
-        save_cover_report(output_dir / "benthic_cover.json", ortho_outputs.cover)
 
         if viewer is not None:
             viewer.set_data(
@@ -341,7 +338,17 @@ def run_reconstruction(
                 classes_config=classes_config,
                 ortho_bins=grid_bins,
                 ortho_cloud=cloud_for_metrics,
+                ortho_grid=grid,
             )
+            viewer.set_stage("outputs", "running", "Saving outputs")
+
+        save_semantic_cloud(output_dir / "semantic_reference_cloud.ply", reference_cloud)
+        if enable_tsdf and tsdf_xyz is not None and tsdf_rgb is not None and semantic_tsdf is not None:
+            save_geometry_cloud(output_dir / "tsdf_cloud.ply", tsdf_xyz, tsdf_rgb)
+            save_semantic_cloud(output_dir / "semantic_tsdf_cloud.ply", semantic_tsdf)
+        cv2.imwrite(str(output_dir / "ortho.png"), cv2.cvtColor(grid.rgb, cv2.COLOR_RGB2BGR))
+        save_ortho_grid(output_dir / "ortho.npz", grid)
+        save_cover_report(output_dir / "benthic_cover.json", ortho_outputs.cover)
 
         save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
             output_dir=output_dir,
