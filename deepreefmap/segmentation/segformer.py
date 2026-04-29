@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,8 @@ class SegformerWrapper(SegmentationModel):
         self._processor = None
         self._model = None
         self._device = None
+        # DEBUG/PROFILING: optional per-batch timing info read by orchestrator.
+        self.last_profile: dict[str, float] = {}
 
     def _lazy_load(self) -> None:
         if self._model is not None:
@@ -62,15 +65,32 @@ class SegformerWrapper(SegmentationModel):
         from PIL import Image
 
         if not images_rgb:
+            self.last_profile = {}
             return []
 
+        t_wall_start = time.monotonic()
+        t_pre_start = time.monotonic()
         images = [Image.fromarray(image_rgb) for image_rgb in images_rgb]
+        inputs = self._processor(images=images, return_tensors="pt")
+        t_pre_s = time.monotonic() - t_pre_start
+
+        t_infer_wall_start = time.monotonic()
         with torch.no_grad():
-            inputs = self._processor(images=images, return_tensors="pt")
             inputs = {k: v.to(self._device) for k, v in inputs.items()}
             outputs = self._model(**inputs)
+        t_infer_s = time.monotonic() - t_infer_wall_start
+
+        t_resize_start = time.monotonic()
+        with torch.no_grad():
             preds = self._processor.post_process_semantic_segmentation(
                 outputs,
                 target_sizes=[(image_rgb.shape[0], image_rgb.shape[1]) for image_rgb in images_rgb],
             )
+        t_resize_s = time.monotonic() - t_resize_start
+        self.last_profile = {
+            "preprocess_s": float(t_pre_s),
+            "gpu_inference_s": float(t_infer_s),
+            "resize_back_s": float(t_resize_s),
+            "total_s": float(time.monotonic() - t_wall_start),
+        }
         return [SegmentationOutput(labels=pred.cpu().numpy().astype(np.uint8)) for pred in preds]

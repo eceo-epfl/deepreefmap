@@ -31,6 +31,10 @@ from deepreefmap.visualization.viser_app import ViserLiveApp
 
 logger = logging.getLogger(__name__)
 
+# DEBUG/PROFILING: set to True to emit detailed frame-preparation timings.
+# Keep this toggle localized so the instrumentation is easy to remove.
+ENABLE_FRAME_PREP_PROFILING = False
+
 
 def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict[str, object]) -> None:
     try:
@@ -161,7 +165,13 @@ def run_reconstruction(
         frame_batch: FrameBatch | None = None
         if prep_hit:
             assert prep_sidecar is not None
+            t_cache_load = time.monotonic()
             frame_batch = resume_mod.load_prepared_frames(output_dir, prep_sidecar, processing_intrinsics)
+            if ENABLE_FRAME_PREP_PROFILING:
+                logger.info(
+                    "DEBUG/PROFILING - Preprocess cache load: %.3fs",
+                    time.monotonic() - t_cache_load,
+                )
             if frame_batch is None:
                 logger.warning("Resume: preprocess artifacts incomplete, recomputing.")
                 resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_PREPROCESS)
@@ -188,6 +198,7 @@ def run_reconstruction(
                 processing_intrinsics=processing_intrinsics,
             )
             if len(frame_batch.frames) > 0:
+                t_cache_write = time.monotonic()
                 resume_mod.write_sidecar(
                     output_dir,
                     resume_mod.STAGE_PREPROCESS,
@@ -197,6 +208,11 @@ def run_reconstruction(
                         "clip_counts": list(frame_batch.clip_counts),
                     },
                 )
+                if ENABLE_FRAME_PREP_PROFILING:
+                    logger.info(
+                        "DEBUG/PROFILING - Preprocess cache metadata write: %.3fs",
+                        time.monotonic() - t_cache_write,
+                    )
         _release_segmentation_gpu_memory(segmentation)
         segmentation = None
         frame_count = len(frame_batch.frames)
@@ -410,12 +426,15 @@ def _prepare_frames(
     processing_image_size: tuple[int, int] | None = None,
     processing_intrinsics: np.ndarray | None = None,
 ) -> FrameBatch:
+    profile_enabled = ENABLE_FRAME_PREP_PROFILING
     frames_dir = output_dir / "frames"
     labels_dir = output_dir / "labels"
     masks_dir = output_dir / "masks"
+    t_cache_setup = time.monotonic()
     frames_dir.mkdir(parents=True, exist_ok=True)
     labels_dir.mkdir(parents=True, exist_ok=True)
     masks_dir.mkdir(parents=True, exist_ok=True)
+    cache_setup_s = time.monotonic() - t_cache_setup
     ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
     prepared: list[PreparedFrame] = []
     pending: list[tuple[int, np.ndarray]] = []
@@ -430,6 +449,15 @@ def _prepare_frames(
         unit="frame",
         dynamic_ncols=True,
     )
+    profile_stats: dict[str, float] = {
+        "rectify_resize_s": 0.0,
+        "seg_preprocess_s": 0.0,
+        "seg_gpu_s": 0.0,
+        "seg_resize_back_s": 0.0,
+        "seg_total_s": 0.0,
+        "save_s": 0.0,
+        "cache_setup_s": cache_setup_s,
+    }
 
     def flush_pending() -> None:
         if not pending:
@@ -453,9 +481,11 @@ def _prepare_frames(
             image_path = frames_dir / f"{stem}.png"
             labels_path = labels_dir / f"{stem}.npy"
             mask_path = masks_dir / f"{stem}.png"
+            t_save = time.monotonic()
             cv2.imwrite(str(image_path), cv2.cvtColor(rectified, cv2.COLOR_RGB2BGR))
             np.save(labels_path, labels)
             cv2.imwrite(str(mask_path), keep_mask)
+            profile_stats["save_s"] += time.monotonic() - t_save
             prepared.append(
                 PreparedFrame(
                     frame_index=idx,
@@ -471,19 +501,39 @@ def _prepare_frames(
                 progress_callback(prepared_count, total_frames_hint, idx, elapsed)
         progress_bar.set_postfix_str(f"source_idx={first_idx}..{last_idx}, batch={elapsed:.1f}s")
         progress_bar.update(len(batch))
+        if profile_enabled:
+            seg_profile = getattr(segmentation, "last_profile", None)
+            if isinstance(seg_profile, dict):
+                profile_stats["seg_preprocess_s"] += float(seg_profile.get("preprocess_s", 0.0))
+                profile_stats["seg_gpu_s"] += float(seg_profile.get("gpu_inference_s", 0.0))
+                profile_stats["seg_resize_back_s"] += float(seg_profile.get("resize_back_s", 0.0))
+                profile_stats["seg_total_s"] += float(seg_profile.get("total_s", elapsed))
+            else:
+                profile_stats["seg_total_s"] += float(elapsed)
 
     try:
         target_w, target_h = processing_image_size if processing_image_size is not None else rectifier.profile.image_size
         for idx, frame in iter_video_frames(video_paths, target_fps=fps, begin_s=begin_s, end_s=end_s):
+            t_rect = time.monotonic()
             rectified = rectifier.rectify(frame)
             if rectified.shape[1] != target_w or rectified.shape[0] != target_h:
                 rectified = cv2.resize(rectified, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+            profile_stats["rectify_resize_s"] += time.monotonic() - t_rect
             pending.append((idx, rectified))
             if len(pending) >= batch_size:
                 flush_pending()
         flush_pending()
     finally:
         progress_bar.close()
+    if profile_enabled:
+        frame_count = max(len(prepared), 1)
+        logger.info("DEBUG/PROFILING frame-prep timings for %d frames:", len(prepared))
+        logger.info("DEBUG/PROFILING - Rectification/resizing: %.3fs (%.3f ms/frame)", profile_stats["rectify_resize_s"], (profile_stats["rectify_resize_s"] * 1e3) / frame_count)
+        logger.info("DEBUG/PROFILING - Segmentation preprocessing: %.3fs (%.3f ms/frame)", profile_stats["seg_preprocess_s"], (profile_stats["seg_preprocess_s"] * 1e3) / frame_count)
+        logger.info("DEBUG/PROFILING - Segmentation on GPU: %.3fs (%.3f ms/frame)", profile_stats["seg_gpu_s"], (profile_stats["seg_gpu_s"] * 1e3) / frame_count)
+        logger.info("DEBUG/PROFILING - Resize back to processing WxH: %.3fs (%.3f ms/frame)", profile_stats["seg_resize_back_s"], (profile_stats["seg_resize_back_s"] * 1e3) / frame_count)
+        logger.info("DEBUG/PROFILING - Cache/setup dirs: %.3fs", profile_stats["cache_setup_s"])
+        logger.info("DEBUG/PROFILING - Saving labels/masks/frames: %.3fs (%.3f ms/frame)", profile_stats["save_s"], (profile_stats["save_s"] * 1e3) / frame_count)
     image_size = (prepared[0].image_rgb.shape[1], prepared[0].image_rgb.shape[0]) if prepared else (0, 0)
     return FrameBatch(
         frames=tuple(prepared),
