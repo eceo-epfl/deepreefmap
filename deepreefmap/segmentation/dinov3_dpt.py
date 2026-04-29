@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-import time
 from pathlib import Path
 import importlib.util
 
@@ -17,8 +16,6 @@ class DinoV3DPTWrapper(SegmentationModel):
         self._repo_id = repo_id
         self._model = None
         self._device = None
-        # DEBUG/PROFILING: optional per-batch timing info read by orchestrator.
-        self.last_profile: dict[str, float] = {}
 
     def _lazy_load(self) -> None:
         if self._model is not None:
@@ -44,32 +41,17 @@ class DinoV3DPTWrapper(SegmentationModel):
         from PIL import Image
 
         if not images_rgb:
-            self.last_profile = {}
             return []
 
-        t_wall_start = time.monotonic()
-        t_pre_start = time.monotonic()
         images = [Image.fromarray(image_rgb) for image_rgb in images_rgb]
-        batch = self._model.processor(images=images, return_tensors="pt", do_resize=False)["pixel_values"]
-        t_pre_s = time.monotonic() - t_pre_start
-
-        t_gpu_start = time.monotonic()
         with torch.no_grad():
-            logits = self._model(batch.to(self._device))
+            batch = self._model.processor(images=images, return_tensors="pt", do_resize=False)["pixel_values"].to(self._device)
+            logits = self._model(batch)
             preds = logits.argmax(dim=1).cpu().numpy().astype(np.uint8)
-        t_gpu_s = time.monotonic() - t_gpu_start
 
-        t_resize_start = time.monotonic()
         outputs = []
         for pred, image_rgb in zip(preds, images_rgb, strict=True):
             if pred.shape != image_rgb.shape[:2]:
                 pred = np.array(Image.fromarray(pred).resize((image_rgb.shape[1], image_rgb.shape[0]), resample=Image.NEAREST))
             outputs.append(SegmentationOutput(labels=pred))
-        t_resize_s = time.monotonic() - t_resize_start
-        self.last_profile = {
-            "preprocess_s": float(t_pre_s),
-            "gpu_inference_s": float(t_gpu_s),
-            "resize_back_s": float(t_resize_s),
-            "total_s": float(time.monotonic() - t_wall_start),
-        }
         return outputs

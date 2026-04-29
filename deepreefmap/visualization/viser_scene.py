@@ -141,7 +141,7 @@ class ViserSceneController:
                 fov=float(fov_y),
                 aspect=float(w) / float(max(h, 1)),
                 scale=0.04,
-                color=(0.45, 0.45, 0.45),
+                color=(128, 128, 128),
             )
             hnd.visible = True
             self._frustum_handles[int(frame_index)] = hnd
@@ -154,7 +154,7 @@ class ViserSceneController:
         for fid, hnd in self._frustum_handles.items():
             try:
                 _ = fid, frame_index
-                hnd.color = (0.45, 0.45, 0.45)
+                hnd.color = (128, 128, 128)
             except Exception:
                 pass
 
