@@ -20,11 +20,9 @@ from deepreefmap.mapping.registry import create_mapping_backend
 from deepreefmap.pipeline import resume as resume_mod
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
 from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_reference_cloud
-from deepreefmap.pointcloud.grid_ortho import aggregate_cloud_to_ortho_grid
-from deepreefmap.pointcloud.transect_crop import crop_grid_around_transect
 from deepreefmap.pointcloud.tsdf import integrate_tsdf
 from deepreefmap.pointcloud.tsdf_align import align_tsdf_to_reference
-from deepreefmap.postproc.benthic_cover import compute_benthic_cover
+from deepreefmap.postproc.ortho_outputs import TransectCropParams, build_ortho_outputs
 from deepreefmap.postproc.reports import save_cover_report, save_run_manifest
 from deepreefmap.segmentation.registry import create_segmentation_model
 from deepreefmap.telemetry.gopro import extract_gravity_vectors_for_video_selection
@@ -323,20 +321,17 @@ def run_reconstruction(
         if viewer is not None:
             viewer.set_stage("outputs", "running", "Generating outputs")
         active_stage = "outputs"
-        grid = aggregate_cloud_to_ortho_grid(cloud_for_metrics, bins=grid_bins)
-        if transect_length is not None and transect_crop_width is not None:
-            grid = crop_grid_around_transect(
-                grid=grid,
-                transect_label=classes_config.single_id_for_role("transect_line"),
-                transect_tools_label=classes_config.single_id_for_role("transect_tools"),
-                transect_length_m=transect_length,
-                crop_width_m=transect_crop_width,
-            )
+        crop = (
+            TransectCropParams(transect_length_m=transect_length, crop_width_m=transect_crop_width)
+            if transect_length is not None and transect_crop_width is not None
+            else None
+        )
+        ortho_outputs = build_ortho_outputs(cloud_for_metrics, classes_config, bins=grid_bins, crop=crop)
+        grid = ortho_outputs.grid
         cv2.imwrite(str(output_dir / "ortho.png"), cv2.cvtColor(grid.rgb, cv2.COLOR_RGB2BGR))
         save_ortho_grid(output_dir / "ortho.npz", grid)
 
-        cover = compute_benthic_cover(grid.labels, classes_config=classes_config, counts=grid.counts)
-        save_cover_report(output_dir / "benthic_cover.json", cover)
+        save_cover_report(output_dir / "benthic_cover.json", ortho_outputs.cover)
 
         if viewer is not None:
             viewer.set_data(
@@ -344,6 +339,8 @@ def run_reconstruction(
                 mapping_result=mapping_result,
                 reference_cloud=reference_cloud,
                 classes_config=classes_config,
+                ortho_bins=grid_bins,
+                ortho_cloud=cloud_for_metrics,
             )
 
         save_run_manifest(output_dir / "run_manifest.json", _build_manifest(

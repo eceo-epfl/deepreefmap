@@ -5,11 +5,22 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import cv2
 import numpy as np
 
+from deepreefmap.io.exports import save_ortho_grid
+from deepreefmap.pointcloud.grid_ortho import OrthoGrid, aggregate_cloud_to_ortho_grid
+from deepreefmap.pointcloud.transect_crop import (
+    TransectCropGeometry,
+    TransectCropSelection,
+    build_transect_crop_geometry,
+    build_transect_crop_selection,
+    point_mask_with_transect_selection,
+)
+from deepreefmap.postproc.ortho_outputs import OrthoOutputs, TransectCropParams, apply_ortho_crop
+from deepreefmap.postproc.reports import save_cover_report
 from deepreefmap.visualization.final_cloud_index import build_final_cloud_index, median_distance_to_camera
 from deepreefmap.visualization.live_frame_cloud import LiveFrameCloudCache
 from deepreefmap.visualization.viser_scene import ViserSceneController, rotation_to_wxyz
@@ -70,6 +81,7 @@ class ViserLiveApp:
         port: int = 8080,
     ) -> None:
         self.enabled = False
+        self.startup_error: str | None = None
         self._server = None
         self._class_colors = class_colors or {}
         self._class_names = class_names or {}
@@ -95,6 +107,20 @@ class ViserLiveApp:
         self._legend_toggles: dict[int, object] = {}
         self._download_stacked_button = None
         self._latest_stacked_image: np.ndarray | None = None
+        self._output_dir: Path | None = None
+        self._ortho_base_grid: OrthoGrid | None = None
+        self._ortho_classes_config = None
+        self._ortho_crop_geometry: TransectCropGeometry | None = None
+        self._ortho_crop_selection: TransectCropSelection | None = None
+        self._current_ortho_outputs: OrthoOutputs | None = None
+        self._active_crop_params: TransectCropParams | None = None
+        self._crop_revision = 0
+        self._ortho_image_handle = None
+        self._crop_enabled_toggle = None
+        self._transect_length_slider = None
+        self._crop_width_slider = None
+        self._save_ortho_button = None
+        self._crop_summary_markdown_handle = None
         self._suppress_frame_slider_callback = False
         self._camera_view_by_frame: dict[int, tuple[np.ndarray, float]] = {}
         self._status_markdown_handle = None
@@ -168,6 +194,18 @@ class ViserLiveApp:
 
             self._download_stacked_button = self._server.gui.add_button("Download stacked RGB/Seg/Depth")
             self._download_stacked_button.disabled = True
+            with self._server.gui.add_folder("Ortho crop"):
+                self._ortho_image_handle = self._server.gui.add_image(
+                    np.zeros((3, 3, 3), dtype=np.uint8),
+                    label="Ortho RGB / classes",
+                )
+                self._crop_enabled_toggle = self._server.gui.add_checkbox("Enable transect crop", False)
+                self._transect_length_slider = self._server.gui.add_slider(
+                    "Transect length (m)", 0.1, 200.0, 0.1, 10.0
+                )
+                self._crop_width_slider = self._server.gui.add_slider("Crop width (m)", 0.1, 50.0, 0.1, 2.0)
+                self._save_ortho_button = self._server.gui.add_button("Save current ortho + cover")
+                self._crop_summary_markdown_handle = self._server.gui.add_markdown("Ortho: waiting for data")
             with self._server.gui.add_folder("Pipeline status"):
                 self._status_markdown_handle = self._server.gui.add_markdown("Stage: idle")
                 self._preprocess_progress_slider = self._server.gui.add_slider(
@@ -232,7 +270,28 @@ class ViserLiveApp:
             @self._download_stacked_button.on_click
             def _(_u) -> None:  # noqa: ARG001
                 self._save_stacked_image()
-        except Exception:
+
+            if self._crop_enabled_toggle is not None:
+                @self._crop_enabled_toggle.on_update
+                def _(_u) -> None:  # noqa: ARG001
+                    self._refresh_ortho_crop_preview()
+
+            if self._transect_length_slider is not None:
+                @self._transect_length_slider.on_update
+                def _(_u) -> None:  # noqa: ARG001
+                    self._refresh_ortho_crop_preview()
+
+            if self._crop_width_slider is not None:
+                @self._crop_width_slider.on_update
+                def _(_u) -> None:  # noqa: ARG001
+                    self._refresh_ortho_crop_preview()
+
+            if self._save_ortho_button is not None:
+                @self._save_ortho_button.on_click
+                def _(_u) -> None:  # noqa: ARG001
+                    self._save_current_ortho_outputs()
+        except Exception as exc:
+            self.startup_error = str(exc) or exc.__class__.__name__
             self.enabled = False
 
     def set_data(
@@ -241,6 +300,8 @@ class ViserLiveApp:
         mapping_result: "MappingSequenceResult",
         reference_cloud: "SemanticPointCloud",
         classes_config: "ClassConfig",
+        ortho_bins: int = 1000,
+        ortho_cloud: "SemanticPointCloud | None" = None,
     ) -> None:
         """Build scene graph and caches after reconstruction (single bulk load)."""
         if not self.enabled or self._server is None:
@@ -275,6 +336,14 @@ class ViserLiveApp:
             mapping_result,
             frame_order,
             max_depth_for_viz=depth_viz_cap,
+        )
+        ortho_source = reference_cloud if ortho_cloud is None else ortho_cloud
+        self._ortho_base_grid = aggregate_cloud_to_ortho_grid(ortho_source, bins=ortho_bins)
+        self._ortho_classes_config = classes_config
+        self._ortho_crop_geometry = build_transect_crop_geometry(
+            labels=self._ortho_base_grid.labels,
+            transect_label=classes_config.single_id_for_role("transect_line"),
+            transect_tools_label=classes_config.single_id_for_role("transect_tools"),
         )
 
         k = np.asarray(mapping_result.intrinsics, dtype=np.float64)
@@ -325,6 +394,7 @@ class ViserLiveApp:
         if self._follow_camera_toggle is not None:
             with suppress(Exception):
                 self._follow_camera_toggle.disabled = False
+        self._refresh_ortho_crop_preview()
         self._mark_dirty()
 
         if self._render_thread is None or not self._render_thread.is_alive():
@@ -403,6 +473,8 @@ class ViserLiveApp:
                 point_size=ps,
                 frustums_visible=not hide_frustums,
                 min_confidence=min_conf,
+                crop_filter=self._point_cloud_crop_filter(),
+                crop_version=self._crop_revision,
             )
             self._refresh_image_panel_for_timeline(int(t))
             if bool(self._follow_camera_toggle is not None and self._follow_camera_toggle.value):
@@ -570,6 +642,140 @@ class ViserLiveApp:
             return
         self._download_stacked_button.disabled = self._latest_stacked_image is None
 
+    def _refresh_ortho_crop_preview(self) -> None:
+        if self._ortho_base_grid is None or self._ortho_classes_config is None:
+            return
+        try:
+            crop = self._current_crop_params()
+            selection = (
+                None
+                if crop is None
+                else build_transect_crop_selection(
+                    self._ortho_crop_geometry,
+                    transect_length_m=crop.transect_length_m,
+                    crop_width_m=crop.crop_width_m,
+                )
+            )
+            outputs = apply_ortho_crop(
+                self._ortho_base_grid,
+                self._ortho_classes_config,
+                crop=crop,
+                transect_geometry=self._ortho_crop_geometry,
+                transect_selection=selection,
+            )
+        except Exception as exc:
+            self._set_markdown_content(self._crop_summary_markdown_handle, f"### Ortho crop\nFailed: {exc}")
+            return
+        self._current_ortho_outputs = outputs
+        self._active_crop_params = crop
+        self._ortho_crop_selection = selection
+        self._crop_revision += 1
+
+        if self._ortho_image_handle is not None:
+            self._ortho_image_handle.image = self._ortho_preview_image(
+                outputs.grid,
+                self._ortho_classes_config.id_to_color,
+            )
+        crop_status = "cropped" if outputs.cropped else "uncropped"
+        self._set_markdown_content(
+            self._crop_summary_markdown_handle,
+            self._cover_summary_markdown(outputs.cover, outputs.grid, crop_status),
+        )
+        self._mark_dirty()
+
+    def _point_cloud_crop_filter(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        crop = self._active_crop_params
+        if crop is None or self._ortho_base_grid is None:
+            return None
+
+        def _filter(xyz: np.ndarray) -> np.ndarray:
+            return point_mask_with_transect_selection(
+                grid=self._ortho_base_grid,
+                xyz=xyz,
+                selection=self._ortho_crop_selection,
+            )
+
+        return _filter
+
+    def _save_current_ortho_outputs(self) -> None:
+        if self._current_ortho_outputs is None:
+            self._refresh_ortho_crop_preview()
+        if self._current_ortho_outputs is None:
+            self._set_markdown_content(self._crop_summary_markdown_handle, "### Ortho crop\nNothing to save yet.")
+            return
+        output_dir = self._output_dir or (Path.cwd() / "viser_exports")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        grid = self._current_ortho_outputs.grid
+        cv2.imwrite(str(output_dir / "ortho.png"), cv2.cvtColor(grid.rgb, cv2.COLOR_RGB2BGR))
+        save_ortho_grid(output_dir / "ortho.npz", grid)
+        save_cover_report(output_dir / "benthic_cover.json", self._current_ortho_outputs.cover)
+        self._set_markdown_content(
+            self._crop_summary_markdown_handle,
+            self._cover_summary_markdown(
+                self._current_ortho_outputs.cover,
+                grid,
+                "cropped" if self._current_ortho_outputs.cropped else "uncropped",
+            )
+            + f"\n- Saved: `{output_dir}`",
+        )
+
+    def _current_crop_params(self) -> TransectCropParams | None:
+        if not bool(self._crop_enabled_toggle is not None and self._crop_enabled_toggle.value):
+            return None
+        length_m = 10.0 if self._transect_length_slider is None else float(self._transect_length_slider.value)
+        width_m = 2.0 if self._crop_width_slider is None else float(self._crop_width_slider.value)
+        return TransectCropParams(transect_length_m=length_m, crop_width_m=width_m)
+
+    @staticmethod
+    def _ortho_preview_image(
+        grid: OrthoGrid,
+        class_colors: dict[int, tuple[int, int, int]],
+        max_side: int = 900,
+    ) -> np.ndarray:
+        rgb = np.asarray(grid.rgb, dtype=np.uint8)
+        labels = np.asarray(grid.labels, dtype=np.int32)
+        class_rgb = np.zeros((*labels.shape, 3), dtype=np.uint8)
+        for class_id, color in class_colors.items():
+            class_rgb[labels == int(class_id)] = np.asarray(color, dtype=np.uint8)
+        if rgb.shape[:2] != class_rgb.shape[:2]:
+            class_rgb = cv2.resize(class_rgb, (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_NEAREST)
+        preview = np.concatenate([rgb, class_rgb], axis=1)
+        h, w = preview.shape[:2]
+        scale = min(1.0, float(max_side) / float(max(h, w, 1)))
+        if scale < 1.0:
+            preview = cv2.resize(
+                preview,
+                (max(1, int(round(w * scale))), max(1, int(round(h * scale)))),
+                interpolation=cv2.INTER_AREA,
+            )
+        return preview
+
+    @staticmethod
+    def _cover_summary_markdown(cover: dict[str, object], grid: OrthoGrid, crop_status: str) -> str:
+        classes = cover.get("classes", {})
+        denom = float(cover.get("denominator", 0.0) or 0.0)
+        rows = [
+            "### Ortho crop",
+            f"- State: **{crop_status}**",
+            f"- Grid: `{grid.rgb.shape[1]} x {grid.rgb.shape[0]}` cells",
+            f"- Cover denominator: `{denom:.1f}`",
+        ]
+        if not isinstance(classes, dict) or not classes:
+            rows.append("- Cover: no valid cells")
+            return "\n".join(rows)
+        ranked = sorted(
+            classes.values(),
+            key=lambda item: float(item.get("fraction", 0.0)) if isinstance(item, dict) else 0.0,
+            reverse=True,
+        )
+        for item in ranked[:8]:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "unknown"))
+            frac = float(item.get("fraction", 0.0) or 0.0)
+            rows.append(f"- {name}: `{frac * 100.0:.1f}%`")
+        return "\n".join(rows)
+
     def _set_markdown_content(self, handle: object, content: str) -> None:
         if handle is None:
             return
@@ -594,6 +800,7 @@ class ViserLiveApp:
 
     def start_run(self, run_label: str, output_dir: str) -> None:
         self._stage_states.clear()
+        self._output_dir = Path(output_dir)
         self._set_markdown_content(self._outputs_markdown_handle, f"Outputs: pending (`{output_dir}`)")
         if self._preprocess_progress_slider is not None:
             self._preprocess_progress_slider.value = 0.0

@@ -8,13 +8,22 @@ from deepreefmap.pointcloud.grid_ortho import OrthoGrid
 
 
 @dataclass(frozen=True)
-class _CropSpec:
+class TransectCropSelection:
     y0: int
     y1: int
     x0: int
     x1: int
     mask: np.ndarray
     pixel_size_m: float
+
+
+@dataclass(frozen=True)
+class TransectCropGeometry:
+    along: np.ndarray
+    across: np.ndarray
+    start: float
+    end: float
+    px_length: float
 
 
 def crop_ortho_around_transect(
@@ -59,7 +68,72 @@ def crop_grid_around_transect(
     )
     if spec is None:
         return grid
+    return _crop_grid_with_spec(grid, spec)
 
+
+def crop_grid_with_transect_geometry(
+    grid: OrthoGrid,
+    geometry: TransectCropGeometry | None,
+    transect_length_m: float,
+    crop_width_m: float,
+) -> OrthoGrid:
+    spec = build_transect_crop_selection(
+        geometry=geometry,
+        transect_length_m=transect_length_m,
+        crop_width_m=crop_width_m,
+    )
+    if spec is None:
+        return grid
+    return _crop_grid_with_spec(grid, spec)
+
+
+def crop_grid_with_transect_selection(
+    grid: OrthoGrid,
+    selection: TransectCropSelection | None,
+) -> OrthoGrid:
+    if selection is None:
+        return grid
+    return _crop_grid_with_spec(grid, selection)
+
+
+def point_mask_with_transect_geometry(
+    grid: OrthoGrid,
+    xyz: np.ndarray,
+    geometry: TransectCropGeometry | None,
+    transect_length_m: float,
+    crop_width_m: float,
+) -> np.ndarray:
+    if geometry is None or grid.projection is None:
+        return np.ones(np.asarray(xyz).shape[0], dtype=bool)
+    spec = build_transect_crop_selection(
+        geometry=geometry,
+        transect_length_m=transect_length_m,
+        crop_width_m=crop_width_m,
+    )
+    if spec is None:
+        return np.ones(np.asarray(xyz).shape[0], dtype=bool)
+    return point_mask_with_transect_selection(grid, xyz, spec)
+
+
+def point_mask_with_transect_selection(
+    grid: OrthoGrid,
+    xyz: np.ndarray,
+    selection: TransectCropSelection | None,
+) -> np.ndarray:
+    if selection is None or grid.projection is None:
+        return np.ones(np.asarray(xyz).shape[0], dtype=bool)
+
+    xs, ys = grid.projection.project_cells(np.asarray(xyz, dtype=np.float32).reshape(-1, 3))
+    inside_box = (xs >= selection.x0) & (xs < selection.x1) & (ys >= selection.y0) & (ys < selection.y1)
+    keep = np.zeros(xs.shape[0], dtype=bool)
+    if np.any(inside_box):
+        local_x = xs[inside_box] - selection.x0
+        local_y = ys[inside_box] - selection.y0
+        keep[inside_box] = selection.mask[local_y, local_x]
+    return keep
+
+
+def _crop_grid_with_spec(grid: OrthoGrid, spec: TransectCropSelection) -> OrthoGrid:
     y0, y1, x0, x1 = spec.y0, spec.y1, spec.x0, spec.x1
     return OrthoGrid(
         rgb=_mask_array(grid.rgb[y0:y1, x0:x1], spec.mask),
@@ -72,17 +146,13 @@ def crop_grid_around_transect(
     )
 
 
-def _crop_spec_for_transect(
+def build_transect_crop_geometry(
     labels: np.ndarray,
     transect_label: int | None,
     transect_tools_label: int | None,
-    transect_length_m: float,
-    crop_width_m: float,
-) -> _CropSpec | None:
+) -> TransectCropGeometry | None:
     if transect_label is None and transect_tools_label is None:
         return None
-    if transect_length_m <= 0 or crop_width_m <= 0:
-        raise ValueError("transect_length_m and crop_width_m must be positive")
 
     transect_mask = _transect_mask(labels, transect_label, transect_tools_label)
     ys, xs = np.where(transect_mask)
@@ -107,14 +177,53 @@ def _crop_spec_for_transect(
     if px_length <= 1e-6:
         return None
 
-    pixel_size_m = transect_length_m / px_length
+    yy, xx = np.indices(labels.shape, dtype=np.float32)
+    coords_x = xx - float(centroid[0])
+    coords_y = yy - float(centroid[1])
+    along = coords_x * float(direction[0]) + coords_y * float(direction[1])
+    across = coords_x * float(normal[0]) + coords_y * float(normal[1])
+    return TransectCropGeometry(
+        along=along,
+        across=across,
+        start=start,
+        end=end,
+        px_length=px_length,
+    )
+
+
+def _crop_spec_for_transect(
+    labels: np.ndarray,
+    transect_label: int | None,
+    transect_tools_label: int | None,
+    transect_length_m: float,
+    crop_width_m: float,
+) -> TransectCropSelection | None:
+    geometry = build_transect_crop_geometry(labels, transect_label, transect_tools_label)
+    return build_transect_crop_selection(
+        geometry=geometry,
+        transect_length_m=transect_length_m,
+        crop_width_m=crop_width_m,
+    )
+
+
+def build_transect_crop_selection(
+    geometry: TransectCropGeometry | None,
+    transect_length_m: float,
+    crop_width_m: float,
+) -> TransectCropSelection | None:
+    if geometry is None:
+        return None
+    if transect_length_m <= 0 or crop_width_m <= 0:
+        raise ValueError("transect_length_m and crop_width_m must be positive")
+
+    pixel_size_m = transect_length_m / geometry.px_length
     half_width_px = max(0.5, (crop_width_m / max(pixel_size_m, 1e-6)) / 2.0)
 
-    yy, xx = np.indices(labels.shape, dtype=np.float32)
-    coords = np.stack([xx, yy], axis=-1) - centroid
-    along = coords @ direction
-    across = coords @ normal
-    crop_mask = (along >= start) & (along <= end) & (np.abs(across) <= half_width_px)
+    crop_mask = (
+        (geometry.along >= geometry.start)
+        & (geometry.along <= geometry.end)
+        & (np.abs(geometry.across) <= half_width_px)
+    )
     crop_ys, crop_xs = np.where(crop_mask)
     if crop_xs.size == 0:
         return None
@@ -123,7 +232,7 @@ def _crop_spec_for_transect(
     y1 = int(crop_ys.max() + 1)
     x0 = int(crop_xs.min())
     x1 = int(crop_xs.max() + 1)
-    return _CropSpec(
+    return TransectCropSelection(
         y0=y0,
         y1=y1,
         x0=x0,

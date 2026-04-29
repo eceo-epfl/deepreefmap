@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -68,6 +68,7 @@ class ViserSceneController:
         self._last_enabled: frozenset[int] | None = None
         self._last_frustums_visible: bool | None = None
         self._last_min_confidence: float | None = None
+        self._last_crop_version: int | None = None
 
     def clear_dynamic_nodes(self) -> None:
         """Remove /final and /live subtrees if present (best-effort)."""
@@ -87,6 +88,7 @@ class ViserSceneController:
         self._last_enabled = None
         self._last_frustums_visible = None
         self._last_min_confidence = None
+        self._last_crop_version = None
 
     def build(
         self,
@@ -190,6 +192,8 @@ class ViserSceneController:
         *,
         frustums_visible: bool = True,
         min_confidence: float = 0.0,
+        crop_filter: Callable[[np.ndarray], np.ndarray] | None = None,
+        crop_version: int = 0,
     ) -> None:
         """Update clouds from slider position and toggles."""
         if self._live_cloud_handle is None or self._live_cache is None or self._final_index is None:
@@ -210,6 +214,7 @@ class ViserSceneController:
             or self._last_semantic_colors != semantic_colors
             or self._last_enabled != enabled_classes
             or self._last_min_confidence != min_conf
+            or self._last_crop_version != int(crop_version)
         )
         if not need_update:
             self._live_cloud_handle.point_size = float(point_size)
@@ -253,6 +258,8 @@ class ViserSceneController:
         m = mask_points_by_enabled_lut(lab_u, lut)
         if min_conf > 0.0 and conf_u.size:
             m &= conf_u >= min_conf
+        if crop_filter is not None and xyz_u.shape[0] > 0:
+            m &= crop_filter(xyz_u)
         xyz = xyz_u[m]
         lab = lab_u[m]
         if semantic_colors:
@@ -305,6 +312,10 @@ class ViserSceneController:
                     keep = conf_c[:n] >= min_conf
                     pts = pts[keep]
                     cols = cols[keep]
+            if crop_filter is not None and pts.shape[0] > 0:
+                keep = crop_filter(pts)
+                pts = pts[keep]
+                cols = cols[keep]
 
             if pts.shape[0] == 0:
                 handle.points = empty_xyz
@@ -322,3 +333,4 @@ class ViserSceneController:
         self._last_semantic_colors = semantic_colors
         self._last_enabled = enabled_classes
         self._last_min_confidence = min_conf
+        self._last_crop_version = int(crop_version)

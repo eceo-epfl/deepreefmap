@@ -5,7 +5,11 @@ import numpy as np
 from deepreefmap.config.classes import ClassConfig, SemanticClass
 from deepreefmap.pipeline.artifacts import SemanticPointCloud
 from deepreefmap.pointcloud.grid_ortho import OrthoGrid, aggregate_cloud_to_ortho_grid
-from deepreefmap.pointcloud.transect_crop import crop_grid_around_transect
+from deepreefmap.pointcloud.transect_crop import (
+    build_transect_crop_geometry,
+    crop_grid_around_transect,
+    point_mask_with_transect_geometry,
+)
 from deepreefmap.postproc.benthic_cover import compute_benthic_cover
 
 
@@ -23,6 +27,22 @@ def test_aggregate_cloud_uses_mode_class_per_cell():
 
     assert 2 in grid.labels
     assert 4 in grid.labels
+
+
+def test_aggregate_cloud_prefers_camera_facing_points_when_available():
+    cloud = SemanticPointCloud(
+        xyz=np.array(
+            [[0.0, 0.0, 0.0], [0.01, 0.0, 0.0], [0.0, 0.01, 1.0], [0.01, 0.01, 1.0]],
+            dtype=np.float32,
+        ),
+        rgb=np.zeros((4, 3), dtype=np.uint8),
+        labels=np.array([1, 1, 2, 2], dtype=np.int32),
+        distance_to_camera=np.array([10.0, 10.0, 1.0, 1.0], dtype=np.float32),
+    )
+
+    grid = aggregate_cloud_to_ortho_grid(cloud, cell_size=10.0)
+
+    assert 2 in grid.labels
 
 
 def test_aggregate_cloud_returns_empty_grid_on_degenerate_input():
@@ -115,3 +135,36 @@ def test_crop_grid_masks_pixels_outside_diagonal_transect_corridor():
     assert cropped.counts[0, -1] == 0
     assert cropped.frame_index[0, -1] == -1
     assert cropped.counts[cropped.counts.shape[0] // 2, cropped.counts.shape[1] // 2] > 0
+
+
+def test_point_mask_with_transect_geometry_filters_projected_points():
+    cloud = SemanticPointCloud(
+        xyz=np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 5.0, 0.0],
+                [1.0, 5.0, 0.0],
+                [2.0, 5.0, 0.0],
+                [3.0, 5.0, 0.0],
+            ],
+            dtype=np.float32,
+        ),
+        rgb=np.zeros((8, 3), dtype=np.uint8),
+        labels=np.array([15, 15, 15, 15, 1, 1, 1, 1], dtype=np.int32),
+    )
+    grid = aggregate_cloud_to_ortho_grid(cloud, cell_size=1.0)
+    geometry = build_transect_crop_geometry(grid.labels, transect_label=15, transect_tools_label=None)
+
+    keep = point_mask_with_transect_geometry(
+        grid,
+        cloud.xyz,
+        geometry,
+        transect_length_m=3.0,
+        crop_width_m=1.0,
+    )
+
+    assert keep[:4].any()
+    assert not keep[4:].any()

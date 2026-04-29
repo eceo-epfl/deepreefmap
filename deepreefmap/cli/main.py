@@ -7,10 +7,13 @@ import typer
 
 from deepreefmap.camera.colmap_calibration import calibrate_camera_profile, verify_camera_profile
 from deepreefmap.pipeline.orchestrator import run_reconstruction
+from deepreefmap.pipeline.run_loader import load_cached_run
+from deepreefmap.pointcloud.filters import PointFilterConfig
 from deepreefmap.postproc.reports import render_offline_video_placeholder
 from deepreefmap.segmentation.registry import list_segmentation_models
 from deepreefmap.mapping.registry import list_mapping_backends
 from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR
+from deepreefmap.visualization.viser_app import ViserLiveApp
 
 app = typer.Typer(help="DeepReefMap command line interface")
 
@@ -204,3 +207,75 @@ def render_video(
 ) -> None:
     render_offline_video_placeholder(run_dir)
     typer.echo(f"Offline render completed in {run_dir}")
+
+
+@app.command("view-run")
+def view_run(
+    run_dir: Path = typer.Option(..., exists=True, file_okay=False, help="Run output directory from reconstruct."),
+    viser_port: int = typer.Option(8080, help="Port for viser visualization server."),
+    json_output: bool = typer.Option(False, "--json", help="Print a structured readiness event before blocking."),
+    replacement_radius_factor: Optional[float] = typer.Option(
+        None,
+        help="Multiplier on the auto replacement radius used when rebuilding the semantic cloud.",
+    ),
+    replacement_radius_estimation_frames: int = typer.Option(
+        30,
+        help="Number of leading depth maps used to estimate the default replacement radius.",
+    ),
+    replacement_radius_override: Optional[float] = typer.Option(
+        None,
+        help="Absolute replacement voxel size in meters for the rebuilt semantic cloud.",
+    ),
+    ortho_bins: int = typer.Option(1000, help="Bins used for the interactive ortho preview."),
+) -> None:
+    try:
+        loaded = load_cached_run(
+            run_dir,
+            point_filter_config=PointFilterConfig(
+                replacement_radius_factor=1.0 if replacement_radius_factor is None else replacement_radius_factor,
+                replacement_radius_estimation_frames=replacement_radius_estimation_frames,
+                replacement_radius_override=replacement_radius_override,
+            ),
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        typer.echo(f"Failed to load cached run: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    viewer = ViserLiveApp(
+        class_colors=loaded.classes_config.id_to_color,
+        class_names=loaded.classes_config.id_to_name,
+        port=viser_port,
+    )
+    if not viewer.enabled:
+        reason = getattr(viewer, "startup_error", None)
+        suffix = f": {reason}" if reason else ""
+        typer.echo(f"Failed to start viser server on port {viser_port}{suffix}", err=True)
+        raise typer.Exit(code=1)
+    try:
+        viewer.start_run(run_label="DeepReefMap cached run", output_dir=str(loaded.run_dir))
+        viewer.set_stage("preprocess", "completed", f"Loaded {len(loaded.frame_batch.frames)} cached frames")
+        viewer.set_stage("mapping", "completed", "Loaded mapping_outputs.npz")
+        viewer.set_stage("outputs", "completed", f"Loaded {len(loaded.reference_cloud)} semantic points")
+        viewer.set_data(
+            frame_batch=loaded.frame_batch,
+            mapping_result=loaded.mapping_result,
+            reference_cloud=loaded.reference_cloud,
+            classes_config=loaded.classes_config,
+            ortho_bins=ortho_bins,
+        )
+        viewer.mark_outputs_ready(str(loaded.run_dir), loaded.output_files)
+        if json_output:
+            typer.echo(json.dumps({
+                "status": "ready",
+                "run_dir": str(loaded.run_dir),
+                "port": viser_port,
+                "url": f"http://localhost:{viser_port}",
+                "frames": len(loaded.frame_batch.frames),
+                "semantic_points": len(loaded.reference_cloud),
+                "ortho_bins": ortho_bins,
+                "output_files": loaded.output_files,
+            }))
+        else:
+            typer.echo(f"Viewing cached run in {run_dir}. Press Ctrl-C to close viser.")
+        viewer.wait_forever()
+    finally:
+        viewer.close()
