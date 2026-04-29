@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:  # pragma: no cover - optional dependency
+    SummaryWriter = None  # type: ignore[assignment]
 
 from deepreefmap.mapping.scsfmlearner.models import DispResNet, PoseResNet
 from deepreefmap.mapping.scsfmlearner.training.dataset import ImageSequenceDataset
@@ -23,6 +27,7 @@ class TrainConfig:
     learning_rate: float = 1e-4
     weight_decay: float = 0.0
     train_split: float = 0.9
+    steps_per_epoch: int = 250
     pretrained: bool = True
     resnet_layers: int = 18
     num_scales: int = 1
@@ -33,6 +38,7 @@ class TrainConfig:
     auto_mask: bool = False
     padding_mode: str = "zeros"
     save_every: int = 1
+    log_every: int = 10
     device: str | None = None
 
 
@@ -46,26 +52,29 @@ def _build_loaders(config: TrainConfig) -> tuple[DataLoader, DataLoader]:
         ]
     )
     val_transform = Compose([ArrayToTensor(), Normalize((0.45, 0.45, 0.45), (0.225, 0.225, 0.225))])
-    base_dataset = ImageSequenceDataset(config.data_root, transform=None)
-    train_len = max(1, int(len(base_dataset) * config.train_split))
-    train_len = min(train_len, len(base_dataset) - 1) if len(base_dataset) > 1 else 1
-    indices = torch.randperm(len(base_dataset), generator=torch.Generator().manual_seed(0)).tolist()
-    train_indices = indices[:train_len]
-    val_indices = indices[train_len:] or indices[:1]
+    sequence_dirs = sorted(path for path in Path(config.data_root).iterdir() if path.is_dir())
+    sequence_dirs = [seq for seq in sequence_dirs if sum(1 for p in seq.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"}) >= 2]
+    if len(sequence_dirs) < 2:
+        raise RuntimeError("Need at least 2 sequence folders for a train/val split.")
+    sequence_names = [p.name for p in sequence_dirs]
+    sequence_order = torch.randperm(len(sequence_names), generator=torch.Generator().manual_seed(0)).tolist()
+    shuffled = [sequence_names[i] for i in sequence_order]
+    train_count = max(1, int(len(shuffled) * config.train_split))
+    train_count = min(train_count, len(shuffled) - 1)
+    train_sequences = set(shuffled[:train_count])
+    val_sequences = set(shuffled[train_count:])
 
-    train_dataset = ImageSequenceDataset(config.data_root, transform=train_transform)
-    val_dataset = ImageSequenceDataset(config.data_root, transform=val_transform)
-    train_subset = Subset(train_dataset, train_indices)
-    val_subset = Subset(val_dataset, val_indices)
+    train_dataset = ImageSequenceDataset(config.data_root, transform=train_transform, include_sequences=train_sequences)
+    val_dataset = ImageSequenceDataset(config.data_root, transform=val_transform, include_sequences=val_sequences)
     train_loader = DataLoader(
-        train_subset,
+        train_dataset,
         batch_size=config.batch_size,
         shuffle=True,
         num_workers=config.workers,
         pin_memory=True,
     )
     val_loader = DataLoader(
-        val_subset,
+        val_dataset,
         batch_size=config.batch_size,
         shuffle=False,
         num_workers=config.workers,
@@ -74,46 +83,63 @@ def _build_loaders(config: TrainConfig) -> tuple[DataLoader, DataLoader]:
     return train_loader, val_loader
 
 
-def _epoch_loss(
-    loader: DataLoader,
+def _step_loss(
+    batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
     disp_net: DispResNet,
     pose_net: PoseResNet,
     optimizer: torch.optim.Optimizer | None,
     config: TrainConfig,
-    device: torch.device,
-) -> float:
-    running = 0.0
-    steps = 0
+) -> tuple[float, torch.Tensor]:
     train_mode = optimizer is not None
-    disp_net.train(mode=train_mode)
-    pose_net.train(mode=train_mode)
+    img1, img2, intrinsics = batch
+    loss, _ = compute_training_loss(
+        img1,
+        img2,
+        intrinsics,
+        disp_net=disp_net,
+        pose_net=pose_net,
+        num_scales=config.num_scales,
+        photo_weight=config.photo_weight,
+        smooth_weight=config.smooth_weight,
+        geometry_weight=config.geometry_weight,
+        with_ssim=config.with_ssim,
+        auto_mask=config.auto_mask,
+        padding_mode=config.padding_mode,
+    )
+    if train_mode:
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+    return float(loss.detach().cpu()), img1
 
-    for img1, img2, intrinsics in loader:
-        img1 = img1.to(device, non_blocking=True)
-        img2 = img2.to(device, non_blocking=True)
-        intrinsics = intrinsics.to(device, non_blocking=True)
 
-        loss, _ = compute_training_loss(
-            img1,
-            img2,
-            intrinsics,
-            disp_net=disp_net,
-            pose_net=pose_net,
-            num_scales=config.num_scales,
-            photo_weight=config.photo_weight,
-            smooth_weight=config.smooth_weight,
-            geometry_weight=config.geometry_weight,
-            with_ssim=config.with_ssim,
-            auto_mask=config.auto_mask,
-            padding_mode=config.padding_mode,
-        )
-        if train_mode:
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            optimizer.step()
-        running += float(loss.detach().cpu())
-        steps += 1
-    return running / max(steps, 1)
+def _next_batch(loader_iter: iter, loader: DataLoader, device: torch.device) -> tuple[tuple[torch.Tensor, torch.Tensor, torch.Tensor], iter]:
+    try:
+        batch = next(loader_iter)
+    except StopIteration:
+        loader_iter = iter(loader)
+        batch = next(loader_iter)
+    img1, img2, intrinsics = batch
+    return (
+        img1.to(device, non_blocking=True),
+        img2.to(device, non_blocking=True),
+        intrinsics.to(device, non_blocking=True),
+    ), loader_iter
+
+
+def _make_preview(image: torch.Tensor, disp_net: DispResNet) -> torch.Tensor:
+    mean = torch.tensor((0.45, 0.45, 0.45), device=image.device).view(1, 3, 1, 1)
+    std = torch.tensor((0.225, 0.225, 0.225), device=image.device).view(1, 3, 1, 1)
+    rgb = (image * std + mean).clamp(0.0, 1.0)
+    with torch.no_grad():
+        disp = disp_net(image)
+        if isinstance(disp, list):
+            disp = disp[0]
+        depth = (1.0 / disp.clamp(min=1e-6)).detach()
+        depth = depth - depth.amin(dim=(2, 3), keepdim=True)
+        depth = depth / depth.amax(dim=(2, 3), keepdim=True).clamp(min=1e-6)
+        depth_rgb = depth.repeat(1, 3, 1, 1)
+    return torch.cat([rgb, depth_rgb], dim=3)
 
 
 def train(config: TrainConfig) -> Path:
@@ -132,11 +158,36 @@ def train(config: TrainConfig) -> Path:
     )
 
     best_val = float("inf")
+    train_iter = iter(train_loader)
+    val_iter = iter(val_loader)
+    writer = SummaryWriter(log_dir=str(output_dir / "tb")) if SummaryWriter is not None else None
     for epoch in range(1, config.epochs + 1):
-        train_loss = _epoch_loss(train_loader, disp_net, pose_net, optimizer, config, device)
+        disp_net.train()
+        pose_net.train()
+        train_running = 0.0
+        last_train_img = None
+        for _ in range(config.steps_per_epoch):
+            batch, train_iter = _next_batch(train_iter, train_loader, device)
+            loss_value, last_train_img = _step_loss(batch, disp_net, pose_net, optimizer, config)
+            train_running += loss_value
+        train_loss = train_running / max(config.steps_per_epoch, 1)
+
+        disp_net.eval()
+        pose_net.eval()
+        val_running = 0.0
         with torch.no_grad():
-            val_loss = _epoch_loss(val_loader, disp_net, pose_net, None, config, device)
+            for _ in range(max(1, min(config.steps_per_epoch, len(val_loader)))):
+                batch, val_iter = _next_batch(val_iter, val_loader, device)
+                loss_value, _ = _step_loss(batch, disp_net, pose_net, None, config)
+                val_running += loss_value
+        val_steps = max(1, min(config.steps_per_epoch, len(val_loader)))
+        val_loss = val_running / val_steps
         print(f"[{epoch}/{config.epochs}] train={train_loss:.4f} val={val_loss:.4f}")
+        if writer is not None:
+            writer.add_scalar("loss/train", train_loss, epoch)
+            writer.add_scalar("loss/val", val_loss, epoch)
+            if last_train_img is not None and (epoch % config.log_every == 0 or epoch == 1):
+                writer.add_images("preview/rgb_depth", _make_preview(last_train_img[: min(2, last_train_img.shape[0])], disp_net), epoch)
 
         checkpoint = {
             "epoch": epoch,
@@ -151,6 +202,8 @@ def train(config: TrainConfig) -> Path:
         if val_loss < best_val:
             best_val = val_loss
             torch.save(checkpoint, output_dir / "best.pt")
+    if writer is not None:
+        writer.close()
     return output_dir
 
 
@@ -165,6 +218,8 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--steps-per-epoch", type=int, default=250)
+    parser.add_argument("--log-every", type=int, default=10)
     args = parser.parse_args()
 
     cfg = TrainConfig(
@@ -175,5 +230,7 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         workers=args.workers,
         learning_rate=args.lr,
+        steps_per_epoch=args.steps_per_epoch,
+        log_every=args.log_every,
     )
     train(cfg)

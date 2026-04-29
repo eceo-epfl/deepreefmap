@@ -26,6 +26,7 @@ def _default_intrinsics(height: int, width: int) -> np.ndarray:
 
 @dataclass(frozen=True)
 class FramePair:
+    sequence_name: str
     image1: Path
     image2: Path
     intrinsics: np.ndarray
@@ -38,11 +39,13 @@ class ImageSequenceDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tenso
         transform=None,
         skip_frames: int = 1,
         exts: tuple[str, ...] = (".jpg", ".jpeg", ".png"),
+        include_sequences: set[str] | None = None,
     ) -> None:
         self.root = Path(root)
         self.transform = transform
         self.skip_frames = max(skip_frames, 1)
         self.exts = {ext.lower() for ext in exts}
+        self.include_sequences = include_sequences
         self.samples = self._build_samples()
         if not self.samples:
             raise RuntimeError(f"No frame pairs found under {self.root}")
@@ -50,6 +53,8 @@ class ImageSequenceDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tenso
     def _build_samples(self) -> list[FramePair]:
         samples: list[FramePair] = []
         for sequence in sorted(path for path in self.root.iterdir() if path.is_dir()):
+            if self.include_sequences is not None and sequence.name not in self.include_sequences:
+                continue
             images = [p for p in sorted(sequence.iterdir()) if p.suffix.lower() in self.exts]
             if len(images) < self.skip_frames + 1:
                 continue
@@ -61,7 +66,7 @@ class ImageSequenceDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tenso
                 sample_img = _load_image(images[0])
                 intrinsics = _default_intrinsics(sample_img.shape[0], sample_img.shape[1])
             for idx in range(0, len(images) - self.skip_frames):
-                samples.append(FramePair(images[idx], images[idx + self.skip_frames], intrinsics.copy()))
+                samples.append(FramePair(sequence.name, images[idx], images[idx + self.skip_frames], intrinsics.copy()))
         return samples
 
     def __len__(self) -> int:

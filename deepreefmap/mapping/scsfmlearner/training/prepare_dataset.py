@@ -159,15 +159,23 @@ def main() -> None:
             f"[{idx}/{len(videos)}] Processing {video_path} -> {sequence_dir.name}",
             file=sys.stderr,
         )
-        frame_count = _write_sequence(
-            video_path=video_path,
-            sequence_dir=sequence_dir,
-            profile=profile,
-            width=args.width,
-            height=args.height,
-            fps=args.fps,
-            intrinsics=intrinsics,
-        )
+        try:
+            frame_count = _write_sequence(
+                video_path=video_path,
+                sequence_dir=sequence_dir,
+                profile=profile,
+                width=args.width,
+                height=args.height,
+                fps=args.fps,
+                intrinsics=intrinsics,
+            )
+        except Exception as exc:  # Keep building the dataset even if one video is corrupt.
+            print(f"    warning: failed to decode/process video ({exc}); skipped", file=sys.stderr)
+            if sequence_dir.exists():
+                for p in sequence_dir.iterdir():
+                    p.unlink()
+                sequence_dir.rmdir()
+            continue
         if frame_count > 0:
             written_sequences += 1
             total_frames += frame_count
