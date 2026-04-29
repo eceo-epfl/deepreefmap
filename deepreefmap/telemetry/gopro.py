@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import imageio.v3 as iio
@@ -7,6 +8,7 @@ import numpy as np
 
 
 GravityStream = tuple[np.ndarray, np.ndarray]
+logger = logging.getLogger(__name__)
 
 
 def extract_gravity_vectors(video_path: Path, n_samples: int) -> np.ndarray | None:
@@ -40,6 +42,7 @@ def extract_gravity_vectors_for_video_selection(
         src_fps = src_fps if src_fps > 0 else float(max(1, target_fps))
         nframes = _metadata_frame_count(meta, src_fps)
         if nframes is None:
+            logger.warning("Gravity telemetry unavailable: could not determine frame count for %s", path)
             return None
 
         clip_duration = nframes / src_fps
@@ -56,10 +59,12 @@ def extract_gravity_vectors_for_video_selection(
         if selected_local_indices:
             stream = _extract_gravity_stream(path)
             if stream is None:
+                logger.warning("Gravity telemetry unavailable: failed to read GRAV stream for %s", path)
                 return None
             sample_times = np.asarray(selected_local_indices, dtype=np.float32) / src_fps
             sampled = _sample_gravity_stream(stream, sample_times)
             if sampled is None:
+                logger.warning("Gravity telemetry unavailable: failed to sample GRAV stream for %s", path)
                 return None
             parts.append(sampled)
 
@@ -76,6 +81,7 @@ def _extract_gravity_stream(video_path: Path) -> GravityStream | None:
     try:
         from py_gpmf_parser.gopro_telemetry_extractor import GoProTelemetryExtractor
     except Exception:
+        logger.warning("Gravity telemetry unavailable: py-gpmf-parser is not installed")
         return None
 
     extractor = GoProTelemetryExtractor(str(video_path))
@@ -83,6 +89,7 @@ def _extract_gravity_stream(video_path: Path) -> GravityStream | None:
         extractor.open_source()
         stream = extractor.extract_data("GRAV")
     except Exception:
+        logger.warning("Gravity telemetry unavailable: failed extracting GRAV stream from %s", video_path)
         return None
     finally:
         try:

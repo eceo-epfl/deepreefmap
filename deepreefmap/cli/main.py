@@ -63,7 +63,7 @@ def reconstruct(
     videos: str = typer.Option(..., help="Comma-separated video paths in processing order."),
     fps: int = typer.Option(10, help="Target processing framerate."),
     segmentation: str = typer.Option("segformer-b5", help="Segmentation model name."),
-    mapping: str = typer.Option("scsfm", help="3D mapping backend name."),
+    mapping: str = typer.Option("scsfmlearner", help="3D mapping backend name."),
     camera_profile: str = typer.Option(..., help="Camera profile name (in camera_profiles)."),
     out: Path = typer.Option(Path("out"), help="Output directory."),
     begin: Optional[float] = typer.Option(None, help="Start timestamp in the concatenated stream (seconds)."),
@@ -89,6 +89,23 @@ def reconstruct(
     loger_model_path: Optional[Path] = typer.Option(None, help="LoGeR checkpoint path (defaults to vendored)."),
     loger_window_size: int = typer.Option(32, help="LoGeR window size."),
     loger_overlap_size: int = typer.Option(3, help="LoGeR overlap size."),
+    scsfmlearner_checkpoint_path: Optional[Path] = typer.Option(
+        None,
+        help="SC-SfMLearner checkpoint path.",
+    ),
+    scsfmlearner_pose_checkpoint_path: Optional[Path] = typer.Option(
+        None,
+        help="Optional separate SC-SfMLearner pose checkpoint path.",
+    ),
+    grid_bins: int = typer.Option(2000, help="Number of bins used to build the ortho grid."),
+    keep_viser_open: bool = typer.Option(
+        True,
+        help="Keep viser open after outputs are generated.",
+    ),
+    require_gravity_telemetry: bool = typer.Option(
+        False,
+        help="Fail reconstruction if gravity telemetry cannot be loaded/aligned.",
+    ),
 ) -> None:
     # #region agent log
     _debug_log(
@@ -113,6 +130,16 @@ def reconstruct(
             "overlap_size": loger_overlap_size,
             "model_path": str(loger_model_path) if loger_model_path else None,
         }
+    elif mapping == "scsfmlearner":
+        if scsfmlearner_checkpoint_path is None:
+            typer.echo("`--scsfmlearner-checkpoint-path` is required for mapping=scsfmlearner.", err=True)
+            raise typer.Exit(code=1)
+        mapping_options = {
+            "checkpoint_path": str(scsfmlearner_checkpoint_path),
+            "pose_checkpoint_path": (
+                str(scsfmlearner_pose_checkpoint_path) if scsfmlearner_pose_checkpoint_path else None
+            ),
+        }
     run_reconstruction(
         video_paths=[v.strip() for v in videos.split(",") if v.strip()],
         fps=fps,
@@ -132,6 +159,9 @@ def reconstruct(
         replacement_radius_override=replacement_radius_override,
         mapping_options=mapping_options,
         classes_path=classes,
+        grid_bins=grid_bins,
+        keep_viser_open=keep_viser_open,
+        require_gravity_telemetry=require_gravity_telemetry,
     )
 
 
@@ -168,4 +198,4 @@ def render_video(
     run_dir: Path = typer.Option(..., exists=True, help="Run output directory from reconstruct."),
 ) -> None:
     render_offline_video_placeholder(run_dir)
-    typer.echo(f"Offline render placeholder completed in {run_dir}")
+    typer.echo(f"Offline render completed in {run_dir}")

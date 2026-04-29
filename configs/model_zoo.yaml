@@ -1,23 +1,16 @@
 segmentation:
-  coralscapes-vit-l-dpt:
-    predict_resolution: [768, 1376]
-    family: dinov3_dpt
-  coralscapes-vit-b-dpt:
-    predict_resolution: [768, 1376]
-    family: dinov3_dpt
-  segformer-b2:
-    predict_resolution: [1024, 1024]
-    family: segformer
-  segformer-b5:
-    predict_resolution: [1024, 1024]
-    family: segformer
+  # Documentation-only listing of supported model names.
+  # Runtime defaults are defined in CLI and backend registries.
+  supported:
+    - coralscapes-vit-l-dpt
+    - coralscapes-vit-b-dpt
+    - segformer-b2
+    - segformer-b5
 
 mapping:
-  scsfm:
-    window_size: 3
-  loger:
-    window_size: 32
-    overlap_size: 3
-  loger_star:
-    window_size: 32
-    overlap_size: 3
+  # Documentation-only listing of supported backend names.
+  # Runtime defaults/options are defined in CLI and backend registries.
+  supported:
+    - scsfmlearner
+    - loger
+    - loger_star

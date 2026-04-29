@@ -31,9 +31,7 @@ def render_offline_video_placeholder(run_dir: Path) -> None:
     """
     manifest_path = run_dir / "run_manifest.json"
     if not manifest_path.exists():
-        marker = run_dir / "render_video.todo.txt"
-        marker.write_text("No run_manifest.json found; cannot render offline QC video.\n")
-        return
+        raise FileNotFoundError(f"Missing run manifest: {manifest_path}")
 
     manifest = json.loads(manifest_path.read_text())
     classes_path = Path(manifest.get("classes", "configs/classes_coralscapes.yaml"))
@@ -41,6 +39,8 @@ def render_offline_video_placeholder(run_dir: Path) -> None:
         classes_path = run_dir / classes_path
     if not classes_path.exists():
         classes_path = Path(manifest.get("classes", "configs/classes_coralscapes.yaml"))
+    if not classes_path.exists():
+        raise FileNotFoundError(f"Classes config not found for offline render: {classes_path}")
     classes_config = load_classes(classes_path)
     class_colors = classes_config.id_to_color
     class_names = classes_config.id_to_name
@@ -48,9 +48,7 @@ def render_offline_video_placeholder(run_dir: Path) -> None:
     labels_paths = [run_dir / p for p in manifest.get("labels_paths", [])]
     depths_path = run_dir / str(manifest.get("depth_maps", ""))
     if not frame_paths or not depths_path.exists():
-        marker = run_dir / "render_video.todo.txt"
-        marker.write_text("Manifest lacks cached frames or depth maps required for rendering.\n")
-        return
+        raise RuntimeError("Manifest lacks cached frames or depth maps required for rendering.")
 
     mapping = np.load(depths_path)
     depths = mapping["depth"]
@@ -66,7 +64,7 @@ def render_offline_video_placeholder(run_dir: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     first = cv2.imread(str(frame_paths[0]))
     if first is None:
-        return
+        raise RuntimeError(f"Failed to read first cached frame: {frame_paths[0]}")
     h, w = first.shape[:2]
     writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), 10, (w * 2, h * 2))
     legend_bgr = _build_legend(class_colors, class_names, target_h=h)

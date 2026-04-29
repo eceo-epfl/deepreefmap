@@ -76,6 +76,12 @@ uv run deepreefmap reconstruct --videos GX010001.MP4,GX020001.MP4 --fps 10 --seg
 uv run deepreefmap render-video --run-dir out
 ```
 
+Useful reconstruction controls:
+
+- `--grid-bins` controls ortho aggregation resolution.
+- `--keep-viser-open/--no-keep-viser-open` controls whether the viewer blocks after completion.
+- `--require-gravity-telemetry` fails reconstruction when gravity telemetry cannot be loaded or aligned.
+
 Calibrate a new camera profile from a new video, then run reconstruction with it:
 
 ```bash
@@ -119,6 +125,7 @@ Each reconstruction writes cached and derived artifacts for inspection:
 
 ## Notes
 
+- `configs/model_zoo.yaml` is documentation-only (supported names); runtime defaults and behavior come from CLI options and registries.
 - If multiple videos are passed, they are processed in order as a single sequence.
 - The scientific cover path uses the aggregated semantic grid, not the live preview point raster.
 - Offline rendering reads `run_manifest.json` and writes a lightweight QC video when cached artifacts are available.

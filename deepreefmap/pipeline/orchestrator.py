@@ -69,6 +69,7 @@ def run_reconstruction(
     classes_path: Path = DEFAULT_CLASSES_PATH,
     grid_bins: int = 2000,
     keep_viser_open: bool = True,
+    require_gravity_telemetry: bool = False,
 ) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -150,6 +151,11 @@ def run_reconstruction(
             begin_s=begin_s,
             end_s=end_s,
         )
+        if gravity_vectors is None:
+            message = "Gravity telemetry unavailable for selected video interval."
+            if require_gravity_telemetry:
+                raise RuntimeError(f"{message} Run without strict mode or provide GoPro telemetry data.")
+            logger.warning("%s Continuing without gravity alignment.", message)
         if gravity_vectors is not None and gravity_vectors.shape[0] == frame_count:
             frame_batch = FrameBatch(
                 frames=frame_batch.frames,
@@ -160,6 +166,11 @@ def run_reconstruction(
             )
             logger.info("Loaded GoPro gravity telemetry for %d sampled frames", frame_count)
         elif gravity_vectors is not None:
+            if require_gravity_telemetry:
+                raise RuntimeError(
+                    "Gravity telemetry mismatch: "
+                    f"got {gravity_vectors.shape[0]} vectors for {frame_count} sampled frames"
+                )
             logger.warning(
                 "Ignoring gravity telemetry: got %d vectors for %d sampled frames",
                 gravity_vectors.shape[0],
