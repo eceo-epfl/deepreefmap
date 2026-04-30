@@ -73,3 +73,15 @@ class RandomScaleCrop:
         out_intrinsics[0, 2] -= offset_x
         out_intrinsics[1, 2] -= offset_y
         return cropped, out_intrinsics
+
+
+class RandomSequencePermutation:
+    def __init__(self, probability: float = 0.5) -> None:
+        self.probability = min(max(probability, 0.0), 1.0)
+
+    def __call__(self, images: list[np.ndarray], intrinsics: np.ndarray) -> tuple[list[np.ndarray], np.ndarray]:
+        if len(images) < 2 or random.random() >= self.probability:
+            return images, intrinsics
+        permuted = list(images)
+        random.shuffle(permuted)
+        return permuted, intrinsics

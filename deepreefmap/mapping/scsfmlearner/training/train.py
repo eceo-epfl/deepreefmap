@@ -6,28 +6,38 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 try:
-    from torch.utils.tensorboard import SummaryWriter
+    import wandb
 except ImportError:  # pragma: no cover - optional dependency
-    SummaryWriter = None  # type: ignore[assignment]
+    wandb = None  # type: ignore[assignment]
 
 from deepreefmap.mapping.scsfmlearner.models import DispResNet, PoseResNet
 from deepreefmap.mapping.scsfmlearner.training.dataset import ImageSequenceDataset
 from deepreefmap.mapping.scsfmlearner.training.losses import compute_training_loss
-from deepreefmap.mapping.scsfmlearner.training.transforms import ArrayToTensor, Compose, Normalize, RandomHorizontalFlip, RandomScaleCrop
+from deepreefmap.mapping.scsfmlearner.training.transforms import (
+    ArrayToTensor,
+    Compose,
+    Normalize,
+    RandomHorizontalFlip,
+    RandomScaleCrop,
+    RandomSequencePermutation,
+)
 
 
 @dataclass
 class TrainConfig:
-    data_root: str
+    train_data_root: str
+    eval_data_root: str
     output_dir: str
     run_name: str = "scsfmlearner"
     epochs: int = 20
-    batch_size: int = 4
+    batch_size: int = 32
     workers: int = 4
     learning_rate: float = 1e-4
     weight_decay: float = 0.0
-    train_split: float = 0.9
-    steps_per_epoch: int = 250
+    skip_frames: int = 3
+    train_steps_per_epoch: int = 5000
+    eval_steps_per_epoch: int = 1000
+    sequence_permutation_prob: float = 0.5
     pretrained: bool = True
     resnet_layers: int = 18
     num_scales: int = 1
@@ -47,25 +57,22 @@ def _build_loaders(config: TrainConfig) -> tuple[DataLoader, DataLoader]:
         [
             RandomHorizontalFlip(),
             RandomScaleCrop(),
+            RandomSequencePermutation(probability=config.sequence_permutation_prob),
             ArrayToTensor(),
             Normalize((0.45, 0.45, 0.45), (0.225, 0.225, 0.225)),
         ]
     )
     val_transform = Compose([ArrayToTensor(), Normalize((0.45, 0.45, 0.45), (0.225, 0.225, 0.225))])
-    sequence_dirs = sorted(path for path in Path(config.data_root).iterdir() if path.is_dir())
-    sequence_dirs = [seq for seq in sequence_dirs if sum(1 for p in seq.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"}) >= 2]
-    if len(sequence_dirs) < 2:
-        raise RuntimeError("Need at least 2 sequence folders for a train/val split.")
-    sequence_names = [p.name for p in sequence_dirs]
-    sequence_order = torch.randperm(len(sequence_names), generator=torch.Generator().manual_seed(0)).tolist()
-    shuffled = [sequence_names[i] for i in sequence_order]
-    train_count = max(1, int(len(shuffled) * config.train_split))
-    train_count = min(train_count, len(shuffled) - 1)
-    train_sequences = set(shuffled[:train_count])
-    val_sequences = set(shuffled[train_count:])
-
-    train_dataset = ImageSequenceDataset(config.data_root, transform=train_transform, include_sequences=train_sequences)
-    val_dataset = ImageSequenceDataset(config.data_root, transform=val_transform, include_sequences=val_sequences)
+    train_dataset = ImageSequenceDataset(
+        config.train_data_root,
+        transform=train_transform,
+        skip_frames=config.skip_frames,
+    )
+    val_dataset = ImageSequenceDataset(
+        config.eval_data_root,
+        transform=val_transform,
+        skip_frames=config.skip_frames,
+    )
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -76,7 +83,7 @@ def _build_loaders(config: TrainConfig) -> tuple[DataLoader, DataLoader]:
     val_loader = DataLoader(
         val_dataset,
         batch_size=config.batch_size,
-        shuffle=False,
+        shuffle=True,
         num_workers=config.workers,
         pin_memory=True,
     )
@@ -142,7 +149,14 @@ def _make_preview(image: torch.Tensor, disp_net: DispResNet) -> torch.Tensor:
     return torch.cat([rgb, depth_rgb], dim=3)
 
 
+def _preview_for_wandb(image: torch.Tensor, disp_net: DispResNet) -> list:
+    preview = _make_preview(image, disp_net).detach().cpu().permute(0, 2, 3, 1).numpy()
+    return [wandb.Image(sample, caption=f"sample_{idx}") for idx, sample in enumerate(preview)]
+
+
 def train(config: TrainConfig) -> Path:
+    if wandb is None:
+        raise RuntimeError("wandb is required for training logging but is not installed.")
     device = torch.device(config.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     output_dir = Path(config.output_dir) / config.run_name
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -159,51 +173,63 @@ def train(config: TrainConfig) -> Path:
 
     best_val = float("inf")
     train_iter = iter(train_loader)
-    val_iter = iter(val_loader)
-    writer = SummaryWriter(log_dir=str(output_dir / "tb")) if SummaryWriter is not None else None
-    for epoch in range(1, config.epochs + 1):
-        disp_net.train()
-        pose_net.train()
-        train_running = 0.0
-        last_train_img = None
-        for _ in range(config.steps_per_epoch):
-            batch, train_iter = _next_batch(train_iter, train_loader, device)
-            loss_value, last_train_img = _step_loss(batch, disp_net, pose_net, optimizer, config)
-            train_running += loss_value
-        train_loss = train_running / max(config.steps_per_epoch, 1)
+    wandb.init(project="deepreefmap-scsfmlearner", name=config.run_name, config=config.__dict__, dir=str(output_dir))
+    try:
+        for epoch in range(1, config.epochs + 1):
+            disp_net.train()
+            pose_net.train()
+            train_running = 0.0
+            last_train_img = None
+            for _ in range(config.train_steps_per_epoch):
+                batch, train_iter = _next_batch(train_iter, train_loader, device)
+                loss_value, last_train_img = _step_loss(batch, disp_net, pose_net, optimizer, config)
+                train_running += loss_value
+            train_loss = train_running / max(config.train_steps_per_epoch, 1)
 
-        disp_net.eval()
-        pose_net.eval()
-        val_running = 0.0
-        with torch.no_grad():
-            for _ in range(max(1, min(config.steps_per_epoch, len(val_loader)))):
-                batch, val_iter = _next_batch(val_iter, val_loader, device)
-                loss_value, _ = _step_loss(batch, disp_net, pose_net, None, config)
-                val_running += loss_value
-        val_steps = max(1, min(config.steps_per_epoch, len(val_loader)))
-        val_loss = val_running / val_steps
-        print(f"[{epoch}/{config.epochs}] train={train_loss:.4f} val={val_loss:.4f}")
-        if writer is not None:
-            writer.add_scalar("loss/train", train_loss, epoch)
-            writer.add_scalar("loss/val", val_loss, epoch)
+            disp_net.eval()
+            pose_net.eval()
+            val_running = 0.0
+            val_steps = 0
+            val_iter = iter(val_loader)
+            with torch.no_grad():
+                for _ in range(config.eval_steps_per_epoch):
+                    try:
+                        raw_batch = next(val_iter)
+                    except StopIteration:
+                        break
+                    img1, img2, intrinsics = raw_batch
+                    batch = (
+                        img1.to(device, non_blocking=True),
+                        img2.to(device, non_blocking=True),
+                        intrinsics.to(device, non_blocking=True),
+                    )
+                    loss_value, _ = _step_loss(batch, disp_net, pose_net, None, config)
+                    val_running += loss_value
+                    val_steps += 1
+            if val_steps == 0:
+                raise RuntimeError("Evaluation dataset yielded no batches. Check eval_data_root and batch_size.")
+            val_loss = val_running / val_steps
+            print(f"[{epoch}/{config.epochs}] train={train_loss:.4f} val={val_loss:.4f}")
+            metrics = {"loss/train": train_loss, "loss/val": val_loss, "epoch": epoch}
             if last_train_img is not None and (epoch % config.log_every == 0 or epoch == 1):
-                writer.add_images("preview/rgb_depth", _make_preview(last_train_img[: min(2, last_train_img.shape[0])], disp_net), epoch)
+                metrics["preview/rgb_depth"] = _preview_for_wandb(last_train_img[: min(2, last_train_img.shape[0])], disp_net)
+            wandb.log(metrics, step=epoch)
 
-        checkpoint = {
-            "epoch": epoch,
-            "config": config.__dict__,
-            "disp_state_dict": disp_net.state_dict(),
-            "pose_state_dict": pose_net.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "val_loss": val_loss,
-        }
-        if epoch % config.save_every == 0:
-            torch.save(checkpoint, output_dir / f"checkpoint_{epoch:04d}.pt")
-        if val_loss < best_val:
-            best_val = val_loss
-            torch.save(checkpoint, output_dir / "best.pt")
-    if writer is not None:
-        writer.close()
+            checkpoint = {
+                "epoch": epoch,
+                "config": config.__dict__,
+                "disp_state_dict": disp_net.state_dict(),
+                "pose_state_dict": pose_net.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "val_loss": val_loss,
+            }
+            if epoch % config.save_every == 0:
+                torch.save(checkpoint, output_dir / f"checkpoint_{epoch:04d}.pt")
+            if val_loss < best_val:
+                best_val = val_loss
+                torch.save(checkpoint, output_dir / "best.pt")
+    finally:
+        wandb.finish()
     return output_dir
 
 
@@ -211,26 +237,34 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Train compact SC-SfMLearner on simple image sequences.")
-    parser.add_argument("--data-root", required=True, help="Dataset root containing sequence subfolders")
+    parser.add_argument("--train-data-root", required=True, help="Training dataset root containing sequence subfolders")
+    parser.add_argument("--eval-data-root", required=True, help="Evaluation dataset root containing sequence subfolders")
     parser.add_argument("--output-dir", default="checkpoints", help="Directory for model checkpoints")
     parser.add_argument("--run-name", default="scsfmlearner")
     parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--steps-per-epoch", type=int, default=250)
+    parser.add_argument("--skip-frames", type=int, default=3)
+    parser.add_argument("--train-steps-per-epoch", type=int, default=5000)
+    parser.add_argument("--eval-steps-per-epoch", type=int, default=1000)
+    parser.add_argument("--sequence-permutation-prob", type=float, default=0.5)
     parser.add_argument("--log-every", type=int, default=10)
     args = parser.parse_args()
 
     cfg = TrainConfig(
-        data_root=args.data_root,
+        train_data_root=args.train_data_root,
+        eval_data_root=args.eval_data_root,
         output_dir=args.output_dir,
         run_name=args.run_name,
         epochs=args.epochs,
         batch_size=args.batch_size,
         workers=args.workers,
         learning_rate=args.lr,
-        steps_per_epoch=args.steps_per_epoch,
+        skip_frames=args.skip_frames,
+        train_steps_per_epoch=args.train_steps_per_epoch,
+        eval_steps_per_epoch=args.eval_steps_per_epoch,
+        sequence_permutation_prob=args.sequence_permutation_prob,
         log_every=args.log_every,
     )
     train(cfg)
