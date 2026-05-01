@@ -156,7 +156,7 @@ def calibrate_camera_profile(
             "n_registered_images": len(best_rec.images),
             "mean_reprojection_error_px": mean_reproj,
             "camera_model": model_name,
-            "source_video": str(video),
+            "source_video": video.name,
             "sampling_fps": fps,
             "begin_s": begin_s,
             "end_s": end_s,

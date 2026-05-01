@@ -4,7 +4,6 @@ import gc
 import logging
 import time
 from pathlib import Path
-import json
 from typing import Callable
 
 import cv2
@@ -30,23 +29,6 @@ from deepreefmap.telemetry.gopro import extract_gravity_vectors_for_video_select
 from deepreefmap.visualization.viser_app import ViserLiveApp
 
 logger = logging.getLogger(__name__)
-
-
-def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict[str, object]) -> None:
-    try:
-        payload = {
-            "sessionId": "fd164a",
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        with Path("/Users/jonathan/mit/deepreefmap_v2/.cursor/debug-fd164a.log").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(payload) + "\n")
-    except Exception:
-        pass
 
 
 def run_reconstruction(
@@ -471,10 +453,11 @@ def _prepare_frames(
         progress_bar.update(len(batch))
 
     try:
-        target_w, target_h = processing_image_size if processing_image_size is not None else rectifier.profile.image_size
+        target_size = processing_image_size if processing_image_size is not None else rectifier.profile.image_size
         for idx, frame in iter_video_frames(video_paths, target_fps=fps, begin_s=begin_s, end_s=end_s):
             rectified = rectifier.rectify(frame)
-            if rectified.shape[1] != target_w or rectified.shape[0] != target_h:
+            if (rectified.shape[1], rectified.shape[0]) != target_size:
+                target_w, target_h = target_size
                 rectified = cv2.resize(rectified, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
             pending.append((idx, rectified))
             if len(pending) >= batch_size:

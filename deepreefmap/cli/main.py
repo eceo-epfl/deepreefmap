@@ -1,7 +1,6 @@
 from pathlib import Path
 from typing import Optional
 import json
-import time
 
 import typer
 
@@ -12,33 +11,14 @@ from deepreefmap.pointcloud.filters import PointFilterConfig
 from deepreefmap.postproc.reports import render_offline_video_placeholder
 from deepreefmap.segmentation.registry import list_segmentation_models
 from deepreefmap.mapping.registry import list_mapping_backends
-from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR
+from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR, available_profile_names
 from deepreefmap.visualization.viser_app import ViserLiveApp
 
 app = typer.Typer(help="DeepReefMap command line interface")
 
 
-def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict[str, object]) -> None:
-    try:
-        payload = {
-            "sessionId": "fd164a",
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        with Path("/Users/jonathan/mit/deepreefmap_v2/.cursor/debug-fd164a.log").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(payload) + "\n")
-    except Exception:
-        pass
-
-
 def _available_profiles() -> list[str]:
-    if not CAMERA_PROFILE_DIR.exists():
-        return []
-    return sorted(p.stem for p in CAMERA_PROFILE_DIR.glob("*.json"))
+    return available_profile_names()
 
 
 @app.command("list-models")
@@ -126,17 +106,8 @@ def reconstruct(
         help="Height to resize rectified frames to before segmentation/mapping.",
     ),
 ) -> None:
-    # #region agent log
-    _debug_log(
-        run_id="pre-fix-1",
-        hypothesis_id="H1",
-        location="deepreefmap/cli/main.py:reconstruct",
-        message="CLI reconstruct args for viser",
-        data={"viser": viser, "has_viser_port_option": False},
-    )
-    # #endregion
-    profile_path = CAMERA_PROFILE_DIR / f"{camera_profile}.json"
-    if not profile_path.exists():
+    if camera_profile not in _available_profiles():
+        profile_path = CAMERA_PROFILE_DIR / f"{camera_profile}.json"
         available = _available_profiles()
         hint = f"  Available: {', '.join(available)}" if available else "  No profiles found. Run 'deepreefmap calibrate' first."
         typer.echo(f"Camera profile not found: {profile_path}\n{hint}", err=True)

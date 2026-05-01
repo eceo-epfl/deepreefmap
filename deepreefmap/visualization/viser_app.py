@@ -742,7 +742,7 @@ class ViserLiveApp:
             class_rgb[labels == int(class_id)] = np.asarray(color, dtype=np.uint8)
         if rgb.shape[:2] != class_rgb.shape[:2]:
             class_rgb = cv2.resize(class_rgb, (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_NEAREST)
-        preview = np.concatenate([rgb, class_rgb], axis=0)
+        preview = np.concatenate([rgb, class_rgb], axis=1)
         h, w = preview.shape[:2]
         scale = min(1.0, float(max_side) / float(max(h, w, 1)))
         if scale < 1.0:

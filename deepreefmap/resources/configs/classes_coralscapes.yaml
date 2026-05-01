@@ -1,0 +1,40 @@
+classes:
+  - {id: 1, name: "seagrass", color: [125, 222, 125], roles: []}
+  - {id: 2, name: "trash", color: [255, 0, 134], roles: []}
+  - {id: 3, name: "other coral dead", color: [114, 60, 61], roles: []}
+  - {id: 4, name: "other coral bleached", color: [250, 224, 225], roles: []}
+  - {id: 5, name: "sand", color: [194, 178, 128], roles: []}
+  - {id: 6, name: "other coral alive", color: [224, 118, 119], roles: []}
+  - {id: 7, name: "human", color: [255, 0, 0], roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 8, name: "transect tools", color: [8, 205, 12], roles: ["transect_tools", "ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 9, name: "fish", color: [255, 255, 0], roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 10, name: "algae covered substrate", color: [125, 163, 125], roles: []}
+  - {id: 11, name: "other animal", color: [0, 255, 255], roles: []}
+  - {id: 12, name: "unknown hard substrate", color: [125, 125, 125], roles: []}
+  - {id: 13, name: "background", color: [29, 162, 216], roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 14, name: "dark", color: [31, 31, 31], roles: ["ignore_in_cover"]}
+  - {id: 15, name: "transect line", color: [0, 255, 0], roles: ["transect_line"]}
+  - {id: 16, name: "massive/meandering bleached", color: [255, 248, 228], roles: []}
+  - {id: 17, name: "massive/meandering alive", color: [236, 150, 21], roles: []}
+  - {id: 18, name: "rubble", color: [161, 153, 128], roles: []}
+  - {id: 19, name: "branching bleached", color: [252, 231, 240], roles: []}
+  - {id: 20, name: "branching dead", color: [123, 50, 86], roles: []}
+  - {id: 21, name: "millepora", color: [244, 150, 115], roles: []}
+  - {id: 22, name: "branching alive", color: [226, 91, 157], roles: []}
+  - {id: 23, name: "massive/meandering dead", color: [134, 86, 18], roles: []}
+  - {id: 24, name: "clam", color: [189, 255, 234], roles: []}
+  - {id: 25, name: "acropora alive", color: [236, 128, 255], roles: []}
+  - {id: 26, name: "sea cucumber", color: [0, 231, 255], roles: []}
+  - {id: 27, name: "turbinaria", color: [228, 255, 119], roles: []}
+  - {id: 28, name: "table acropora alive", color: [189, 119, 255], roles: []}
+  - {id: 29, name: "sponge", color: [240, 80, 80], roles: []}
+  - {id: 30, name: "anemone", color: [0, 255, 189], roles: []}
+  - {id: 31, name: "pocillopora alive", color: [255, 146, 150], roles: []}
+  - {id: 32, name: "table acropora dead", color: [85, 53, 116], roles: []}
+  - {id: 33, name: "meandering bleached", color: [251, 243, 216], roles: []}
+  - {id: 34, name: "stylophora alive", color: [255, 111, 194], roles: []}
+  - {id: 35, name: "sea urchin", color: [0, 142, 255], roles: []}
+  - {id: 36, name: "meandering alive", color: [230, 193, 0], roles: []}
+  - {id: 37, name: "meandering dead", color: [119, 100, 14], roles: []}
+  - {id: 38, name: "crown of thorn", color: [179, 245, 234], roles: []}
+  - {id: 39, name: "dead clam", color: [89, 155, 134], roles: []}
