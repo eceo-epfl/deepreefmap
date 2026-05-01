@@ -310,6 +310,7 @@ def run_reconstruction(
                 pixel_size_m=None,
                 gravity_telemetry=mapping_result.gravity_vectors is not None,
                 output_files=output_files,
+                mode="geometry_only",
             ))
             if viewer is not None:
                 viewer.set_data(
@@ -416,6 +417,7 @@ def run_reconstruction(
             pixel_size_m=grid.pixel_size_m,
             gravity_telemetry=mapping_result.gravity_vectors is not None,
             output_files=output_files,
+            mode="semantic",
         ))
         if viewer is not None:
             viewer.mark_outputs_ready(str(output_dir), output_files)
@@ -716,9 +718,11 @@ def _build_manifest(
     pixel_size_m: float | None,
     gravity_telemetry: bool,
     output_files: list[str],
+    mode: str,
 ) -> dict[str, object]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
+        "mode": mode,
         "frames_processed": frames_processed,
         "segmentation_model": segmentation_name,
         "mapping_backend": mapping_name,
