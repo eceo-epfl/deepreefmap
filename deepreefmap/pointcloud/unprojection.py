@@ -1,13 +1,4 @@
-from dataclasses import dataclass
-
 import numpy as np
-
-
-@dataclass
-class SemanticPointCloud:
-    xyz: np.ndarray
-    rgb: np.ndarray
-    cls: np.ndarray
 
 
 def depth_to_points(depth: np.ndarray, k: np.ndarray, pose_w_c: np.ndarray) -> np.ndarray:
