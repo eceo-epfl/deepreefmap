@@ -104,6 +104,41 @@ def save_geometry_cloud(path: Path, xyz: np.ndarray, rgb: np.ndarray) -> None:
     _write_binary_ply(path, fields)
 
 
+def load_geometry_cloud(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Inverse of :func:`save_geometry_cloud` for the binary little-endian PLY layout written above."""
+    with open(path, "rb") as fh:
+        header_bytes = bytearray()
+        while True:
+            line = fh.readline()
+            if not line:
+                raise ValueError(f"Truncated PLY header in {path}")
+            header_bytes.extend(line)
+            if line.strip() == b"end_header":
+                break
+        header_text = header_bytes.decode("ascii")
+        if "format binary_little_endian" not in header_text:
+            raise ValueError(f"Unsupported PLY format in {path}: header was {header_text!r}")
+        n = 0
+        for line in header_text.splitlines():
+            if line.startswith("element vertex "):
+                n = int(line.split()[2])
+                break
+        struct_dtype = np.dtype(
+            [
+                ("x", "<f4"),
+                ("y", "<f4"),
+                ("z", "<f4"),
+                ("red", "u1"),
+                ("green", "u1"),
+                ("blue", "u1"),
+            ]
+        )
+        record = np.frombuffer(fh.read(n * struct_dtype.itemsize), dtype=struct_dtype, count=n)
+    xyz = np.stack([record["x"], record["y"], record["z"]], axis=1).astype(np.float32, copy=False)
+    rgb = np.stack([record["red"], record["green"], record["blue"]], axis=1).astype(np.uint8, copy=False)
+    return xyz, rgb
+
+
 def save_ortho_grid(path: Path, grid: OrthoGrid) -> None:
     np.savez_compressed(
         path,

@@ -150,11 +150,15 @@ class ViserSceneController:
         return list(self._frustum_handles.items())
 
     def highlight_frustum(self, frame_index: int | None) -> None:
-        """Keep all frustums in a neutral grey tone."""
+        """Tint the frustum at ``frame_index`` and dim all others.
+
+        Passing ``None`` resets every frustum to the neutral grey tone.
+        """
+        active = (255, 200, 64)
+        neutral = (128, 128, 128)
         for fid, hnd in self._frustum_handles.items():
             try:
-                _ = fid, frame_index
-                hnd.color = (128, 128, 128)
+                hnd.color = active if frame_index is not None and fid == frame_index else neutral
             except Exception:
                 pass
 

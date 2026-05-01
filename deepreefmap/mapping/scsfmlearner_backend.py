@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 import torch
 
+from deepreefmap.camera.intrinsics import scale_intrinsics
 from deepreefmap.mapping.base import FrameEstimate, MappingBackend
 from deepreefmap.mapping.scsfmlearner.models import DispResNet, PoseResNet, pose_vec_to_matrix
 
@@ -34,20 +35,10 @@ class SCSfMLearnerBackend(MappingBackend):
         self._pose_net: PoseResNet | None = None
 
     def initialize(self, image_size: tuple[int, int], intrinsics: np.ndarray) -> None:
-        self._k = self._scale_intrinsics(intrinsics, image_size, self._target_size)
+        self._k = scale_intrinsics(intrinsics, image_size, self._target_size)
         self._pose_w_c = np.eye(4, dtype=np.float32)
         self._prev_tensor = None
         self._load_models()
-
-    @staticmethod
-    def _scale_intrinsics(k: np.ndarray, original_size: tuple[int, int], target_size: tuple[int, int]) -> np.ndarray:
-        orig_w, orig_h = original_size
-        target_w, target_h = target_size
-        scaled = k.astype(np.float32).copy()
-        scaled[0, :] *= float(target_w) / max(float(orig_w), 1.0)
-        scaled[1, :] *= float(target_h) / max(float(orig_h), 1.0)
-        scaled[2] = np.array([0.0, 0.0, 1.0], dtype=np.float32)
-        return scaled
 
     def _load_models(self) -> None:
         checkpoint_path = Path(self._checkpoint_path)

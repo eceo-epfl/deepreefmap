@@ -13,6 +13,14 @@ DeepReefMap is a modular framework for semantic 3D mapping of coral reefs from v
 
 ## Installation
 
+Requirements:
+
+- Python 3.10, 3.11, or 3.12.
+- `uv` for the development workflow.
+- FFmpeg-compatible video support via `imageio[ffmpeg]`.
+- A CUDA-capable GPU for LoGeR; SC-SfMLearner also expects a trusted local checkpoint.
+- COLMAP/PyCOLMAP support for camera calibration.
+
 ```bash
 uv sync
 ```
@@ -72,8 +80,9 @@ uv run deepreefmap list-models
 uv run deepreefmap list-profiles
 uv run deepreefmap calibrate VIDEO.mp4 --name <profile_name> --n-frames 100 --fps 10 --begin 12.0 --end 72.0
 uv run deepreefmap verify-calibration <profile_name>
-uv run deepreefmap reconstruct --videos GX010001.MP4,GX020001.MP4 --fps 10 --segmentation segformer-b5 --mapping scsfmlearner --camera-profile gopro_hero_10 --out out --viser --tsdf
+uv run deepreefmap reconstruct --videos GX010001.MP4,GX020001.MP4 --fps 10 --segmentation segformer-b5 --mapping scsfmlearner --scsfmlearner-checkpoint-path /path/to/trusted_checkpoint.pt --camera-profile gopro_hero_10 --out out --viser --tsdf
 uv run deepreefmap render-video --run-dir out
+uv run deepreefmap view-run --run-dir out --viser-port 8080
 ```
 
 Useful reconstruction controls:
@@ -81,6 +90,10 @@ Useful reconstruction controls:
 - `--grid-bins` controls ortho aggregation resolution.
 - `--keep-viser-open/--no-keep-viser-open` controls whether the viewer blocks after completion.
 - `--require-gravity-telemetry` fails reconstruction when gravity telemetry cannot be loaded or aligned.
+- `--processing-width` / `--processing-height` resize rectified frames before segmentation/mapping.
+- `--preprocess-batch-size` controls the segmentation batch size during frame preparation.
+- `--transect-length` (meters) and `--transect-crop-width` (meters) crop ortho/point-cloud outputs around the dominant transect line for benthic-cover reporting.
+- `--skip-segmentation` skips segmentation entirely and produces a geometry-only reconstruction (`geometry_cloud.ply`, depth + poses). Pair with `view-run` to inspect the result; `view-run` automatically dispatches the minimal geometry-only viser app for these runs.
 
 Calibrate a new camera profile from a new video, then run reconstruction with it:
 
@@ -121,7 +134,8 @@ Each reconstruction writes cached and derived artifacts for inspection:
 - `tsdf_cloud.ply` and `semantic_tsdf_cloud.ply`: geometry and semantics when `--tsdf` is enabled.
 - `ortho.png` and `ortho.npz`: aggregated ortho grid used for reporting.
 - `benthic_cover.json`: class-aware class counts and fractions.
-- `run_manifest.json`: single canonical run manifest (schema, summary fields, frame paths, mapping refs).
+- `geometry_cloud.ply`: aggregated XYZ+RGB cloud emitted by `--skip-segmentation` runs (no semantics).
+- `run_manifest.json`: single canonical run manifest (`schema_version=2`). Records `mode` (`semantic` or `geometry_only`), summary fields, frame paths, and mapping refs.
 
 ## Notes
 
@@ -133,3 +147,11 @@ Each reconstruction writes cached and derived artifacts for inspection:
 - The 3D view uses a per-frame **live** point cloud (full depth unprojection) plus the **final filtered** semantic cloud; `Accumulate` overlays filtered points from frames at or before the timeline index. Both clouds drop points farther than the **median** `distance_to_camera` of the final reference cloud (when distances are present).
 - Point cloud coloring toggles between RGB and semantic-class colors; the legend toggles hide/show classes in both clouds.
 - Controls: point size, frame scrubber, `Playing` / `FPS`, and `Accumulate`.
+
+## Open-Source Release Status
+
+DeepReefMap is pre-release research software. Before a public open-source
+release, the project still needs a chosen top-level license, confirmed LoGeR and
+model-checkpoint license compatibility, and CI-backed release automation. See
+`CONTRIBUTING.md`, `SECURITY.md`, and `THIRD_PARTY_NOTICES.md` for the current
+release-readiness notes.

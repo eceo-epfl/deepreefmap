@@ -179,17 +179,6 @@ def _is_degenerate(xyz: np.ndarray) -> bool:
     return int((spans > 1e-9).sum()) < 2
 
 
-def _mode_int(values: np.ndarray) -> int:
-    if values.size == 0:
-        return 0
-    values = values.astype(np.int64)
-    non_negative = values[values >= 0]
-    if non_negative.size == values.size:
-        return int(np.bincount(non_negative).argmax())
-    unique, counts = np.unique(values, return_counts=True)
-    return int(unique[np.argmax(counts)])
-
-
 def _valid_distance_to_camera(cloud: SemanticPointCloud) -> np.ndarray | None:
     if cloud.distance_to_camera is None:
         return None
@@ -199,18 +188,3 @@ def _valid_distance_to_camera(cloud: SemanticPointCloud) -> np.ndarray | None:
     if not np.any(np.isfinite(dist)):
         return None
     return dist
-
-
-def _camera_facing_group(group: np.ndarray, heights: np.ndarray, distance_to_camera: np.ndarray | None) -> np.ndarray:
-    if distance_to_camera is not None:
-        group_dist = distance_to_camera[group]
-        finite = np.isfinite(group_dist)
-        if np.any(finite):
-            threshold = float(np.median(group_dist[finite]))
-            top = group[finite & (group_dist <= threshold)]
-            if top.size:
-                return top
-
-    group_heights = heights[group]
-    top_mask = group_heights >= group_heights.mean()
-    return group[top_mask] if top_mask.any() else group

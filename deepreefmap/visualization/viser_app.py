@@ -497,7 +497,8 @@ class ViserLiveApp:
             if norm > 1e-8:
                 position -= (forward / norm) * float(backoff)
         wxyz = rotation_to_wxyz(pose[:3, :3])
-        return tuple(float(v) for v in position.tolist()), wxyz, float(fov_y)
+        position_xyz = (float(position[0]), float(position[1]), float(position[2]))
+        return position_xyz, wxyz, float(fov_y)
 
     def _apply_camera_view_to_clients(self, slider_pos: int | None = None) -> None:
         if self._server is None or not self._frame_order:
@@ -691,9 +692,11 @@ class ViserLiveApp:
         if crop is None or self._ortho_base_grid is None:
             return None
 
+        base_grid = self._ortho_base_grid
+
         def _filter(xyz: np.ndarray) -> np.ndarray:
             return point_mask_with_transect_selection(
-                grid=self._ortho_base_grid,
+                grid=base_grid,
                 xyz=xyz,
                 selection=self._ortho_crop_selection,
             )
@@ -742,7 +745,7 @@ class ViserLiveApp:
             class_rgb[labels == int(class_id)] = np.asarray(color, dtype=np.uint8)
         if rgb.shape[:2] != class_rgb.shape[:2]:
             class_rgb = cv2.resize(class_rgb, (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_NEAREST)
-        preview = np.concatenate([rgb, class_rgb], axis=0)
+        preview = np.concatenate([rgb, class_rgb], axis=1)
         h, w = preview.shape[:2]
         scale = min(1.0, float(max_side) / float(max(h, w, 1)))
         if scale < 1.0:

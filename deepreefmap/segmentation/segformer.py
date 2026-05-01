@@ -27,15 +27,17 @@ class SegformerWrapper(SegmentationModel):
         from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
 
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self._processor = SegformerImageProcessor.from_pretrained(self._repo_id)
         try:
+            self._processor = SegformerImageProcessor.from_pretrained(self._repo_id)
             self._model = SegformerForSemanticSegmentation.from_pretrained(self._repo_id).to(self._device).eval()
             return
         except Exception:
             # Some model repos ship id2label/label2id with non-string values, which
             # breaks strict config validation in newer transformers/huggingface_hub versions.
-            # Fall back to sanitizing config.json before model construction.
-            pass
+            # Fall back to sanitizing config.json on the snapshot dir before
+            # rebuilding both the processor and the model from the local copy.
+            self._processor = None
+            self._model = None
 
         root = Path(snapshot_download(self._repo_id))
         config_path = root / "config.json"
@@ -50,7 +52,9 @@ class SegformerWrapper(SegmentationModel):
         if isinstance(label2id, dict):
             cfg["label2id"] = {str(k): int(v) if isinstance(v, (int, float, str)) and str(v).isdigit() else str(v) for k, v in label2id.items()}
 
+        config_path.write_text(json.dumps(cfg))
         config = SegformerConfig.from_dict(cfg)
+        self._processor = SegformerImageProcessor.from_pretrained(root)
         self._model = SegformerForSemanticSegmentation.from_pretrained(root, config=config).to(self._device).eval()
 
     def predict(self, image_rgb: np.ndarray) -> SegmentationOutput:

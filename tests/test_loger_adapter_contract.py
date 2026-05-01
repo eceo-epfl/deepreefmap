@@ -1,12 +1,12 @@
 import numpy as np
 import pytest
 
+from deepreefmap.camera.intrinsics import scale_intrinsics
 from deepreefmap.mapping.loger_backend import (
     LoGeRBackend,
     _assert_pose_convention,
     _nearest_multiple,
     _reanchor_to_first_camera,
-    _scale_intrinsics,
 )
 
 
@@ -26,7 +26,7 @@ def test_loger_target_resolution_uses_patch_multiple():
 def test_scale_intrinsics_matches_resized_frame():
     k = np.array([[100, 0, 50], [0, 200, 40], [0, 0, 1]], dtype=np.float32)
 
-    scaled = _scale_intrinsics(k, original_size=(100, 80), target_size=(50, 40))
+    scaled = scale_intrinsics(k, original_size=(100, 80), target_size=(50, 40))
 
     assert scaled.tolist() == [[50.0, 0.0, 25.0], [0.0, 100.0, 20.0], [0.0, 0.0, 1.0]]
 

@@ -4,7 +4,6 @@ import gc
 import logging
 import time
 from pathlib import Path
-import json
 from typing import Callable
 
 import cv2
@@ -12,7 +11,7 @@ import imageio.v3 as iio
 import numpy as np
 from tqdm.auto import tqdm
 
-from deepreefmap.camera.intrinsics import CameraProfile
+from deepreefmap.camera.intrinsics import CameraProfile, scale_intrinsics
 from deepreefmap.camera.rectification import Rectifier
 from deepreefmap.config.classes import ClassConfig, DEFAULT_CLASSES_PATH, load_classes
 from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_semantic_cloud
@@ -32,23 +31,6 @@ from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
 from deepreefmap.pointcloud.unprojection import depth_to_points
 
 logger = logging.getLogger(__name__)
-
-
-def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict[str, object]) -> None:
-    try:
-        payload = {
-            "sessionId": "fd164a",
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        with Path("/Users/jonathan/mit/deepreefmap_v2/.cursor/debug-fd164a.log").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(payload) + "\n")
-    except Exception:
-        pass
 
 
 def run_reconstruction(
@@ -112,7 +94,7 @@ def run_reconstruction(
             processing_width=processing_width,
             processing_height=processing_height,
         )
-        processing_intrinsics = _scale_intrinsics(profile.k, profile.image_size, processing_image_size)
+        processing_intrinsics = scale_intrinsics(profile.k, profile.image_size, processing_image_size)
 
         prep_key = resume_mod.preprocess_key(
             video_paths=[Path(p) for p in video_paths],
@@ -313,8 +295,7 @@ def run_reconstruction(
                 "mapping_outputs.npz",
                 "geometry_cloud.ply",
             ]
-            from deepreefmap.io.exports import save_geometry_cloud as _save_geometry_cloud
-            _save_geometry_cloud(output_dir / "geometry_cloud.ply", geometry_xyz, geometry_rgb)
+            save_geometry_cloud(output_dir / "geometry_cloud.ply", geometry_xyz, geometry_rgb)
             save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
                 output_dir=output_dir,
                 frame_batch=frame_batch,
@@ -329,6 +310,7 @@ def run_reconstruction(
                 pixel_size_m=None,
                 gravity_telemetry=mapping_result.gravity_vectors is not None,
                 output_files=output_files,
+                mode="geometry_only",
             ))
             if viewer is not None:
                 viewer.set_data(
@@ -435,6 +417,7 @@ def run_reconstruction(
             pixel_size_m=grid.pixel_size_m,
             gravity_telemetry=mapping_result.gravity_vectors is not None,
             output_files=output_files,
+            mode="semantic",
         ))
         if viewer is not None:
             viewer.mark_outputs_ready(str(output_dir), output_files)
@@ -534,10 +517,11 @@ def _prepare_frames(
         progress_bar.update(len(batch))
 
     try:
-        target_w, target_h = processing_image_size if processing_image_size is not None else rectifier.profile.image_size
+        target_size = processing_image_size if processing_image_size is not None else rectifier.profile.image_size
         for idx, frame in iter_video_frames(video_paths, target_fps=fps, begin_s=begin_s, end_s=end_s):
             rectified = rectifier.rectify(frame)
-            if rectified.shape[1] != target_w or rectified.shape[0] != target_h:
+            if (rectified.shape[1], rectified.shape[0]) != target_size:
+                target_w, target_h = target_size
                 rectified = cv2.resize(rectified, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
             pending.append((idx, rectified))
             if len(pending) >= batch_size:
@@ -611,16 +595,6 @@ def _resolve_processing_image_size(
     if processing_width <= 0 or processing_height <= 0:
         raise ValueError("processing_width and processing_height must be positive")
     return (int(processing_width), int(processing_height))
-
-
-def _scale_intrinsics(k: np.ndarray, original_size: tuple[int, int], target_size: tuple[int, int]) -> np.ndarray:
-    orig_w, orig_h = original_size
-    target_w, target_h = target_size
-    scaled = k.astype(np.float32).copy()
-    scaled[0, :] *= float(target_w) / max(float(orig_w), 1.0)
-    scaled[1, :] *= float(target_h) / max(float(orig_h), 1.0)
-    scaled[2] = np.array([0.0, 0.0, 1.0], dtype=np.float32)
-    return scaled
 
 
 def _resize_rgb(image_rgb: np.ndarray, depth_shape_hw: tuple[int, int]) -> np.ndarray:
@@ -744,9 +718,11 @@ def _build_manifest(
     pixel_size_m: float | None,
     gravity_telemetry: bool,
     output_files: list[str],
+    mode: str,
 ) -> dict[str, object]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
+        "mode": mode,
         "frames_processed": frames_processed,
         "segmentation_model": segmentation_name,
         "mapping_backend": mapping_name,

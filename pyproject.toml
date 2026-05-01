@@ -4,6 +4,20 @@ version = "0.1.0"
 description = "Modular framework for semantic 3D mapping of coral reefs from videos"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
+authors = [
+  { name = "Jonathan Sauder" },
+  { name = "Hugues Sibille", email = "hugues.sibille@epfl.ch" },
+]
+keywords = ["coral reefs", "semantic mapping", "3d reconstruction", "computer vision"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Image Processing",
+]
 dependencies = [
   "numpy>=1.26.0",
   "opencv-python>=4.10.0.84",
@@ -43,6 +57,10 @@ gopro = [
 train = ["wandb>=0.20.0", "tensorboard>=2.18.0"]
 dev = ["pytest>=8.4.0", "ruff>=0.12.0", "mypy>=1.16.0"]
 
+[project.urls]
+Repository = "https://github.com/EPFL-ECEO/deepreefmap"
+Issues = "https://github.com/EPFL-ECEO/deepreefmap/issues"
+
 [project.scripts]
 deepreefmap = "deepreefmap.cli.main:app"
 
@@ -52,3 +70,13 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["deepreefmap*"]
+
+[tool.setuptools.package-data]
+"deepreefmap.resources" = ["configs/*.yaml", "camera_profiles/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["third_party"]

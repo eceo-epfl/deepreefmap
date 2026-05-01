@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ import yaml
 
 
 DEFAULT_CLASSES_PATH = Path("configs/classes_coralscapes.yaml")
+_DEFAULT_CLASSES_RESOURCE = "configs/classes_coralscapes.yaml"
 
 
 @dataclass(frozen=True)
@@ -55,7 +57,7 @@ class ClassConfig:
 
 def load_classes(path: Path | str = DEFAULT_CLASSES_PATH) -> ClassConfig:
     classes_path = Path(path)
-    payload = yaml.safe_load(classes_path.read_text()) or {}
+    payload = yaml.safe_load(_read_classes_text(classes_path)) or {}
     raw_classes = payload.get("classes", [])
     if not isinstance(raw_classes, list):
         raise ValueError(f"Classes file {classes_path} must contain a 'classes' list")
@@ -92,6 +94,15 @@ def load_classes(path: Path | str = DEFAULT_CLASSES_PATH) -> ClassConfig:
         )
 
     return ClassConfig(classes=tuple(classes), path=classes_path)
+
+
+def _read_classes_text(classes_path: Path) -> str:
+    if classes_path.exists():
+        return classes_path.read_text()
+    if classes_path == DEFAULT_CLASSES_PATH:
+        resource = resources.files("deepreefmap.resources").joinpath(_DEFAULT_CLASSES_RESOURCE)
+        return resource.read_text()
+    raise FileNotFoundError(f"Classes config not found: {classes_path}")
 
 
 def _coerce_int(value: Any, field_name: str) -> int:

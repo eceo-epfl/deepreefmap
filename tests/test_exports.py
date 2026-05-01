@@ -1,6 +1,11 @@
 import numpy as np
 
-from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_semantic_cloud
+from deepreefmap.io.exports import (
+    load_geometry_cloud,
+    save_geometry_cloud,
+    save_ortho_grid,
+    save_semantic_cloud,
+)
 from deepreefmap.pipeline.artifacts import SemanticPointCloud
 from deepreefmap.pointcloud.grid_ortho import OrthoGrid
 
@@ -74,6 +79,18 @@ def test_save_geometry_cloud_round_trip(tmp_path):
     assert data["y"].tolist() == [1.0]
     assert data["green"].tolist() == [128]
     assert "label" not in data
+
+
+def test_load_geometry_cloud_inverts_save(tmp_path):
+    path = tmp_path / "geom.ply"
+    xyz = np.array([[0.0, 1.0, 2.0], [-3.5, 4.25, 7.0]], dtype=np.float32)
+    rgb = np.array([[255, 128, 0], [10, 20, 30]], dtype=np.uint8)
+    save_geometry_cloud(path, xyz=xyz, rgb=rgb)
+
+    loaded_xyz, loaded_rgb = load_geometry_cloud(path)
+
+    assert np.array_equal(loaded_xyz, xyz)
+    assert np.array_equal(loaded_rgb, rgb)
 
 
 def test_save_ortho_grid_contains_expected_keys(tmp_path):

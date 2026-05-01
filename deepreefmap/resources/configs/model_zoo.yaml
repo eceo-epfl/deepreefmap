@@ -1,0 +1,16 @@
+segmentation:
+  # Documentation-only listing of supported model names.
+  # Runtime defaults are defined in CLI and backend registries.
+  supported:
+    - coralscapes-vit-l-dpt
+    - coralscapes-vit-b-dpt
+    - segformer-b2
+    - segformer-b5
+
+mapping:
+  # Documentation-only listing of supported backend names.
+  # Runtime defaults/options are defined in CLI and backend registries.
+  supported:
+    - scsfmlearner
+    - loger
+    - loger_star

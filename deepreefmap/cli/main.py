@@ -1,7 +1,6 @@
 from pathlib import Path
 from typing import Optional
 import json
-import time
 
 import typer
 
@@ -12,34 +11,16 @@ from deepreefmap.pointcloud.filters import PointFilterConfig
 from deepreefmap.postproc.reports import render_offline_video_placeholder
 from deepreefmap.segmentation.registry import list_segmentation_models
 from deepreefmap.mapping.registry import list_mapping_backends
-from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR
+from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR, available_profile_names
+from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
 from deepreefmap.visualization.viser_app import ViserLiveApp
 from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
 
 app = typer.Typer(help="DeepReefMap command line interface")
 
 
-def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict[str, object]) -> None:
-    try:
-        payload = {
-            "sessionId": "fd164a",
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        with Path("/Users/jonathan/mit/deepreefmap_v2/.cursor/debug-fd164a.log").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(payload) + "\n")
-    except Exception:
-        pass
-
-
 def _available_profiles() -> list[str]:
-    if not CAMERA_PROFILE_DIR.exists():
-        return []
-    return sorted(p.stem for p in CAMERA_PROFILE_DIR.glob("*.json"))
+    return available_profile_names()
 
 
 @app.command("list-models")
@@ -128,21 +109,12 @@ def reconstruct(
     ),
     skip_segmentation: bool = typer.Option(
         False,
-        "--skip_segmentation",
+        "--skip-segmentation",
         help="Skip segmentation entirely. Produces only the 3D reconstruction (geometry cloud + poses + depths) and runs a minimal viser app.",
     ),
 ) -> None:
-    # #region agent log
-    _debug_log(
-        run_id="pre-fix-1",
-        hypothesis_id="H1",
-        location="deepreefmap/cli/main.py:reconstruct",
-        message="CLI reconstruct args for viser",
-        data={"viser": viser, "has_viser_port_option": False},
-    )
-    # #endregion
-    profile_path = CAMERA_PROFILE_DIR / f"{camera_profile}.json"
-    if not profile_path.exists():
+    if camera_profile not in _available_profiles():
+        profile_path = CAMERA_PROFILE_DIR / f"{camera_profile}.json"
         available = _available_profiles()
         hint = f"  Available: {', '.join(available)}" if available else "  No profiles found. Run 'deepreefmap calibrate' first."
         typer.echo(f"Camera profile not found: {profile_path}\n{hint}", err=True)
@@ -266,6 +238,47 @@ def view_run(
     except (OSError, RuntimeError, ValueError) as exc:
         typer.echo(f"Failed to load cached run: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+
+    if loaded.mode == "geometry_only":
+        if loaded.geometry_xyz is None or loaded.geometry_rgb is None:
+            typer.echo("Geometry-only run is missing geometry_cloud.ply payload.", err=True)
+            raise typer.Exit(code=1)
+        geometry_viewer = SimpleGeometryViserApp(port=viser_port)
+        if not geometry_viewer.enabled:
+            reason = getattr(geometry_viewer, "startup_error", None)
+            suffix = f": {reason}" if reason else ""
+            typer.echo(f"Failed to start viser server on port {viser_port}{suffix}", err=True)
+            raise typer.Exit(code=1)
+        try:
+            geometry_viewer.start_run(run_label="DeepReefMap cached run", output_dir=str(loaded.run_dir))
+            geometry_viewer.set_stage("preprocess", "completed", f"Loaded {len(loaded.frame_batch.frames)} cached frames")
+            geometry_viewer.set_stage("mapping", "completed", "Loaded mapping_outputs.npz")
+            geometry_viewer.set_stage("outputs", "completed", f"Loaded {int(loaded.geometry_xyz.shape[0])} geometry points")
+            geometry_viewer.set_data(
+                frame_batch=loaded.frame_batch,
+                mapping_result=loaded.mapping_result,
+                geometry_xyz=loaded.geometry_xyz,
+                geometry_rgb=loaded.geometry_rgb,
+            )
+            geometry_viewer.mark_outputs_ready(str(loaded.run_dir), loaded.output_files)
+            if json_output:
+                typer.echo(json.dumps({
+                    "status": "ready",
+                    "run_dir": str(loaded.run_dir),
+                    "port": viser_port,
+                    "url": f"http://localhost:{viser_port}",
+                    "frames": len(loaded.frame_batch.frames),
+                    "geometry_points": int(loaded.geometry_xyz.shape[0]),
+                    "mode": loaded.mode,
+                    "output_files": loaded.output_files,
+                }))
+            else:
+                typer.echo(f"Viewing cached geometry-only run in {run_dir}. Press Ctrl-C to close viser.")
+            geometry_viewer.wait_forever()
+        finally:
+            geometry_viewer.close()
+        return
+
     viewer = ViserLiveApp(
         class_colors=loaded.classes_config.id_to_color,
         class_names=loaded.classes_config.id_to_name,

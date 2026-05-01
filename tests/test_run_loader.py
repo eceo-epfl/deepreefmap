@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from deepreefmap.cli import main as cli_main
 from deepreefmap.config.classes import ClassConfig, SemanticClass
+from deepreefmap.io.exports import save_geometry_cloud
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame, SemanticPointCloud
 from deepreefmap.pipeline.run_loader import LoadedRun, load_cached_run
 from deepreefmap.pointcloud.filters import PointFilterConfig
@@ -88,6 +89,38 @@ def test_load_cached_run_uses_manifest_and_cached_artifacts(tmp_path: Path, monk
     assert loaded.classes_config.name_for_id(1) == "reef"
     assert loaded.output_files == ["run_manifest.json", "mapping_outputs.npz"]
     assert len(loaded.reference_cloud) == 4
+
+
+def test_load_cached_run_geometry_only_skips_semantic_cloud(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _write_classes(run_dir / "classes.yaml")
+    _write_cached_frame(run_dir, 0)
+    _write_mapping(run_dir)
+    geometry_xyz = np.array([[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]], dtype=np.float32)
+    geometry_rgb = np.array([[10, 20, 30], [200, 100, 50]], dtype=np.uint8)
+    save_geometry_cloud(run_dir / "geometry_cloud.ply", geometry_xyz, geometry_rgb)
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "mode": "geometry_only",
+                "classes": "classes.yaml",
+                "frame_indices": [0],
+                "clip_counts": [1],
+                "output_files": ["run_manifest.json", "mapping_outputs.npz", "geometry_cloud.ply"],
+            }
+        )
+    )
+
+    loaded = load_cached_run(run_dir)
+
+    assert loaded.mode == "geometry_only"
+    assert loaded.geometry_xyz is not None
+    assert np.array_equal(loaded.geometry_xyz, geometry_xyz)
+    assert np.array_equal(loaded.geometry_rgb, geometry_rgb)
+    assert len(loaded.reference_cloud) == 0
 
 
 def test_load_cached_run_reports_missing_mapping(tmp_path: Path, monkeypatch) -> None:

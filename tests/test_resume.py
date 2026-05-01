@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from deepreefmap.pipeline import resume as resume_mod
-from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
+from deepreefmap.pipeline.artifacts import MappingSequenceResult
 
 
 @pytest.fixture

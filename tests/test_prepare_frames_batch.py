@@ -7,7 +7,7 @@ from deepreefmap.segmentation.base import SegmentationOutput
 
 
 class _Rectifier:
-    profile = SimpleNamespace(k=np.eye(3, dtype=np.float64))
+    profile = SimpleNamespace(k=np.eye(3, dtype=np.float64), image_size=(4, 3))
 
     def rectify(self, frame: np.ndarray) -> np.ndarray:
         return frame
