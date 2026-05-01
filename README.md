@@ -82,6 +82,7 @@ uv run deepreefmap calibrate VIDEO.mp4 --name <profile_name> --n-frames 100 --fp
 uv run deepreefmap verify-calibration <profile_name>
 uv run deepreefmap reconstruct --videos GX010001.MP4,GX020001.MP4 --fps 10 --segmentation segformer-b5 --mapping scsfmlearner --scsfmlearner-checkpoint-path /path/to/trusted_checkpoint.pt --camera-profile gopro_hero_10 --out out --viser --tsdf
 uv run deepreefmap render-video --run-dir out
+uv run deepreefmap view-run --run-dir out --viser-port 8080
 ```
 
 Useful reconstruction controls:
@@ -89,6 +90,10 @@ Useful reconstruction controls:
 - `--grid-bins` controls ortho aggregation resolution.
 - `--keep-viser-open/--no-keep-viser-open` controls whether the viewer blocks after completion.
 - `--require-gravity-telemetry` fails reconstruction when gravity telemetry cannot be loaded or aligned.
+- `--processing-width` / `--processing-height` resize rectified frames before segmentation/mapping.
+- `--preprocess-batch-size` controls the segmentation batch size during frame preparation.
+- `--transect-length` (meters) and `--transect-crop-width` (meters) crop ortho/point-cloud outputs around the dominant transect line for benthic-cover reporting.
+- `--skip-segmentation` skips segmentation entirely and produces a geometry-only reconstruction (`geometry_cloud.ply`, depth + poses). Pair with `view-run` to inspect the result; `view-run` automatically dispatches the minimal geometry-only viser app for these runs.
 
 Calibrate a new camera profile from a new video, then run reconstruction with it:
 
@@ -129,7 +134,8 @@ Each reconstruction writes cached and derived artifacts for inspection:
 - `tsdf_cloud.ply` and `semantic_tsdf_cloud.ply`: geometry and semantics when `--tsdf` is enabled.
 - `ortho.png` and `ortho.npz`: aggregated ortho grid used for reporting.
 - `benthic_cover.json`: class-aware class counts and fractions.
-- `run_manifest.json`: single canonical run manifest (schema, summary fields, frame paths, mapping refs).
+- `geometry_cloud.ply`: aggregated XYZ+RGB cloud emitted by `--skip-segmentation` runs (no semantics).
+- `run_manifest.json`: single canonical run manifest (`schema_version=2`). Records `mode` (`semantic` or `geometry_only`), summary fields, frame paths, and mapping refs.
 
 ## Notes
 
