@@ -295,8 +295,7 @@ def run_reconstruction(
                 "mapping_outputs.npz",
                 "geometry_cloud.ply",
             ]
-            from deepreefmap.io.exports import save_geometry_cloud as _save_geometry_cloud
-            _save_geometry_cloud(output_dir / "geometry_cloud.ply", geometry_xyz, geometry_rgb)
+            save_geometry_cloud(output_dir / "geometry_cloud.ply", geometry_xyz, geometry_rgb)
             save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
                 output_dir=output_dir,
                 frame_batch=frame_batch,
