@@ -497,7 +497,8 @@ class ViserLiveApp:
             if norm > 1e-8:
                 position -= (forward / norm) * float(backoff)
         wxyz = rotation_to_wxyz(pose[:3, :3])
-        return tuple(float(v) for v in position.tolist()), wxyz, float(fov_y)
+        position_xyz = (float(position[0]), float(position[1]), float(position[2]))
+        return position_xyz, wxyz, float(fov_y)
 
     def _apply_camera_view_to_clients(self, slider_pos: int | None = None) -> None:
         if self._server is None or not self._frame_order:
@@ -691,9 +692,11 @@ class ViserLiveApp:
         if crop is None or self._ortho_base_grid is None:
             return None
 
+        base_grid = self._ortho_base_grid
+
         def _filter(xyz: np.ndarray) -> np.ndarray:
             return point_mask_with_transect_selection(
-                grid=self._ortho_base_grid,
+                grid=base_grid,
                 xyz=xyz,
                 selection=self._ortho_crop_selection,
             )

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from deepreefmap.mapping.gravity import align_poses_to_gravity
+from deepreefmap.pipeline.artifacts import ScaleType
 
 
 @dataclass
@@ -15,7 +16,7 @@ class FrameEstimate:
     confidence: np.ndarray | None = None  # HxW float32 in [0, 1]
     world_points: np.ndarray | None = None  # HxWx3 float32
     local_points: np.ndarray | None = None  # HxWx3 float32
-    scale_type: str = "unknown"
+    scale_type: ScaleType = "unknown"
 
 
 class MappingBackend(ABC):

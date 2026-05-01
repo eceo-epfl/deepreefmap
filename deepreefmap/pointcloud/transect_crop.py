@@ -178,10 +178,10 @@ def build_transect_crop_geometry(
         return None
 
     yy, xx = np.indices(labels.shape, dtype=np.float32)
-    coords_x = xx - float(centroid[0])
-    coords_y = yy - float(centroid[1])
-    along = coords_x * float(direction[0]) + coords_y * float(direction[1])
-    across = coords_x * float(normal[0]) + coords_y * float(normal[1])
+    coords_x = np.asarray(xx - float(centroid[0]), dtype=np.float32)
+    coords_y = np.asarray(yy - float(centroid[1]), dtype=np.float32)
+    along = np.asarray(coords_x * float(direction[0]) + coords_y * float(direction[1]), dtype=np.float32)
+    across = np.asarray(coords_x * float(normal[0]) + coords_y * float(normal[1]), dtype=np.float32)
     return TransectCropGeometry(
         along=along,
         across=across,
