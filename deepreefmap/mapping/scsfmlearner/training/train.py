@@ -49,6 +49,7 @@ class TrainConfig:
     padding_mode: str = "zeros"
     save_every: int = 1
     log_every: int = 10
+    dataset_refresh_every: int = 5
     device: str | None = None
 
 
@@ -134,7 +135,7 @@ def _next_batch(loader_iter: iter, loader: DataLoader, device: torch.device) -> 
     ), loader_iter
 
 
-def _make_preview(image: torch.Tensor, disp_net: DispResNet) -> torch.Tensor:
+def _make_preview_tensors(image: torch.Tensor, disp_net: DispResNet) -> tuple[torch.Tensor, torch.Tensor]:
     mean = torch.tensor((0.45, 0.45, 0.45), device=image.device).view(1, 3, 1, 1)
     std = torch.tensor((0.225, 0.225, 0.225), device=image.device).view(1, 3, 1, 1)
     rgb = (image * std + mean).clamp(0.0, 1.0)
@@ -146,12 +147,16 @@ def _make_preview(image: torch.Tensor, disp_net: DispResNet) -> torch.Tensor:
         depth = depth - depth.amin(dim=(2, 3), keepdim=True)
         depth = depth / depth.amax(dim=(2, 3), keepdim=True).clamp(min=1e-6)
         depth_rgb = depth.repeat(1, 3, 1, 1)
-    return torch.cat([rgb, depth_rgb], dim=3)
+    return rgb, depth_rgb
 
 
-def _preview_for_wandb(image: torch.Tensor, disp_net: DispResNet) -> list:
-    preview = _make_preview(image, disp_net).detach().cpu().permute(0, 2, 3, 1).numpy()
-    return [wandb.Image(sample, caption=f"sample_{idx}") for idx, sample in enumerate(preview)]
+def _preview_for_wandb(image: torch.Tensor, disp_net: DispResNet, split: str) -> tuple[list, list]:
+    rgb, depth_rgb = _make_preview_tensors(image, disp_net)
+    rgb_preview = rgb.detach().cpu().permute(0, 2, 3, 1).numpy()
+    depth_preview = depth_rgb.detach().cpu().permute(0, 2, 3, 1).numpy()
+    rgb_images = [wandb.Image(sample, caption=f"{split}_rgb_{idx}") for idx, sample in enumerate(rgb_preview)]
+    depth_images = [wandb.Image(sample, caption=f"{split}_depth_{idx}") for idx, sample in enumerate(depth_preview)]
+    return rgb_images, depth_images
 
 
 def train(config: TrainConfig) -> Path:
@@ -161,7 +166,8 @@ def train(config: TrainConfig) -> Path:
     output_dir = Path(config.output_dir) / config.run_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    train_loader, val_loader = _build_loaders(config)
+    train_loader = None
+    val_loader = None
     disp_net = DispResNet(num_layers=config.resnet_layers, pretrained=config.pretrained).to(device)
     pose_net = PoseResNet(num_layers=18, pretrained=config.pretrained).to(device)
 
@@ -172,15 +178,25 @@ def train(config: TrainConfig) -> Path:
     )
 
     best_val = float("inf")
-    train_iter = iter(train_loader)
+    train_iter = None
     wandb.init(project="deepreefmap-scsfmlearner", name=config.run_name, config=config.__dict__, dir=str(output_dir))
     try:
         for epoch in range(1, config.epochs + 1):
+            refresh_every = max(config.dataset_refresh_every, 1)
+            if train_loader is None or val_loader is None or (epoch - 1) % refresh_every == 0:
+                train_loader, val_loader = _build_loaders(config)
+                train_iter = iter(train_loader)
+                print(
+                    f"Refreshed datasets at epoch {epoch}: "
+                    f"train_pairs={len(train_loader.dataset)} eval_pairs={len(val_loader.dataset)}"
+                )
+
             disp_net.train()
             pose_net.train()
             train_running = 0.0
             last_train_img = None
             for _ in range(config.train_steps_per_epoch):
+                assert train_loader is not None and train_iter is not None
                 batch, train_iter = _next_batch(train_iter, train_loader, device)
                 loss_value, last_train_img = _step_loss(batch, disp_net, pose_net, optimizer, config)
                 train_running += loss_value
@@ -190,6 +206,8 @@ def train(config: TrainConfig) -> Path:
             pose_net.eval()
             val_running = 0.0
             val_steps = 0
+            last_eval_img = None
+            assert val_loader is not None
             val_iter = iter(val_loader)
             with torch.no_grad():
                 for _ in range(config.eval_steps_per_epoch):
@@ -203,7 +221,7 @@ def train(config: TrainConfig) -> Path:
                         img2.to(device, non_blocking=True),
                         intrinsics.to(device, non_blocking=True),
                     )
-                    loss_value, _ = _step_loss(batch, disp_net, pose_net, None, config)
+                    loss_value, last_eval_img = _step_loss(batch, disp_net, pose_net, None, config)
                     val_running += loss_value
                     val_steps += 1
             if val_steps == 0:
@@ -211,8 +229,20 @@ def train(config: TrainConfig) -> Path:
             val_loss = val_running / val_steps
             print(f"[{epoch}/{config.epochs}] train={train_loss:.4f} val={val_loss:.4f}")
             metrics = {"loss/train": train_loss, "loss/val": val_loss, "epoch": epoch}
-            if last_train_img is not None and (epoch % config.log_every == 0 or epoch == 1):
-                metrics["preview/rgb_depth"] = _preview_for_wandb(last_train_img[: min(2, last_train_img.shape[0])], disp_net)
+            if epoch % config.log_every == 0 or epoch == 1:
+                preview_count = min(4, config.batch_size)
+                if last_train_img is not None:
+                    train_rgb, train_depth = _preview_for_wandb(
+                        last_train_img[: min(preview_count, last_train_img.shape[0])], disp_net, split="train"
+                    )
+                    metrics["preview/train_rgb"] = train_rgb
+                    metrics["preview/train_depth"] = train_depth
+                if last_eval_img is not None:
+                    eval_rgb, eval_depth = _preview_for_wandb(
+                        last_eval_img[: min(preview_count, last_eval_img.shape[0])], disp_net, split="eval"
+                    )
+                    metrics["preview/eval_rgb"] = eval_rgb
+                    metrics["preview/eval_depth"] = eval_depth
             wandb.log(metrics, step=epoch)
 
             checkpoint = {
@@ -250,6 +280,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval-steps-per-epoch", type=int, default=1000)
     parser.add_argument("--sequence-permutation-prob", type=float, default=0.5)
     parser.add_argument("--log-every", type=int, default=10)
+    parser.add_argument("--dataset-refresh-every", type=int, default=5)
     args = parser.parse_args()
 
     cfg = TrainConfig(
@@ -266,5 +297,6 @@ if __name__ == "__main__":
         eval_steps_per_epoch=args.eval_steps_per_epoch,
         sequence_permutation_prob=args.sequence_permutation_prob,
         log_every=args.log_every,
+        dataset_refresh_every=args.dataset_refresh_every,
     )
     train(cfg)
