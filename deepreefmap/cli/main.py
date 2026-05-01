@@ -13,7 +13,6 @@ from deepreefmap.segmentation.registry import list_segmentation_models
 from deepreefmap.mapping.registry import list_mapping_backends
 from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR, available_profile_names
 from deepreefmap.visualization.viser_app import ViserLiveApp
-from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
 
 app = typer.Typer(help="DeepReefMap command line interface")
 
