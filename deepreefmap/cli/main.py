@@ -13,6 +13,7 @@ from deepreefmap.segmentation.registry import list_segmentation_models
 from deepreefmap.mapping.registry import list_mapping_backends
 from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR, available_profile_names
 from deepreefmap.visualization.viser_app import ViserLiveApp
+from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
 
 app = typer.Typer(help="DeepReefMap command line interface")
 
@@ -105,6 +106,11 @@ def reconstruct(
         None,
         help="Height to resize rectified frames to before segmentation/mapping.",
     ),
+    skip_segmentation: bool = typer.Option(
+        False,
+        "--skip_segmentation",
+        help="Skip segmentation entirely. Produces only the 3D reconstruction (geometry cloud + poses + depths) and runs a minimal viser app.",
+    ),
 ) -> None:
     if camera_profile not in _available_profiles():
         profile_path = CAMERA_PROFILE_DIR / f"{camera_profile}.json"
@@ -160,6 +166,7 @@ def reconstruct(
         preprocess_batch_size=preprocess_batch_size,
         processing_width=processing_width,
         processing_height=processing_height,
+        skip_segmentation=skip_segmentation,
     )
 
 

@@ -27,6 +27,8 @@ from deepreefmap.postproc.reports import save_cover_report, save_run_manifest
 from deepreefmap.segmentation.registry import create_segmentation_model
 from deepreefmap.telemetry.gopro import extract_gravity_vectors_for_video_selection
 from deepreefmap.visualization.viser_app import ViserLiveApp
+from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
+from deepreefmap.pointcloud.unprojection import depth_to_points
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,7 @@ def run_reconstruction(
     preprocess_batch_size: int = 4,
     processing_width: int | None = None,
     processing_height: int | None = None,
+    skip_segmentation: bool = False,
 ) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -66,15 +69,17 @@ def run_reconstruction(
 
     logger.info("Loading classes from %s", classes_path)
     classes_config = load_classes(classes_path)
-    viewer = (
-        ViserLiveApp(
-            class_colors=classes_config.id_to_color,
-            class_names=classes_config.id_to_name,
-            port=viser_port,
-        )
-        if enable_viser
-        else None
-    )
+    if enable_viser:
+        if skip_segmentation:
+            viewer = SimpleGeometryViserApp(port=viser_port)
+        else:
+            viewer = ViserLiveApp(
+                class_colors=classes_config.id_to_color,
+                class_names=classes_config.id_to_name,
+                port=viser_port,
+            )
+    else:
+        viewer = None
     if viewer is not None:
         viewer.start_run(run_label="DeepReefMap reconstruction", output_dir=str(output_dir))
         viewer.set_stage("startup", "running", "Loading camera + segmentation + mapping backends")
@@ -97,7 +102,7 @@ def run_reconstruction(
             begin_s=begin_s,
             end_s=end_s,
             camera_profile_name=camera_profile_name,
-            segmentation_name=segmentation_name,
+            segmentation_name="__skip__" if skip_segmentation else segmentation_name,
             classes_path=classes_path,
             processing_width=processing_image_size[0],
             processing_height=processing_image_size[1],
@@ -109,7 +114,11 @@ def run_reconstruction(
             resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_PREPROCESS)
             resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_MAPPING)
 
-        if not prep_hit:
+        if skip_segmentation:
+            segmentation = None
+            if not prep_hit:
+                logger.info("Skip segmentation enabled: rectified frames will be saved without semantic labels.")
+        elif not prep_hit:
             logger.info("Loading segmentation model '%s'", segmentation_name)
             segmentation = create_segmentation_model(segmentation_name)
         else:
@@ -149,8 +158,9 @@ def run_reconstruction(
                 resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_PREPROCESS)
                 resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_MAPPING)
                 prep_hit = False
-                logger.info("Loading segmentation model '%s'", segmentation_name)
-                segmentation = create_segmentation_model(segmentation_name)
+                if not skip_segmentation:
+                    logger.info("Loading segmentation model '%s'", segmentation_name)
+                    segmentation = create_segmentation_model(segmentation_name)
             else:
                 logger.info("Resume: loaded %d preprocessed frames from %s", len(frame_batch.frames), output_dir)
         if frame_batch is None:
@@ -269,6 +279,52 @@ def run_reconstruction(
                 scale_type=np.asarray(mapping_result.scale_type),
             )
             resume_mod.write_sidecar(output_dir, resume_mod.STAGE_MAPPING, map_key)
+
+        if skip_segmentation:
+            logger.info("Skip segmentation: building geometry-only point cloud...")
+            if viewer is not None:
+                viewer.set_stage("outputs", "running", "Building geometry cloud")
+            active_stage = "outputs"
+            geometry_xyz, geometry_rgb = _build_geometry_cloud(
+                frame_batch=frame_batch,
+                mapping_result=mapping_result,
+                voxel_size=0.003,
+            )
+            output_files = [
+                "run_manifest.json",
+                "mapping_outputs.npz",
+                "geometry_cloud.ply",
+            ]
+            from deepreefmap.io.exports import save_geometry_cloud as _save_geometry_cloud
+            _save_geometry_cloud(output_dir / "geometry_cloud.ply", geometry_xyz, geometry_rgb)
+            save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
+                output_dir=output_dir,
+                frame_batch=frame_batch,
+                mapping_result=mapping_result,
+                frames_processed=frame_count,
+                segmentation_name="__skip__",
+                mapping_name=mapping_name,
+                camera_profile_name=camera_profile_name,
+                classes_path=classes_path,
+                reference_cloud_size=int(geometry_xyz.shape[0]),
+                metric_cloud_size=int(geometry_xyz.shape[0]),
+                pixel_size_m=None,
+                gravity_telemetry=mapping_result.gravity_vectors is not None,
+                output_files=output_files,
+            ))
+            if viewer is not None:
+                viewer.set_data(
+                    frame_batch=frame_batch,
+                    mapping_result=mapping_result,
+                    geometry_xyz=geometry_xyz,
+                    geometry_rgb=geometry_rgb,
+                )
+                viewer.mark_outputs_ready(str(output_dir), output_files)
+                if keep_viser_open:
+                    logger.info("Viser is still running. Press Ctrl-C to close it.")
+                    viewer.wait_forever()
+            logger.info("Done. Outputs in %s", output_dir)
+            return
 
         logger.info("Building filtered semantic reference cloud...")
         reference_cloud = build_semantic_reference_cloud(
@@ -419,7 +475,11 @@ def _prepare_frames(
         t_batch = time.monotonic()
         batch = list(pending)
         pending.clear()
-        labels_batch = [out.labels.astype(np.int32) for out in segmentation.predict_batch([frame for _, frame in batch])]
+        if segmentation is None:
+            h0, w0 = batch[0][1].shape[:2]
+            labels_batch = [np.zeros((h0, w0), dtype=np.int32) for _ in batch]
+        else:
+            labels_batch = [out.labels.astype(np.int32) for out in segmentation.predict_batch([frame for _, frame in batch])]
         if len(labels_batch) != len(batch):
             raise RuntimeError(f"Segmentation returned {len(labels_batch)} outputs for batch of {len(batch)} frames")
         elapsed = time.monotonic() - t_batch
@@ -427,8 +487,11 @@ def _prepare_frames(
         last_idx = int(batch[-1][0])
         for (idx, rectified), labels in zip(batch, labels_batch, strict=True):
             prepared_count = len(prepared) + 1
-            ignore_list = list(ignore_labels)
-            keep_mask = (~np.isin(labels, ignore_list)).astype(np.uint8) * 255
+            if segmentation is None:
+                keep_mask = np.full(labels.shape, 255, dtype=np.uint8)
+            else:
+                ignore_list = list(ignore_labels)
+                keep_mask = (~np.isin(labels, ignore_list)).astype(np.uint8) * 255
             stem = f"{idx:08d}"
             image_path = frames_dir / f"{stem}.png"
             labels_path = labels_dir / f"{stem}.npy"
@@ -472,6 +535,50 @@ def _prepare_frames(
         image_size=image_size,
         clip_counts=(len(prepared),),
     )
+
+
+def _build_geometry_cloud(
+    frame_batch: FrameBatch,
+    mapping_result: MappingSequenceResult,
+    *,
+    min_depth: float = 0.05,
+    max_depth: float = 8.0,
+    voxel_size: float = 0.003,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Aggregate per-frame depth+RGB into a single XYZ/RGB cloud (geometry-only)."""
+    frame_lookup = {int(f.frame_index): f for f in frame_batch.frames}
+    xyz_parts: list[np.ndarray] = []
+    rgb_parts: list[np.ndarray] = []
+    for result_i, frame_index in enumerate(mapping_result.frame_indices.tolist()):
+        frame = frame_lookup.get(int(frame_index))
+        if frame is None:
+            continue
+        depth = np.asarray(mapping_result.depth_maps[result_i], dtype=np.float32)
+        h, w = depth.shape
+        rgb = cv2.resize(frame.image_rgb, (w, h), interpolation=cv2.INTER_AREA)
+        if mapping_result.world_points is not None:
+            xyz = mapping_result.world_points[result_i].reshape(-1, 3).astype(np.float32)
+        else:
+            xyz = depth_to_points(depth, mapping_result.intrinsics, mapping_result.poses_w_c[result_i]).astype(np.float32)
+        valid = np.isfinite(depth) & (depth >= min_depth) & (depth <= max_depth)
+        flat = valid.reshape(-1)
+        if not flat.any():
+            continue
+        xyz_parts.append(xyz[flat])
+        rgb_parts.append(rgb.reshape(-1, 3)[flat].astype(np.uint8))
+    if not xyz_parts:
+        return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint8)
+    xyz_all = np.concatenate(xyz_parts, axis=0)
+    rgb_all = np.concatenate(rgb_parts, axis=0)
+    if voxel_size and voxel_size > 0:
+        keys = np.floor(xyz_all / float(voxel_size)).astype(np.int64)
+        order = np.lexsort((keys[:, 2], keys[:, 1], keys[:, 0]))
+        keys_sorted = keys[order]
+        first = np.concatenate([[True], np.any(np.diff(keys_sorted, axis=0) != 0, axis=1)])
+        idx = order[first]
+        xyz_all = xyz_all[idx]
+        rgb_all = rgb_all[idx]
+    return xyz_all, rgb_all
 
 
 def _resolve_processing_image_size(
