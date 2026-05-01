@@ -15,12 +15,14 @@ dist/
 # Runtime outputs
 out/
 out_*/
+viser_exports/
 
 # Calibration diagnostics (generated)
 camera_profiles/*_diagnostics/
 
 # Local editor/system files
 .DS_Store
+.vscode/
 
 # Large model/checkpoint artifacts
 *.pt
