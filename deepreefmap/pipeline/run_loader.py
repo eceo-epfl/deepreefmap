@@ -1,14 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from deepreefmap.config.classes import ClassConfig, load_classes
+from deepreefmap.io.exports import load_geometry_cloud
 from deepreefmap.pipeline import resume as resume_mod
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, SemanticPointCloud
 from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_reference_cloud
+
+
+GEOMETRY_ONLY_MODE = "geometry_only"
+SEMANTIC_MODE = "semantic"
 
 
 @dataclass(frozen=True)
@@ -18,8 +25,11 @@ class LoadedRun:
     classes_config: ClassConfig
     frame_batch: FrameBatch
     mapping_result: MappingSequenceResult
-    reference_cloud: SemanticPointCloud
     output_files: list[str]
+    mode: str = SEMANTIC_MODE
+    reference_cloud: SemanticPointCloud = field(default_factory=SemanticPointCloud.empty)
+    geometry_xyz: np.ndarray | None = None
+    geometry_rgb: np.ndarray | None = None
 
 
 def load_cached_run(
@@ -45,6 +55,26 @@ def load_cached_run(
             "Run folder is missing cached frames, labels, masks, or preprocess metadata required for viewing."
         )
     output_files = _output_files_from_manifest(manifest)
+    mode = _resolve_mode(manifest)
+
+    if mode == GEOMETRY_ONLY_MODE:
+        geometry_path = run_dir / "geometry_cloud.ply"
+        if not geometry_path.exists():
+            raise RuntimeError(
+                f"Geometry-only run is missing geometry_cloud.ply: {geometry_path}"
+            )
+        geometry_xyz, geometry_rgb = load_geometry_cloud(geometry_path)
+        return LoadedRun(
+            run_dir=run_dir,
+            manifest=manifest,
+            classes_config=classes_config,
+            frame_batch=frame_batch,
+            mapping_result=mapping_result,
+            output_files=output_files,
+            mode=mode,
+            geometry_xyz=geometry_xyz,
+            geometry_rgb=geometry_rgb,
+        )
 
     reference_cloud = build_semantic_reference_cloud(
         frame_batch,
@@ -59,9 +89,20 @@ def load_cached_run(
         classes_config=classes_config,
         frame_batch=frame_batch,
         mapping_result=mapping_result,
-        reference_cloud=reference_cloud,
         output_files=output_files,
+        mode=mode,
+        reference_cloud=reference_cloud,
     )
+
+
+def _resolve_mode(manifest: dict[str, Any]) -> str:
+    """Return the run mode, supporting schema_version=1 manifests via the magic segmentation_model value."""
+    explicit = manifest.get("mode")
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    if manifest.get("segmentation_model") == "__skip__":
+        return GEOMETRY_ONLY_MODE
+    return SEMANTIC_MODE
 
 
 def _load_manifest(run_dir: Path) -> dict[str, Any]:
