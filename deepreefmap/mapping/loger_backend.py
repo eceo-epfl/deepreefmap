@@ -10,6 +10,7 @@ import yaml
 import cv2
 import numpy as np
 
+from deepreefmap.camera.intrinsics import scale_intrinsics
 from deepreefmap.mapping.base import FrameEstimate, MappingBackend
 from deepreefmap.pipeline.artifacts import MappingSequenceResult
 
@@ -222,7 +223,7 @@ class LoGeRBackend(MappingBackend):
                 confidence = np.squeeze(confidence, axis=-1) if confidence.ndim == 4 and confidence.shape[-1] == 1 else confidence
             input_h, input_w = images_rgb[0].shape[:2]
             image_size = self._image_size or (input_w, input_h)
-            intrinsics = _scale_intrinsics(self._k, image_size, (target_w, target_h))
+            intrinsics = scale_intrinsics(self._k, image_size, (target_w, target_h))
             logger.info("LoGeR sequence run complete for %d frames", n_in)
             return MappingSequenceResult(
                 frame_indices=np.asarray(frame_indices, dtype=np.int32),
@@ -314,13 +315,3 @@ def _tensor_to_numpy(value) -> np.ndarray | None:
     if hasattr(value, "detach"):
         value = value.squeeze(0).detach().cpu().float().numpy()
     return np.asarray(value)
-
-
-def _scale_intrinsics(k: np.ndarray, original_size: tuple[int, int], target_size: tuple[int, int]) -> np.ndarray:
-    orig_w, orig_h = original_size
-    target_w, target_h = target_size
-    scaled = k.astype(np.float32).copy()
-    scaled[0, :] *= float(target_w) / max(float(orig_w), 1.0)
-    scaled[1, :] *= float(target_h) / max(float(orig_h), 1.0)
-    scaled[2] = np.array([0.0, 0.0, 1.0], dtype=np.float32)
-    return scaled

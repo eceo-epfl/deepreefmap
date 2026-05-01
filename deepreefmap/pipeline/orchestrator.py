@@ -11,7 +11,7 @@ import imageio.v3 as iio
 import numpy as np
 from tqdm.auto import tqdm
 
-from deepreefmap.camera.intrinsics import CameraProfile
+from deepreefmap.camera.intrinsics import CameraProfile, scale_intrinsics
 from deepreefmap.camera.rectification import Rectifier
 from deepreefmap.config.classes import ClassConfig, DEFAULT_CLASSES_PATH, load_classes
 from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_semantic_cloud
@@ -94,7 +94,7 @@ def run_reconstruction(
             processing_width=processing_width,
             processing_height=processing_height,
         )
-        processing_intrinsics = _scale_intrinsics(profile.k, profile.image_size, processing_image_size)
+        processing_intrinsics = scale_intrinsics(profile.k, profile.image_size, processing_image_size)
 
         prep_key = resume_mod.preprocess_key(
             video_paths=[Path(p) for p in video_paths],
@@ -594,16 +594,6 @@ def _resolve_processing_image_size(
     if processing_width <= 0 or processing_height <= 0:
         raise ValueError("processing_width and processing_height must be positive")
     return (int(processing_width), int(processing_height))
-
-
-def _scale_intrinsics(k: np.ndarray, original_size: tuple[int, int], target_size: tuple[int, int]) -> np.ndarray:
-    orig_w, orig_h = original_size
-    target_w, target_h = target_size
-    scaled = k.astype(np.float32).copy()
-    scaled[0, :] *= float(target_w) / max(float(orig_w), 1.0)
-    scaled[1, :] *= float(target_h) / max(float(orig_h), 1.0)
-    scaled[2] = np.array([0.0, 0.0, 1.0], dtype=np.float32)
-    return scaled
 
 
 def _resize_rgb(image_rgb: np.ndarray, depth_shape_hw: tuple[int, int]) -> np.ndarray:

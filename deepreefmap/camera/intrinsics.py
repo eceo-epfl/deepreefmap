@@ -68,6 +68,25 @@ def available_profile_names() -> list[str]:
     return sorted(names)
 
 
+def scale_intrinsics(
+    k: np.ndarray,
+    original_size: tuple[int, int],
+    target_size: tuple[int, int],
+) -> np.ndarray:
+    """Rescale a 3x3 pinhole intrinsics matrix from ``original_size`` to ``target_size``.
+
+    Both sizes are ``(width, height)``. The bottom row is reset to ``[0, 0, 1]`` to
+    suppress accumulated float drift across repeated rescalings.
+    """
+    orig_w, orig_h = original_size
+    target_w, target_h = target_size
+    scaled = k.astype(np.float32).copy()
+    scaled[0, :] *= float(target_w) / max(float(orig_w), 1.0)
+    scaled[1, :] *= float(target_h) / max(float(orig_h), 1.0)
+    scaled[2] = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    return scaled
+
+
 def _read_profile_text(name: str, path: Path) -> str:
     if path.exists():
         return path.read_text()
