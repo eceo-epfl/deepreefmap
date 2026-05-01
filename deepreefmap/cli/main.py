@@ -107,7 +107,7 @@ def reconstruct(
     ),
     skip_segmentation: bool = typer.Option(
         False,
-        "--skip_segmentation",
+        "--skip-segmentation",
         help="Skip segmentation entirely. Produces only the 3D reconstruction (geometry cloud + poses + depths) and runs a minimal viser app.",
     ),
 ) -> None:
