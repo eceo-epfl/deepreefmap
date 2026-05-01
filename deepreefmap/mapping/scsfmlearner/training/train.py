@@ -97,7 +97,7 @@ def _step_loss(
     pose_net: PoseResNet,
     optimizer: torch.optim.Optimizer | None,
     config: TrainConfig,
-) -> tuple[float, torch.Tensor]:
+) -> tuple[float, torch.Tensor, torch.Tensor]:
     train_mode = optimizer is not None
     img1, img2, intrinsics = batch
     loss, _ = compute_training_loss(
@@ -118,7 +118,7 @@ def _step_loss(
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
-    return float(loss.detach().cpu()), img1
+    return float(loss.detach().cpu()), img1, img2
 
 
 def _next_batch(loader_iter: iter, loader: DataLoader, device: torch.device) -> tuple[tuple[torch.Tensor, torch.Tensor, torch.Tensor], iter]:
@@ -150,12 +150,17 @@ def _make_preview_tensors(image: torch.Tensor, disp_net: DispResNet) -> tuple[to
     return rgb, depth_rgb
 
 
-def _preview_for_wandb(image: torch.Tensor, disp_net: DispResNet, split: str) -> tuple[list, list]:
-    rgb, depth_rgb = _make_preview_tensors(image, disp_net)
-    rgb_preview = rgb.detach().cpu().permute(0, 2, 3, 1).numpy()
-    depth_preview = depth_rgb.detach().cpu().permute(0, 2, 3, 1).numpy()
-    rgb_images = [wandb.Image(sample, caption=f"{split}_rgb_{idx}") for idx, sample in enumerate(rgb_preview)]
-    depth_images = [wandb.Image(sample, caption=f"{split}_depth_{idx}") for idx, sample in enumerate(depth_preview)]
+def _pair_preview_for_wandb(
+    img1: torch.Tensor, img2: torch.Tensor, disp_net: DispResNet, split: str,
+) -> tuple[list, list]:
+    """Generate W&B preview images for a single pair (img1, img2) from *split*."""
+    pair = torch.cat([img1[:1], img2[:1]], dim=0)
+    rgb, depth_rgb = _make_preview_tensors(pair, disp_net)
+    rgb_np = rgb.detach().cpu().permute(0, 2, 3, 1).numpy()
+    depth_np = depth_rgb.detach().cpu().permute(0, 2, 3, 1).numpy()
+    labels = ["img1", "img2"]
+    rgb_images = [wandb.Image(rgb_np[i], caption=f"{split}_{labels[i]}") for i in range(2)]
+    depth_images = [wandb.Image(depth_np[i], caption=f"{split}_{labels[i]}_depth") for i in range(2)]
     return rgb_images, depth_images
 
 
@@ -194,11 +199,12 @@ def train(config: TrainConfig) -> Path:
             disp_net.train()
             pose_net.train()
             train_running = 0.0
-            last_train_img = None
+            last_train_pair: tuple[torch.Tensor, torch.Tensor] | None = None
             for _ in range(config.train_steps_per_epoch):
                 assert train_loader is not None and train_iter is not None
                 batch, train_iter = _next_batch(train_iter, train_loader, device)
-                loss_value, last_train_img = _step_loss(batch, disp_net, pose_net, optimizer, config)
+                loss_value, img1, img2 = _step_loss(batch, disp_net, pose_net, optimizer, config)
+                last_train_pair = (img1, img2)
                 train_running += loss_value
             train_loss = train_running / max(config.train_steps_per_epoch, 1)
 
@@ -206,7 +212,7 @@ def train(config: TrainConfig) -> Path:
             pose_net.eval()
             val_running = 0.0
             val_steps = 0
-            last_eval_img = None
+            last_eval_pair: tuple[torch.Tensor, torch.Tensor] | None = None
             assert val_loader is not None
             val_iter = iter(val_loader)
             with torch.no_grad():
@@ -221,7 +227,8 @@ def train(config: TrainConfig) -> Path:
                         img2.to(device, non_blocking=True),
                         intrinsics.to(device, non_blocking=True),
                     )
-                    loss_value, last_eval_img = _step_loss(batch, disp_net, pose_net, None, config)
+                    loss_value, eval_img1, eval_img2 = _step_loss(batch, disp_net, pose_net, None, config)
+                    last_eval_pair = (eval_img1, eval_img2)
                     val_running += loss_value
                     val_steps += 1
             if val_steps == 0:
@@ -230,16 +237,15 @@ def train(config: TrainConfig) -> Path:
             print(f"[{epoch}/{config.epochs}] train={train_loss:.4f} val={val_loss:.4f}")
             metrics = {"loss/train": train_loss, "loss/val": val_loss, "epoch": epoch}
             if epoch % config.log_every == 0 or epoch == 1:
-                preview_count = min(4, config.batch_size)
-                if last_train_img is not None:
-                    train_rgb, train_depth = _preview_for_wandb(
-                        last_train_img[: min(preview_count, last_train_img.shape[0])], disp_net, split="train"
+                if last_train_pair is not None:
+                    train_rgb, train_depth = _pair_preview_for_wandb(
+                        last_train_pair[0], last_train_pair[1], disp_net, split="train",
                     )
                     metrics["preview/train_rgb"] = train_rgb
                     metrics["preview/train_depth"] = train_depth
-                if last_eval_img is not None:
-                    eval_rgb, eval_depth = _preview_for_wandb(
-                        last_eval_img[: min(preview_count, last_eval_img.shape[0])], disp_net, split="eval"
+                if last_eval_pair is not None:
+                    eval_rgb, eval_depth = _pair_preview_for_wandb(
+                        last_eval_pair[0], last_eval_pair[1], disp_net, split="eval",
                     )
                     metrics["preview/eval_rgb"] = eval_rgb
                     metrics["preview/eval_depth"] = eval_depth
