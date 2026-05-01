@@ -183,7 +183,7 @@ class LoGeRBackend(MappingBackend):
                 total_frames,
             )
             t_infer = time.monotonic()
-            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=dtype):
+            with torch.no_grad(), torch.amp.autocast(device_type="cuda", enabled=True, dtype=dtype):
                 out = model(
                     batch_t,
                     **forward_kwargs,
