@@ -191,10 +191,13 @@ def train(config: TrainConfig) -> Path:
             if train_loader is None or val_loader is None or (epoch - 1) % refresh_every == 0:
                 train_loader, val_loader = _build_loaders(config)
                 train_iter = iter(train_loader)
+                num_train = len(train_loader.dataset)
+                num_eval = len(val_loader.dataset)
                 print(
                     f"Refreshed datasets at epoch {epoch}: "
-                    f"train_pairs={len(train_loader.dataset)} eval_pairs={len(val_loader.dataset)}"
+                    f"train_pairs={num_train} eval_pairs={num_eval}"
                 )
+                wandb.log({"dataset/train_pairs": num_train, "dataset/eval_pairs": num_eval}, step=epoch)
 
             disp_net.train()
             pose_net.train()

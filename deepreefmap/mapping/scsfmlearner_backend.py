@@ -86,7 +86,7 @@ class SCSfMLearnerBackend(MappingBackend):
 
             rel = np.eye(4, dtype=np.float32)
             if self._prev_tensor is not None and self._pose_net is not None:
-                pose_vec = self._pose_net(self._prev_tensor, x)
+                pose_vec = self._pose_net(x, self._prev_tensor)
                 rel = pose_vec_to_matrix(pose_vec).squeeze(0).cpu().numpy().astype(np.float32)
             self._prev_tensor = x
 
