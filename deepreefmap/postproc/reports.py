@@ -67,7 +67,7 @@ def render_offline_video_placeholder(run_dir: Path) -> None:
         raise RuntimeError(f"Failed to read first cached frame: {frame_paths[0]}")
     h, w = first.shape[:2]
     writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), 10, (w * 2, h * 2))
-    legend_bgr = _build_legend(class_colors, class_names, target_h=h)
+    legend_cache: dict[tuple[int, ...], np.ndarray] = {}
 
     for idx, frame_path in enumerate(frame_paths[: len(depths)]):
         bgr = cv2.imread(str(frame_path))
@@ -88,7 +88,14 @@ def render_offline_video_placeholder(run_dir: Path) -> None:
         seg_panel = cv2.cvtColor((seg_blend * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
 
         timeline_index = int(mapping_frame_indices[idx]) if idx < len(mapping_frame_indices) else idx
-        ortho_panel = _ortho_panel(ortho, legend_bgr, timeline_index, (w, h))
+        ortho_panel = _ortho_panel(
+            ortho,
+            class_colors,
+            class_names,
+            timeline_index,
+            (w, h),
+            legend_cache,
+        )
 
         top = np.concatenate([bgr, seg_panel], axis=1)
         bottom = np.concatenate([depth_panel, ortho_panel], axis=1)
@@ -139,14 +146,16 @@ def _load_ortho(path: Path, class_colors: dict[int, tuple[int, int, int]]) -> di
     class_rgb = np.full(rgb.shape, 0, dtype=np.uint8)
     for class_id, color in class_colors.items():
         class_rgb[labels == int(class_id)] = np.asarray(color, dtype=np.uint8)
-    return {"rgb": rgb, "class_rgb": class_rgb, "frame_index": frame_index}
+    return {"rgb": rgb, "class_rgb": class_rgb, "labels": labels, "frame_index": frame_index}
 
 
 def _ortho_panel(
     ortho: dict | None,
-    legend_bgr: np.ndarray | None,
+    class_colors: dict[int, tuple[int, int, int]],
+    class_names: dict[int, str],
     timeline_frame_index: int,
     size_wh: tuple[int, int],
+    legend_cache: dict[tuple[int, ...], np.ndarray],
 ) -> np.ndarray:
     target_w, target_h = size_wh
     if ortho is None:
@@ -165,14 +174,38 @@ def _ortho_panel(
         stacked = np.concatenate([rgb_cum, class_cum], axis=1)
     stacked_bgr = cv2.cvtColor(stacked, cv2.COLOR_RGB2BGR)
 
-    if legend_bgr is not None and legend_bgr.size > 0:
-        lh = stacked_bgr.shape[0]
-        scale = lh / max(legend_bgr.shape[0], 1)
-        new_w = max(1, int(round(legend_bgr.shape[1] * scale)))
-        legend_resized = cv2.resize(legend_bgr, (new_w, lh), interpolation=cv2.INTER_AREA)
-        stacked_bgr = np.concatenate([stacked_bgr, legend_resized], axis=1)
+    present = _present_class_ids(ortho.get("labels"), valid, class_colors)
+    if not present:
+        return cv2.resize(stacked_bgr, (target_w, target_h), interpolation=cv2.INTER_AREA)
 
-    return cv2.resize(stacked_bgr, (target_w, target_h), interpolation=cv2.INTER_AREA)
+    legend_bgr = legend_cache.get(present)
+    if legend_bgr is None:
+        legend_bgr = _build_legend(
+            {cid: class_colors[cid] for cid in present},
+            {cid: class_names.get(cid, f"class_{cid}") for cid in present},
+            target_h=target_h,
+        )
+        legend_cache[present] = legend_bgr
+
+    legend_cap = max(80, target_w // 3)
+    legend_w = max(1, min(legend_bgr.shape[1], legend_cap, target_w - 1))
+    legend_resized = cv2.resize(legend_bgr, (legend_w, target_h), interpolation=cv2.INTER_AREA)
+    stacked_w = target_w - legend_w
+    stacked_resized = cv2.resize(stacked_bgr, (stacked_w, target_h), interpolation=cv2.INTER_AREA)
+    return np.concatenate([stacked_resized, legend_resized], axis=1)
+
+
+def _present_class_ids(
+    labels: np.ndarray | None,
+    valid_mask: np.ndarray,
+    class_colors: dict[int, tuple[int, int, int]],
+) -> tuple[int, ...]:
+    """Return the sorted class ids whose pixels appear in `labels[valid_mask]`."""
+    if labels is None or labels.size == 0 or not np.any(valid_mask):
+        return ()
+    present = np.unique(np.asarray(labels)[valid_mask])
+    keep = sorted({int(c) for c in present.tolist() if int(c) in class_colors})
+    return tuple(keep)
 
 
 def _build_legend(
@@ -180,18 +213,27 @@ def _build_legend(
     class_names: dict[int, str],
     target_h: int,
 ) -> np.ndarray:
-    """Build a small BGR legend strip with one row per class (swatch + name)."""
+    """Build a BGR legend strip with one row per class (swatch + name).
+
+    The text column is sized to the widest visible label so names are not
+    truncated when the legend is composed into the QC panel.
+    """
     if not class_colors:
         return np.zeros((target_h, 1, 3), dtype=np.uint8)
     sorted_ids = sorted(class_colors)
     row_h = max(14, target_h // max(len(sorted_ids), 1))
     swatch_w = max(16, row_h)
-    text_w = 160
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = max(0.3, row_h / 40.0)
+    longest_px = 0
+    for cid in sorted_ids:
+        name = class_names.get(int(cid), f"class_{int(cid)}")
+        (text_px, _), _ = cv2.getTextSize(name, font, font_scale, 1)
+        longest_px = max(longest_px, int(text_px))
+    text_w = longest_px + 12
     legend_h = row_h * len(sorted_ids)
     legend_w = swatch_w + text_w
     img = np.full((legend_h, legend_w, 3), 240, dtype=np.uint8)
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = max(0.3, row_h / 40.0)
     for i, cid in enumerate(sorted_ids):
         y0 = i * row_h
         r, g, b = class_colors[int(cid)]
@@ -199,7 +241,7 @@ def _build_legend(
         name = class_names.get(int(cid), f"class_{int(cid)}")
         cv2.putText(
             img,
-            name[:18],
+            name,
             (swatch_w + 4, y0 + int(row_h * 0.7)),
             font,
             font_scale,

@@ -4,7 +4,11 @@ import cv2
 import numpy as np
 import yaml
 
-from deepreefmap.postproc.reports import render_offline_video_placeholder
+from deepreefmap.postproc.reports import (
+    _build_legend,
+    _present_class_ids,
+    render_offline_video_placeholder,
+)
 
 
 def _write_classes_yaml(path):
@@ -116,3 +120,22 @@ def test_render_offline_video_4panel_layout_and_cumulative_ortho(tmp_path):
 
     assert (vw, vh) == (w * 2, h * 2)
     assert n == n_frames
+
+
+def test_present_class_ids_filters_to_classes_visible_under_mask():
+    labels = np.array([[0, 1, 2], [1, 1, 7]], dtype=np.int32)
+    valid = np.array([[True, True, False], [True, True, False]], dtype=bool)
+    class_colors = {0: (0, 0, 0), 1: (10, 10, 10), 2: (20, 20, 20)}
+
+    assert _present_class_ids(labels, valid, class_colors) == (0, 1)
+    assert _present_class_ids(labels, np.zeros_like(valid), class_colors) == ()
+    assert _present_class_ids(None, valid, class_colors) == ()
+
+
+def test_build_legend_text_column_fits_longest_label():
+    class_colors = {1: (10, 20, 30), 2: (40, 50, 60)}
+    short = _build_legend(class_colors, {1: "a", 2: "b"}, target_h=200)
+    long = _build_legend(class_colors, {1: "a", 2: "supercalifragilistic"}, target_h=200)
+
+    assert long.shape[1] > short.shape[1]
+    assert long.shape[0] == short.shape[0]
