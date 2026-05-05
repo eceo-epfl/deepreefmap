@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest + ruff (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # The LoGeR backend is exercised only when the optional `loger` extra
+          # is installed and a checkpoint is present; CI runs the default
+          # extras only, so the submodule is not required here.
+          submodules: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install project (dev extra)
+        run: uv sync --python ${{ matrix.python-version }} --extra dev
+
+      - name: Lint (ruff)
+        run: uv run --python ${{ matrix.python-version }} ruff check deepreefmap tests
+
+      - name: Test (pytest)
+        run: uv run --python ${{ matrix.python-version }} pytest -q

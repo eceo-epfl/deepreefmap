@@ -148,10 +148,19 @@ Each reconstruction writes cached and derived artifacts for inspection:
 - Point cloud coloring toggles between RGB and semantic-class colors; the legend toggles hide/show classes in both clouds.
 - Controls: point size, frame scrubber, `Playing` / `FPS`, and `Accumulate`.
 
+## License
+
+DeepReefMap is licensed under the [MIT License](LICENSE).
+
+Vendored or optional third-party components (notably `third_party/LoGeR` and
+downloaded model checkpoints) carry their own terms; see
+`THIRD_PARTY_NOTICES.md` for the review checklist before redistributing them
+alongside DeepReefMap.
+
 ## Open-Source Release Status
 
-DeepReefMap is pre-release research software. Before a public open-source
-release, the project still needs a chosen top-level license, confirmed LoGeR and
-model-checkpoint license compatibility, and CI-backed release automation. See
-`CONTRIBUTING.md`, `SECURITY.md`, and `THIRD_PARTY_NOTICES.md` for the current
+DeepReefMap is pre-release research software. The remaining release-readiness
+items are confirmed LoGeR and model-checkpoint license compatibility (see
+`THIRD_PARTY_NOTICES.md`) and any project-specific release automation beyond
+the bundled CI. See `CONTRIBUTING.md` and `SECURITY.md` for the current
 release-readiness notes.

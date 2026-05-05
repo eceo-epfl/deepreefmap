@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Modular framework for semantic 3D mapping of coral reefs from videos"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   { name = "Jonathan Sauder" },
   { name = "Hugues Sibille", email = "hugues.sibille@epfl.ch" },
@@ -32,7 +34,10 @@ dependencies = [
   # (CUDA 12.2). Newer torch releases may resolve to cu130 and fail CUDA init.
   "torch==2.4.1",
   "torchvision==0.19.1",
-  "pycolmap>=3.13.0",
+  # Upper-bounded so the dual-API fallback in deepreefmap.camera.colmap_calibration
+  # (ImageReaderOptions.single_camera vs pycolmap.CameraMode.SINGLE) stays the
+  # documented contract; bump after retesting calibrate against a new major.
+  "pycolmap>=3.13.0,<4.0",
   "viser>=0.2.23",
   "tqdm>=4.67.3",
 ]
@@ -65,7 +70,7 @@ Issues = "https://github.com/EPFL-ECEO/deepreefmap/issues"
 deepreefmap = "deepreefmap.cli.main:app"
 
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
