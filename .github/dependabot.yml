@@ -1,0 +1,34 @@
+# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+version: 2
+updates:
+  # GitHub Actions referenced from .github/workflows/*.yml
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "github-actions"]
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Python dependencies in pyproject.toml + uv.lock
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python"]
+    ignore:
+      # PyTorch is pinned to CUDA 12.1 wheels for the workstation's NVIDIA 535
+      # driver (CUDA 12.2). Newer torch may resolve to cu130 wheels that fail
+      # CUDA init — bump manually after retesting on target hardware.
+      - dependency-name: "torch"
+      - dependency-name: "torchvision"
+    groups:
+      python-runtime:
+        dependency-type: "production"
+        patterns: ["*"]
+      python-dev:
+        dependency-type: "development"
+        patterns: ["*"]
