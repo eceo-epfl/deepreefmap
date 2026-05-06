@@ -1,4 +1,4 @@
-# DeepReefMap v2
+# DeepReefMap
 
 DeepReefMap turns reef videos into 3D reconstructions and semantic maps (for example, coral classes overlaid on geometry). It is designed so you can swap segmentation and reconstruction backends while keeping the same command-line workflow.
 
