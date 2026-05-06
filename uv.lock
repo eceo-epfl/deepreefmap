@@ -379,15 +379,15 @@ train = [
 requires-dist = [
     { name = "accelerate", marker = "extra == 'loger'", specifier = ">=0.30.0" },
     { name = "einops", marker = "extra == 'loger'", specifier = ">=0.7.0" },
-    { name = "huggingface-hub", specifier = ">=0.34.0" },
-    { name = "imageio", extras = ["ffmpeg"], specifier = ">=2.37.0" },
+    { name = "huggingface-hub", specifier = ">=1.14.0" },
+    { name = "imageio", extras = ["ffmpeg"], specifier = ">=2.37.3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.16.0" },
     { name = "natsort", marker = "extra == 'loger'", specifier = ">=8.4.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "open3d", specifier = ">=0.18.0" },
     { name = "opencv-python", specifier = ">=4.10.0.84" },
     { name = "py-gpmf-parser", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'gopro'", specifier = ">=0.1.1,<0.2.0" },
-    { name = "pycolmap", specifier = ">=3.13.0,<4.0" },
+    { name = "pycolmap", specifier = ">=4.0.4,<5.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "roma", marker = "extra == 'loger'", specifier = ">=1.5.0" },
@@ -398,9 +398,9 @@ requires-dist = [
     { name = "torch", specifier = "==2.4.1" },
     { name = "torchvision", specifier = "==0.19.1" },
     { name = "tqdm", specifier = ">=4.67.3" },
-    { name = "transformers", specifier = ">=4.53.0" },
-    { name = "typer", specifier = ">=0.16.0" },
-    { name = "viser", specifier = ">=0.2.23" },
+    { name = "transformers", specifier = ">=5.8.0" },
+    { name = "typer", specifier = ">=0.25.1" },
+    { name = "viser", specifier = ">=1.0.27" },
     { name = "wandb", marker = "extra == 'train'", specifier = ">=0.20.0" },
 ]
 provides-extras = ["loger", "gopro", "train", "dev"]
@@ -646,7 +646,7 @@ wheels = [
 
 [[package]]
 name = "huggingface-hub"
-version = "1.12.0"
+version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
@@ -659,9 +659,9 @@ dependencies = [
     { name = "typer" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/56/52/1b54cb569509c725a32c1315261ac9fd0e6b91bbbf74d86fca10d3376164/huggingface_hub-1.12.0.tar.gz", hash = "sha256:7c3fe85e24b652334e5d456d7a812cd9a071e75630fac4365d9165ab5e4a34b6", size = 763091, upload-time = "2026-04-24T13:32:08.674Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/39/40/43109e943fd718b0ccd0cd61eb4f1c347df22bf81f5874c6f22adf44bcff/huggingface_hub-1.14.0.tar.gz", hash = "sha256:d6d2c9cd6be1d02ae9ec6672d5587d10a427f377db688e82528f426a041622c2", size = 782365, upload-time = "2026-05-06T14:14:34.278Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7e/2b/ef03ddb96bd1123503c2bd6932001020292deea649e9bf4caa2cb65a85bf/huggingface_hub-1.12.0-py3-none-any.whl", hash = "sha256:d74939969585ee35748bd66de09baf84099d461bda7287cd9043bfb99b0e424d", size = 646806, upload-time = "2026-04-24T13:32:06.717Z" },
+    { url = "https://files.pythonhosted.org/packages/89/a5/33b49ba7bea7c41bb37f74ec0f8beea0831e052330196633fe2c77516ea6/huggingface_hub-1.14.0-py3-none-any.whl", hash = "sha256:efe075535c62e130b30e836b138e13785f6f043d1f0539e0a39aa411a99e90b8", size = 661479, upload-time = "2026-05-06T14:14:32.029Z" },
 ]
 
 [[package]]
@@ -1801,22 +1801,22 @@ wheels = [
 
 [[package]]
 name = "pycolmap"
-version = "3.13.0"
+version = "4.0.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/6f/5511b1035e3660b7e09741962bd9cd41da42be648b3ae563792acd78b60d/pycolmap-3.13.0-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:823e6463f490ba58570c4c63b4a242d0afca005f572927abc55bb65d58484f0a", size = 14513187, upload-time = "2025-11-07T17:00:02.582Z" },
-    { url = "https://files.pythonhosted.org/packages/d2/ec/cf4ae8384f8b941a0c220eb460ecdbb01d7a0f149d11d61d38b9d1044df8/pycolmap-3.13.0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:40c03735760a97f6e242cb7c6c748aed9314d0425afb8e590f684dbc47581888", size = 20320230, upload-time = "2025-11-07T17:00:05.105Z" },
-    { url = "https://files.pythonhosted.org/packages/d5/2e/be8960a01ea1fd08df9e25a935f617476d7fd650e36ba52c16a2e71fc8b8/pycolmap-3.13.0-cp310-cp310-win_amd64.whl", hash = "sha256:d42f7487cb462dc024bd1e78670880b953ffa4b1cd60fba250eea8101a13a7d7", size = 18644691, upload-time = "2025-11-07T17:00:07.861Z" },
-    { url = "https://files.pythonhosted.org/packages/44/75/e599a321a5c0308e1cebc5d757645c827df6f645fd4835ba2f47eb62e7c9/pycolmap-3.13.0-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:6f1c0e6c7594caaa5fd3f556a01a349ddeb41f1c5b06579eeb51acb14395f606", size = 14515957, upload-time = "2025-11-07T17:00:10.677Z" },
-    { url = "https://files.pythonhosted.org/packages/5c/e0/0145456119a22f7f8436dd6b994cb1defa11d56d703ba5514bc4be9e918d/pycolmap-3.13.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:88e7faecd46a4db7839ea1fe71bd481b477e153bf0cfd598ed541740c7be834d", size = 20320211, upload-time = "2025-11-07T17:00:13.171Z" },
-    { url = "https://files.pythonhosted.org/packages/56/70/9a7c7c0a9077d005baa19b241c054bf0103d3c00b6783d5210bf206f25f0/pycolmap-3.13.0-cp311-cp311-win_amd64.whl", hash = "sha256:e80fefab544bb57039375abd3be16108a4a079d0345270872b2387ca3ac62325", size = 18645230, upload-time = "2025-11-07T17:00:15.863Z" },
-    { url = "https://files.pythonhosted.org/packages/5b/a5/adeec1cbf9881b7c7259c33111408f618ff849b6474cd73652ff628a6ef6/pycolmap-3.13.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:6ea432f1f9b1dab0e805678d5280d55fbe034a12c3a5fa5bd3c85792d523b27a", size = 14541939, upload-time = "2025-11-07T17:00:21.677Z" },
-    { url = "https://files.pythonhosted.org/packages/aa/c2/73bdc187c4b8c819b4a0d13523d98b8a72ce18fb689d613c3554fd14b5ab/pycolmap-3.13.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:fd1b676c2f8ecf7f18e5a9240347ad4946ccd0c83bc92f5fdc39a498ae6c998b", size = 20337524, upload-time = "2025-11-07T17:00:23.973Z" },
-    { url = "https://files.pythonhosted.org/packages/48/64/31018a15af2ad0da922946a4f28c31de2ead79ad8f08a5cd0961a1d87fda/pycolmap-3.13.0-cp312-cp312-win_amd64.whl", hash = "sha256:070e7554cfb9f0443876a055153547a4b54addbec77519f10269b4601dde63b1", size = 18661604, upload-time = "2025-11-07T17:00:26.851Z" },
+    { url = "https://files.pythonhosted.org/packages/29/fa/040d68cb0713d1e4e532c8dcf9cfb275d1c8ec9c975eba895875fcc44c81/pycolmap-4.0.4-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:3f2e34bf4c75150063c06e407d668e54a291ab5d12ae9d6b030bf255a9aada85", size = 19861297, upload-time = "2026-04-27T14:44:26.236Z" },
+    { url = "https://files.pythonhosted.org/packages/69/e9/3ce84b1135969e04bf1203d351a82f4e56b044a666580c04891d61b5b63a/pycolmap-4.0.4-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:e6f9bf674423663b855f383581bc58960f1f66d8a7db53dd624ad12b42531919", size = 27086130, upload-time = "2026-04-27T14:44:28.825Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/50/217789588e0b0ba0d73820dc65de06bba024f0e2f22d7dd22e6ffb4bc90d/pycolmap-4.0.4-cp310-cp310-win_amd64.whl", hash = "sha256:e3f0128b01bc6373901ed97e87a2584a252ea26dbcacb7497e26af3af6d8ccd9", size = 23370674, upload-time = "2026-04-27T14:44:31.331Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/2a/84b3d17aa476f76b8d22317e0f7781719c0a4836c3f1fef03b9ae5fdbfe7/pycolmap-4.0.4-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:4529e54ef62ad0d0b0ff24771cbe4ca59ffd1d964e105ad2545eda7594e5cf5f", size = 19862902, upload-time = "2026-04-27T14:44:33.84Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/eb/1afcc90b625e15b6a81487d978c94fb28302c0a73606a0e80562dbdda751/pycolmap-4.0.4-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:32e23b906212195c56506a180239369a38770a75cca699467a9c57092ce8b8ee", size = 27088313, upload-time = "2026-04-27T14:44:36.684Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/04/e753df67820460668376b8859b12e929176f174daca9fa982628a9cf8467/pycolmap-4.0.4-cp311-cp311-win_amd64.whl", hash = "sha256:e7ffc8eb9458a571e6987d27f0aed6c1a738bdddc58c3c51bbba02525f1a97e5", size = 23371018, upload-time = "2026-04-27T14:44:39.847Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/bc/1846a49a7ffa67b2f1426224d539bb5e916ee1c82c776bcc50264b82f057/pycolmap-4.0.4-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:15ff6cbf306a1ea107a57bd688d051eb016c94c5d36e1b5501017417d8ff7ceb", size = 19895644, upload-time = "2026-04-27T14:44:42.349Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/ac/b149a9be66f44f12c2eec8f7c345b69e4c24505d3283141217969bf03670/pycolmap-4.0.4-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:d962623a3da308a44feab08a0ed2c865ff9c33de9460b94d771e2dd80af3631b", size = 27116900, upload-time = "2026-04-27T14:44:45.39Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/96/b6649bedcec7997e00452db5f69352254630d0df2688b861f28960851428/pycolmap-4.0.4-cp312-cp312-win_amd64.whl", hash = "sha256:59059e20e76dcda0d64575ba4c9c30fa27348a4678068a4511a4fa230ec48c32", size = 23381566, upload-time = "2026-04-27T14:44:47.883Z" },
 ]
 
 [[package]]
@@ -2696,7 +2696,7 @@ wheels = [
 
 [[package]]
 name = "transformers"
-version = "5.6.2"
+version = "5.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
@@ -2710,9 +2710,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a4/e9/c6c80a07690142a7d05444271f47b9f3c8aac7dea01d52e1137ee480ad78/transformers-5.6.2.tar.gz", hash = "sha256:e657134c3e5a6bc00a3c35f4e2674bb51adfcd89898495b788a18552bac2b91a", size = 8311867, upload-time = "2026-04-23T18:33:29.332Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/36/390075693b76d4fb4a2bea360fb6080347763bd1f1147c49ed0ed938778c/transformers-5.8.0.tar.gz", hash = "sha256:6cc9a1f0291d16b1c1b735bad775e78ebefff7722701d4e28f98aaaa2bd6fb91", size = 8528141, upload-time = "2026-05-05T16:50:04.778Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/95/0b0218149b0d6f14df35f5b8f676fa83df4f19ed253c3cc447107ef86eca/transformers-5.6.2-py3-none-any.whl", hash = "sha256:f8d3a1bb96778fed9b8aabfd0dd6e19843e4b0f2bb6b59f32b8a92051b0f348f", size = 10364898, upload-time = "2026-04-23T18:33:26.081Z" },
+    { url = "https://files.pythonhosted.org/packages/97/7b/5621d08b34ac35deb9fa14b58d27d124d21ef125ee1c64bc724ca47dfb63/transformers-5.8.0-py3-none-any.whl", hash = "sha256:e9d2cae6d195a7e1e05164c5ebf26142a7044e4dc4267274f4809204f92827e4", size = 10630279, upload-time = "2026-05-05T16:50:01.026Z" },
 ]
 
 [[package]]
@@ -2766,7 +2766,7 @@ wheels = [
 
 [[package]]
 name = "typer"
-version = "0.25.0"
+version = "0.25.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-doc" },
@@ -2774,9 +2774,9 @@ dependencies = [
     { name = "rich" },
     { name = "shellingham" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7b/27/ede8cec7596e0041ba7e7b80b47d132562f56ff454313a16f6084e555c9f/typer-0.25.0.tar.gz", hash = "sha256:123eaf9f19bb40fd268310e12a542c0c6b4fab9c98d9d23342a01ff95e3ce930", size = 120150, upload-time = "2026-04-26T08:46:14.767Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e4/51/9aed62104cea109b820bbd6c14245af756112017d309da813ef107d42e7e/typer-0.25.1.tar.gz", hash = "sha256:9616eb8853a09ffeabab1698952f33c6f29ffdbceb4eaeecf571880e8d7664cc", size = 122276, upload-time = "2026-04-30T19:32:16.964Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/72/193d4e586ec5a4db834a36bbeb47641a62f951f114ffd0fe5b1b46e8d56f/typer-0.25.0-py3-none-any.whl", hash = "sha256:ac01b48823d3db9a83c9e164338057eadbb1c9957a2a6b4eeb486669c560b5dc", size = 55993, upload-time = "2026-04-26T08:46:15.889Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/f9/2b3ff4e56e5fa7debfaf9eb135d0da96f3e9a1d5b27222223c7296336e5f/typer-0.25.1-py3-none-any.whl", hash = "sha256:75caa44ed46a03fb2dab8808753ffacdbfea88495e74c85a28c5eefcf5f39c89", size = 58409, upload-time = "2026-04-30T19:32:18.271Z" },
 ]
 
 [[package]]
@@ -2853,7 +2853,7 @@ wheels = [
 
 [[package]]
 name = "viser"
-version = "1.0.26"
+version = "1.0.27"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "imageio" },
@@ -2869,9 +2869,9 @@ dependencies = [
     { name = "yourdfpy" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/12/ce/82a0e50fae21f5e02fcc5d9aff2ab59dccb9c319b6c4cf528f2228049b05/viser-1.0.26.tar.gz", hash = "sha256:dc08c6f505e70324b0603bdddf9714c00ac828c259ee49abd8ad094bfc90c91c", size = 4828261, upload-time = "2026-03-30T11:43:19.513Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fd/f5/48adb4e5e4234f48e96a1e7fc50cca6731280df0c279833e333963f9ea5c/viser-1.0.27.tar.gz", hash = "sha256:87e3239d6c1c2c003db93ac4072430ec790e336ffe7214781f035e54faebc0af", size = 4897986, upload-time = "2026-05-06T10:30:47.556Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/f7/762a2d5fab509d0c632b271e21e634462397cc02cca649771c3e9d2e0bcc/viser-1.0.26-py3-none-any.whl", hash = "sha256:03b177b4ef584f58f7b74fdf44cccb165b8a220ffd90728ef5c1e3d1b1fcf258", size = 4922888, upload-time = "2026-03-30T11:43:21.355Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/ad/8ae712579e294b4395fb39f7d65524b51fc7b731eacce26af096b7e59b61/viser-1.0.27-py3-none-any.whl", hash = "sha256:8da5b7934416e6e2d3a7ebcf39fc840f21030b51eb63231e8cfef457bfb49031", size = 4998748, upload-time = "2026-05-06T10:30:49.965Z" },
 ]
 
 [[package]]
