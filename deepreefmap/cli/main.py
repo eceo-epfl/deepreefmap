@@ -46,7 +46,7 @@ def list_profiles() -> None:
 def reconstruct(
     videos: str = typer.Option(..., help="Comma-separated video paths in processing order."),
     fps: int = typer.Option(10, help="Target processing framerate."),
-    segmentation: str = typer.Option("segformer-b5", help="Segmentation model name."),
+    segmentation: str = typer.Option("coralscapes-vit-b-dpt", help="Segmentation model name."),
     mapping: str = typer.Option("scsfmlearner", help="3D mapping backend name."),
     camera_profile: str = typer.Option(..., help="Camera profile name (in camera_profiles)."),
     out: Path = typer.Option(Path("out"), help="Output directory."),
@@ -99,11 +99,11 @@ def reconstruct(
         help="Number of rectified frames to segment together during frame preparation.",
     ),
     processing_width: Optional[int] = typer.Option(
-        None,
+        1376,
         help="Width to resize rectified frames to before segmentation/mapping.",
     ),
     processing_height: Optional[int] = typer.Option(
-        None,
+        768,
         help="Height to resize rectified frames to before segmentation/mapping.",
     ),
     skip_segmentation: bool = typer.Option(

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Modular framework for semantic 3D mapping of coral reefs from videos"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
-license = "MIT"
+license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [
   { name = "Jonathan Sauder" },
