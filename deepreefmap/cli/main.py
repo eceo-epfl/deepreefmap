@@ -73,6 +73,13 @@ def reconstruct(
     loger_model_path: Optional[Path] = typer.Option(None, help="LoGeR checkpoint path (defaults to vendored)."),
     loger_window_size: int = typer.Option(32, help="LoGeR window size."),
     loger_overlap_size: int = typer.Option(3, help="LoGeR overlap size."),
+    refine_intrinsics_from_mapper: bool = typer.Option(
+        False,
+        help=(
+            "Allow mapping backend to refine camera intrinsics and override camera profile K for "
+            "downstream 3D reconstruction."
+        ),
+    ),
     scsfmlearner_checkpoint_path: Optional[Path] = typer.Option(
         None,
         help="Optional SC-SfMLearner checkpoint path (.pt containing disp_state_dict and pose_state_dict). Defaults to EPFL-ECEO/deepreefmap-sfm-net/scsfmlearner.pt on Hugging Face Hub.",
@@ -169,6 +176,7 @@ def reconstruct(
         processing_width=processing_width,
         processing_height=processing_height,
         skip_segmentation=skip_segmentation,
+        refine_intrinsics_from_mapper=refine_intrinsics_from_mapper,
     )
 
 

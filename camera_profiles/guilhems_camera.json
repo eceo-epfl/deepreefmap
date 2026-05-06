@@ -1,0 +1,55 @@
+{
+  "name": "guilhems_camera",
+  "source": "colmap_radial_v1",
+  "distorted": {
+    "model": "SIMPLE_RADIAL",
+    "params": {
+      "fx": 1307.4492693375018,
+      "fy": 1307.4492693375018,
+      "cx": 1920.0,
+      "cy": 1080.0,
+      "k1": -0.012404733627158448,
+      "k2": 0.0
+    }
+  },
+  "rectified_pinhole": {
+    "image_size": [
+      3840,
+      2160
+    ],
+    "K": [
+      [
+        1296.8115234375,
+        0.0,
+        1919.5
+      ],
+      [
+        0.0,
+        1296.8115234375,
+        1079.5
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "diagnostics": {
+    "n_input_frames": 88,
+    "n_registered_images": 88,
+    "mean_reprojection_error_px": 0.9166741137226962,
+    "camera_model": "SIMPLE_RADIAL",
+    "rectification_mode": "undistort",
+    "source_video": "210903_MAGARSAM_ISLAND_Day_5_Dive_1_1.MP4",
+    "sampling_fps": 10,
+    "begin_s": 10.0,
+    "end_s": 17.0,
+    "valid_roi_xywh": [
+      0,
+      0,
+      3840,
+      2159
+    ]
+  }
+}

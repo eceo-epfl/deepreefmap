@@ -59,6 +59,7 @@ def run_reconstruction(
     processing_width: int | None = None,
     processing_height: int | None = None,
     skip_segmentation: bool = False,
+    refine_intrinsics_from_mapper: bool = False,
 ) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -230,10 +231,12 @@ def run_reconstruction(
 
         logger.info("Prepared %d sampled frames in %.1fs", frame_count, time.monotonic() - t_start)
 
+        map_key_options = dict(mapping_options or {})
+        map_key_options["refine_intrinsics_from_mapper"] = bool(refine_intrinsics_from_mapper)
         map_key = resume_mod.mapping_key(
             preprocess_key_str=prep_key,
             mapping_name=mapping_name,
-            mapping_options=mapping_options,
+            mapping_options=map_key_options,
             gravity_available=frame_batch.gravity_vectors is not None,
         )
         map_sidecar = resume_mod.read_sidecar(output_dir, resume_mod.STAGE_MAPPING)
@@ -263,6 +266,13 @@ def run_reconstruction(
                 frame_batch.images,
                 gravity_vectors=frame_batch.gravity_vectors,
             )
+            mapping_result = _maybe_refine_intrinsics(
+                mapping_name=mapping_name,
+                mapping=mapping,
+                mapping_result=mapping_result,
+                camera_profile_intrinsics=processing_intrinsics,
+                refine_intrinsics_from_mapper=refine_intrinsics_from_mapper,
+            )
             if viewer is not None:
                 viewer.update_progress("mapping", current=frame_count, total=frame_count, message="Mapping complete")
                 viewer.set_stage("mapping", "completed", "3D mapping complete")
@@ -279,6 +289,20 @@ def run_reconstruction(
                 scale_type=np.asarray(mapping_result.scale_type),
             )
             resume_mod.write_sidecar(output_dir, resume_mod.STAGE_MAPPING, map_key)
+        elif refine_intrinsics_from_mapper:
+            logger.info(
+                "Intrinsics refinement flag is enabled with cached mapping output."
+                " camera_profile_K=%s effective_mapping_K=%s",
+                _format_matrix(processing_intrinsics),
+                _format_matrix(mapping_result.intrinsics),
+            )
+
+        mapping_result_for_cloud = mapping_result
+        if refine_intrinsics_from_mapper and mapping_name in {"loger", "loger_star"}:
+            logger.info(
+                "LoGeR intrinsics refinement mode: forcing depth+pose unprojection for cloud assembly."
+            )
+            mapping_result_for_cloud = _mapping_without_world_points(mapping_result)
 
         if skip_segmentation:
             logger.info("Skip segmentation: building geometry-only point cloud...")
@@ -287,7 +311,7 @@ def run_reconstruction(
             active_stage = "outputs"
             geometry_xyz, geometry_rgb = _build_geometry_cloud(
                 frame_batch=frame_batch,
-                mapping_result=mapping_result,
+                mapping_result=mapping_result_for_cloud,
                 voxel_size=0.003,
             )
             output_files = [
@@ -329,7 +353,7 @@ def run_reconstruction(
         logger.info("Building filtered semantic reference cloud...")
         reference_cloud = build_semantic_reference_cloud(
             frame_batch,
-            mapping_result,
+            mapping_result_for_cloud,
             classes_config,
             PointFilterConfig(
                 replacement_radius_factor=1.0
@@ -357,9 +381,9 @@ def run_reconstruction(
             masks_for_depth = [_resize_mask(frame.keep_mask, depth_shape) for frame in frame_batch.frames]
             tsdf_xyz, tsdf_rgb = integrate_tsdf(
                 rgb_for_depth,
-                [d for d in mapping_result.depth_maps],
-                [p for p in mapping_result.poses_w_c],
-                mapping_result.intrinsics,
+                [d for d in mapping_result_for_cloud.depth_maps],
+                [p for p in mapping_result_for_cloud.poses_w_c],
+                mapping_result_for_cloud.intrinsics,
                 masks=masks_for_depth,
             )
             semantic_tsdf = align_tsdf_to_reference(tsdf_xyz, tsdf_rgb, reference_cloud)
@@ -536,6 +560,63 @@ def _prepare_frames(
         image_size=image_size,
         clip_counts=(len(prepared),),
     )
+
+
+def _maybe_refine_intrinsics(
+    *,
+    mapping_name: str,
+    mapping,
+    mapping_result: MappingSequenceResult,
+    camera_profile_intrinsics: np.ndarray,
+    refine_intrinsics_from_mapper: bool,
+) -> MappingSequenceResult:
+    if not refine_intrinsics_from_mapper:
+        return mapping_result
+    refined_intrinsics = mapping.refine_intrinsics(mapping_result)
+    if refined_intrinsics is None:
+        logger.info(
+            "Intrinsics refinement requested but no refined intrinsics returned for backend '%s'. "
+            "camera_profile_K=%s effective_mapping_K=%s",
+            mapping_name,
+            _format_matrix(camera_profile_intrinsics),
+            _format_matrix(mapping_result.intrinsics),
+        )
+        return mapping_result
+    logger.info(
+        "Intrinsics refinement applied for backend '%s'. camera_profile_K=%s refined_K=%s",
+        mapping_name,
+        _format_matrix(camera_profile_intrinsics),
+        _format_matrix(refined_intrinsics),
+    )
+    return MappingSequenceResult(
+        frame_indices=mapping_result.frame_indices,
+        depth_maps=mapping_result.depth_maps,
+        poses_w_c=mapping_result.poses_w_c,
+        intrinsics=refined_intrinsics.astype(np.float32),
+        world_points=mapping_result.world_points,
+        local_points=mapping_result.local_points,
+        confidence=mapping_result.confidence,
+        scale_type=mapping_result.scale_type,
+        gravity_vectors=mapping_result.gravity_vectors,
+    )
+
+
+def _mapping_without_world_points(mapping_result: MappingSequenceResult) -> MappingSequenceResult:
+    return MappingSequenceResult(
+        frame_indices=mapping_result.frame_indices,
+        depth_maps=mapping_result.depth_maps,
+        poses_w_c=mapping_result.poses_w_c,
+        intrinsics=mapping_result.intrinsics,
+        world_points=None,
+        local_points=mapping_result.local_points,
+        confidence=mapping_result.confidence,
+        scale_type=mapping_result.scale_type,
+        gravity_vectors=mapping_result.gravity_vectors,
+    )
+
+
+def _format_matrix(matrix: np.ndarray) -> str:
+    return np.array2string(np.asarray(matrix), precision=4, suppress_small=False)
 
 
 def _build_geometry_cloud(
