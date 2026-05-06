@@ -10,6 +10,93 @@ from deepreefmap.camera.intrinsics import CameraProfile
 from deepreefmap.camera.rectification import Rectifier
 
 
+def _camera_model_name(camera: object) -> str:
+    """Best-effort camera model extraction across pycolmap versions."""
+    for attr in ("model_name", "model"):
+        val = getattr(camera, attr, None)
+        if val is None:
+            continue
+        # model can be an enum, object with name, or direct string.
+        name = getattr(val, "name", val)
+        text = str(name).upper().strip()
+        if not text:
+            continue
+        # Some enums stringify as "CameraModelId.RADIAL".
+        if "." in text:
+            text = text.split(".")[-1]
+        return text
+    return "UNKNOWN"
+
+
+def _camera_model_debug(camera: object) -> dict[str, object]:
+    """Collect camera fields useful for diagnosing pycolmap API differences."""
+    debug: dict[str, object] = {"camera_type": type(camera).__name__}
+    for key in ("model_name", "model", "camera_id", "params"):
+        if hasattr(camera, key):
+            try:
+                value = getattr(camera, key)
+                if key == "params":
+                    value = list(value)
+                debug[key] = value
+            except Exception:
+                debug[key] = "<unreadable>"
+    return debug
+
+
+def _parse_colmap_camera(camera: object) -> tuple[str, dict[str, float], np.ndarray, np.ndarray]:
+    """Parse supported COLMAP camera models into a common representation."""
+    model_name = _camera_model_name(camera)
+    params = [float(v) for v in getattr(camera, "params", [])]
+    if not params:
+        raise RuntimeError("COLMAP returned camera without parameters.")
+
+    if model_name in {"RADIAL", "SIMPLE_RADIAL"}:
+        # SIMPLE_RADIAL: [f, cx, cy, k]
+        # RADIAL: [f, cx, cy, k1, k2] (sometimes expanded to fx/fy forms)
+        if model_name == "SIMPLE_RADIAL" and len(params) >= 4:
+            f, cx, cy, k1 = params[:4]
+            fx, fy, k2 = f, f, 0.0
+        elif len(params) == 5:
+            f, cx, cy, k1, k2 = params
+            fx, fy = f, f
+        elif len(params) >= 6:
+            fx, fy, cx, cy, k1, k2 = params[:6]
+        else:
+            raise RuntimeError(f"Unexpected {model_name} camera parameters: {params}")
+        distorted = {"fx": fx, "fy": fy, "cx": cx, "cy": cy, "k1": k1, "k2": k2}
+        k_dist = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
+        dist = np.array([k1, k2, 0.0, 0.0], dtype=np.float32)
+        return model_name, distorted, k_dist, dist
+
+    if model_name == "OPENCV_FISHEYE":
+        # OPENCV_FISHEYE: [fx, fy, cx, cy, k1, k2, k3, k4]
+        if len(params) < 8:
+            raise RuntimeError(f"Unexpected OPENCV_FISHEYE camera parameters: {params}")
+        fx, fy, cx, cy, k1, k2, k3, k4 = params[:8]
+        distorted = {"fx": fx, "fy": fy, "cx": cx, "cy": cy, "k1": k1, "k2": k2, "k3": k3, "k4": k4}
+        k_dist = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
+        dist = np.array([k1, k2, k3, k4], dtype=np.float32)
+        return model_name, distorted, k_dist, dist
+
+    if model_name in {"PINHOLE", "SIMPLE_PINHOLE"}:
+        if model_name == "SIMPLE_PINHOLE" and len(params) >= 3:
+            f, cx, cy = params[:3]
+            fx, fy = f, f
+        elif len(params) >= 4:
+            fx, fy, cx, cy = params[:4]
+        else:
+            raise RuntimeError(f"Unexpected {model_name} camera parameters: {params}")
+        distorted = {"fx": fx, "fy": fy, "cx": cx, "cy": cy}
+        k_dist = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
+        dist = np.zeros(4, dtype=np.float32)
+        return model_name, distorted, k_dist, dist
+
+    raise RuntimeError(
+        f"Unsupported COLMAP camera model {model_name}. "
+        "Supported models: RADIAL, SIMPLE_RADIAL, OPENCV_FISHEYE, PINHOLE, SIMPLE_PINHOLE."
+    )
+
+
 def _sample_video_frames(
     video_path: Path,
     out_dir: Path,
@@ -99,7 +186,7 @@ def calibrate_camera_profile(
         elif hasattr(reader_options, "single_camera"):
             reader_options.single_camera = True
         pycolmap.extract_features(**extract_kwargs)
-        pycolmap.match_exhaustive(database_path=str(database_path))
+        pycolmap.match_sequential(database_path=str(database_path))
         maps = pycolmap.incremental_mapping(database_path=str(database_path), image_path=str(image_dir), output_path=str(sparse_path))
         if not maps:
             raise RuntimeError("COLMAP mapping failed: no reconstruction produced.")
@@ -111,38 +198,37 @@ def calibrate_camera_profile(
                 f"Calibration failed quality gate: only {len(best_rec.images)} registered images out of {len(sample_paths)}."
             )
         cam = next(iter(best_rec.cameras.values()))
-        model_name = str(getattr(cam, "model_name", "UNKNOWN")).upper()
-        if model_name != "RADIAL":
-            raise RuntimeError(
-                f"Expected COLMAP camera model RADIAL, got {model_name}. "
-                "Calibration is configured to force RADIAL; check pycolmap/COLMAP argument compatibility."
-            )
-        params = cam.params
-        # COLMAP RADIAL is typically [f, cx, cy, k1, k2] (5 params).
-        # Some variants may expose [fx, fy, cx, cy, k1, k2] (6 params).
-        if len(params) == 5:
-            f, cx, cy, k1, k2 = [float(v) for v in params]
-            fx, fy = f, f
-        elif len(params) >= 6:
-            fx, fy, cx, cy, k1, k2 = [float(v) for v in params[:6]]
-        else:
-            raise RuntimeError(
-                f"Unexpected RADIAL camera parameters from COLMAP: len(params)={len(params)}, params={list(params)}"
-            )
+        try:
+            model_name, distorted, k_dist, dist = _parse_colmap_camera(cam)
+        except Exception as exc:
+            debug_fields = _camera_model_debug(cam)
+            raise RuntimeError(f"Failed to parse COLMAP camera: {debug_fields}") from exc
 
-        # Build an undistorted pinhole K using OpenCV's optimal new camera matrix
-        # with alpha=0 (crop to valid interior) and centered principal point.
-        k_dist = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
-        dist = np.array([k1, k2, 0.0, 0.0], dtype=np.float32)
-        k_rect, roi = cv2.getOptimalNewCameraMatrix(
-            k_dist,
-            dist,
-            (w, h),
-            alpha=0.0,
-            newImgSize=(w, h),
-            centerPrincipalPoint=True,
-        )
-        k_rect = k_rect.astype(np.float32)
+        # Prefer RADIAL at extraction time, but accept compatible fallback models.
+        if model_name in {"RADIAL", "SIMPLE_RADIAL"}:
+            k_rect, roi = cv2.getOptimalNewCameraMatrix(
+                k_dist,
+                dist,
+                (w, h),
+                alpha=0.0,
+                newImgSize=(w, h),
+                centerPrincipalPoint=True,
+            )
+            k_rect = k_rect.astype(np.float32)
+        elif model_name == "OPENCV_FISHEYE":
+            k_rect = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
+                k_dist,
+                dist.reshape(4, 1),
+                (w, h),
+                R=np.eye(3, dtype=np.float32),
+                balance=0.0,
+                new_size=(w, h),
+            ).astype(np.float32)
+            roi = (0, 0, w, h)
+        else:
+            # PINHOLE and SIMPLE_PINHOLE are already undistorted.
+            k_rect = k_dist.astype(np.float32)
+            roi = (0, 0, w, h)
 
         mean_reproj = None
         if hasattr(best_rec, "compute_mean_reprojection_error"):
@@ -156,14 +242,21 @@ def calibrate_camera_profile(
             "n_registered_images": len(best_rec.images),
             "mean_reprojection_error_px": mean_reproj,
             "camera_model": model_name,
+            "rectification_mode": "none" if model_name in {"PINHOLE", "SIMPLE_PINHOLE"} else "undistort",
             "source_video": video.name,
             "sampling_fps": fps,
             "begin_s": begin_s,
             "end_s": end_s,
             "valid_roi_xywh": [int(v) for v in roi],
         }
-        radial = {"fx": fx, "fy": fy, "cx": cx, "cy": cy, "k1": k1, "k2": k2}
-        profile = CameraProfile(name=name, image_size=(w, h), k=k_rect, radial=radial, diagnostics=diagnostics)
+        profile = CameraProfile(
+            name=name,
+            image_size=(w, h),
+            k=k_rect,
+            distorted_model=model_name,
+            radial=distorted,
+            diagnostics=diagnostics,
+        )
         profile_path = profile.save()
         rectifier = Rectifier(profile)
 

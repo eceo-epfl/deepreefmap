@@ -49,3 +49,22 @@ def test_process_frame_resizes_to_target_resolution():
     estimate = backend.process_frame(0, image)
     assert estimate.depth.shape == (256, 512)
     assert disp_net.last_shape == (1, 3, 256, 512)
+
+
+def test_resolve_checkpoint_path_uses_default_hf_download_when_unset():
+    backend = SCSfMLearnerBackend(checkpoint_path=None, device="cpu")
+    with patch("deepreefmap.mapping.scsfmlearner_backend.hf_hub_download", return_value="/tmp/scsfmlearner.pt") as mock_download:
+        resolved = backend._resolve_checkpoint_path()
+    assert str(resolved) == "/tmp/scsfmlearner.pt"
+    mock_download.assert_called_once_with(
+        repo_id="EPFL-ECEO/deepreefmap-sfm-net",
+        filename="scsfmlearner.pt",
+    )
+
+
+def test_resolve_checkpoint_path_prefers_explicit_checkpoint_path():
+    backend = SCSfMLearnerBackend(checkpoint_path="/custom/model.pt", device="cpu")
+    with patch("deepreefmap.mapping.scsfmlearner_backend.hf_hub_download") as mock_download:
+        resolved = backend._resolve_checkpoint_path()
+    assert str(resolved) == "/custom/model.pt"
+    mock_download.assert_not_called()

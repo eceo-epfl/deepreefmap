@@ -5,6 +5,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import torch
+from huggingface_hub import hf_hub_download
 
 from deepreefmap.camera.intrinsics import scale_intrinsics
 from deepreefmap.mapping.base import FrameEstimate, MappingBackend
@@ -12,10 +13,13 @@ from deepreefmap.mapping.scsfmlearner.models import DispResNet, PoseResNet, pose
 
 
 class SCSfMLearnerBackend(MappingBackend):
+    _DEFAULT_HF_REPO_ID = "EPFL-ECEO/deepreefmap-sfm-net"
+    _DEFAULT_HF_FILENAME = "scsfmlearner.pt"
+
     def __init__(
         self,
         *,
-        checkpoint_path: str,
+        checkpoint_path: str | None = None,
         target_width: int = 512,
         target_height: int = 256,
         device: str | None = None,
@@ -41,7 +45,7 @@ class SCSfMLearnerBackend(MappingBackend):
         self._load_models()
 
     def _load_models(self) -> None:
-        checkpoint_path = Path(self._checkpoint_path)
+        checkpoint_path = self._resolve_checkpoint_path()
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"SC-SfMLearner checkpoint not found: {checkpoint_path}")
 
@@ -66,6 +70,23 @@ class SCSfMLearnerBackend(MappingBackend):
 
         self._disp_net.eval()
         self._pose_net.eval()
+
+    def _resolve_checkpoint_path(self) -> Path:
+        if self._checkpoint_path:
+            return Path(self._checkpoint_path)
+        try:
+            return Path(
+                hf_hub_download(
+                    repo_id=self._DEFAULT_HF_REPO_ID,
+                    filename=self._DEFAULT_HF_FILENAME,
+                )
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to download default SC-SfMLearner checkpoint from "
+                f"{self._DEFAULT_HF_REPO_ID}/{self._DEFAULT_HF_FILENAME}. "
+                "Provide `--scsfmlearner-checkpoint-path` to use a local checkpoint."
+            ) from exc
 
     @staticmethod
     def _to_tensor(image_rgb: np.ndarray, device: torch.device) -> torch.Tensor:

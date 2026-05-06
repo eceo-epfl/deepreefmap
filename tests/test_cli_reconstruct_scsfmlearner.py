@@ -11,9 +11,6 @@ def test_reconstruct_passes_default_scsfmlearner_resolution(tmp_path: Path):
     (profile_dir / "reefcam.json").write_text("{}", encoding="utf-8")
 
     captured: dict[str, object] = {}
-    checkpoint_path = tmp_path / "best.pt"
-    checkpoint_path.write_bytes(b"placeholder")
-
     def _fake_run_reconstruction(**kwargs):
         captured.update(kwargs)
 
@@ -28,7 +25,6 @@ def test_reconstruct_passes_default_scsfmlearner_resolution(tmp_path: Path):
             videos="clip.mp4",
             camera_profile="reefcam",
             mapping="scsfmlearner",
-            scsfmlearner_checkpoint_path=checkpoint_path,
             scsfmlearner_width=512,
             scsfmlearner_height=256,
         )
@@ -37,6 +33,7 @@ def test_reconstruct_passes_default_scsfmlearner_resolution(tmp_path: Path):
     assert isinstance(mapping_options, dict)
     assert mapping_options["target_width"] == 512
     assert mapping_options["target_height"] == 256
+    assert "checkpoint_path" not in mapping_options
 
 
 def test_reconstruct_passes_custom_scsfmlearner_resolution(tmp_path: Path):

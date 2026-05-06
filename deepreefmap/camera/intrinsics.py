@@ -16,6 +16,7 @@ class CameraProfile:
     name: str
     image_size: tuple[int, int]
     k: np.ndarray
+    distorted_model: str
     radial: dict[str, float]
     diagnostics: dict[str, object] | None = None
 
@@ -30,6 +31,7 @@ class CameraProfile:
             name=data["name"],
             image_size=(int(size[0]), int(size[1])),
             k=k,
+            distorted_model=str(data["distorted"].get("model", "RADIAL")).upper(),
             radial=data["distorted"]["params"],
             diagnostics=data.get("diagnostics"),
         )
@@ -41,7 +43,7 @@ class CameraProfile:
         payload = {
             "name": self.name,
             "source": "colmap_radial_v1",
-            "distorted": {"model": "RADIAL", "params": self.radial},
+            "distorted": {"model": str(self.distorted_model).upper(), "params": self.radial},
             "rectified_pinhole": {
                 "image_size": [int(self.image_size[0]), int(self.image_size[1])],
                 "K": self.k.tolist(),

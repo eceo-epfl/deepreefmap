@@ -18,7 +18,7 @@ Requirements:
 - Python 3.10, 3.11, or 3.12.
 - `uv` for the development workflow.
 - FFmpeg-compatible video support via `imageio[ffmpeg]`.
-- A CUDA-capable GPU for LoGeR; SC-SfMLearner also expects a trusted local checkpoint.
+- A CUDA-capable GPU for LoGeR; SC-SfMLearner defaults to downloading `scsfmlearner.pt` from `EPFL-ECEO/deepreefmap-sfm-net` on Hugging Face Hub (or you can override with a local checkpoint path).
 - COLMAP/PyCOLMAP support for camera calibration.
 
 ```bash
@@ -80,9 +80,15 @@ uv run deepreefmap list-models
 uv run deepreefmap list-profiles
 uv run deepreefmap calibrate VIDEO.mp4 --name <profile_name> --n-frames 100 --fps 10 --begin 12.0 --end 72.0
 uv run deepreefmap verify-calibration <profile_name>
-uv run deepreefmap reconstruct --videos GX010001.MP4,GX020001.MP4 --fps 10 --segmentation segformer-b5 --mapping scsfmlearner --scsfmlearner-checkpoint-path /path/to/trusted_checkpoint.pt --camera-profile gopro_hero_10 --out out --viser --tsdf
+uv run deepreefmap reconstruct --videos GX010001.MP4,GX020001.MP4 --fps 10 --segmentation segformer-b5 --mapping scsfmlearner --camera-profile gopro_hero_10 --out out --viser --tsdf
 uv run deepreefmap render-video --run-dir out
 uv run deepreefmap view-run --run-dir out --viser-port 8080
+```
+
+Override SC-SfMLearner with a local checkpoint when needed:
+
+```bash
+uv run deepreefmap reconstruct --videos GX010001.MP4 --mapping scsfmlearner --scsfmlearner-checkpoint-path /path/to/scsfmlearner.pt --camera-profile gopro_hero_10 --out out_local_ckpt
 ```
 
 Useful reconstruction controls:

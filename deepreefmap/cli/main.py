@@ -75,7 +75,7 @@ def reconstruct(
     loger_overlap_size: int = typer.Option(3, help="LoGeR overlap size."),
     scsfmlearner_checkpoint_path: Optional[Path] = typer.Option(
         None,
-        help="SC-SfMLearner training checkpoint path (.pt containing both disp_state_dict and pose_state_dict).",
+        help="Optional SC-SfMLearner checkpoint path (.pt containing disp_state_dict and pose_state_dict). Defaults to EPFL-ECEO/deepreefmap-sfm-net/scsfmlearner.pt on Hugging Face Hub.",
     ),
     scsfmlearner_width: int = typer.Option(
         512,
@@ -127,20 +127,22 @@ def reconstruct(
             "model_path": str(loger_model_path) if loger_model_path else None,
         }
     elif mapping == "scsfmlearner":
-        if scsfmlearner_checkpoint_path is None:
-            typer.echo("`--scsfmlearner-checkpoint-path` is required for mapping=scsfmlearner.", err=True)
-            raise typer.Exit(code=1)
-        if not scsfmlearner_checkpoint_path.exists():
-            typer.echo(f"SC-SfMLearner checkpoint not found: {scsfmlearner_checkpoint_path}", err=True)
+        # When called directly in tests, unset Typer options can be OptionInfo objects.
+        resolved_checkpoint_path = (
+            scsfmlearner_checkpoint_path if isinstance(scsfmlearner_checkpoint_path, Path) else None
+        )
+        if resolved_checkpoint_path is not None and not resolved_checkpoint_path.exists():
+            typer.echo(f"SC-SfMLearner checkpoint not found: {resolved_checkpoint_path}", err=True)
             raise typer.Exit(code=1)
         if scsfmlearner_width <= 0 or scsfmlearner_height <= 0:
             typer.echo("`--scsfmlearner-width` and `--scsfmlearner-height` must be positive.", err=True)
             raise typer.Exit(code=1)
         mapping_options = {
-            "checkpoint_path": str(scsfmlearner_checkpoint_path),
             "target_width": scsfmlearner_width,
             "target_height": scsfmlearner_height,
         }
+        if resolved_checkpoint_path is not None:
+            mapping_options["checkpoint_path"] = str(resolved_checkpoint_path)
     run_reconstruction(
         video_paths=[v.strip() for v in videos.split(",") if v.strip()],
         fps=fps,
