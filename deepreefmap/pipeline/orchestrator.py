@@ -271,6 +271,7 @@ def run_reconstruction(
                 mapping=mapping,
                 mapping_result=mapping_result,
                 camera_profile_intrinsics=processing_intrinsics,
+                processing_image_size=processing_image_size,
                 refine_intrinsics_from_mapper=refine_intrinsics_from_mapper,
             )
             if viewer is not None:
@@ -568,8 +569,31 @@ def _maybe_refine_intrinsics(
     mapping,
     mapping_result: MappingSequenceResult,
     camera_profile_intrinsics: np.ndarray,
+    processing_image_size: tuple[int, int],
     refine_intrinsics_from_mapper: bool,
 ) -> MappingSequenceResult:
+    depth_h, depth_w = mapping_result.depth_maps[0].shape
+    camera_profile_intrinsics_depth = scale_intrinsics(
+        camera_profile_intrinsics,
+        processing_image_size,
+        (depth_w, depth_h),
+    )
+    effective_intrinsics = _coerce_intrinsics_to_depth_scale(
+        intrinsics=mapping_result.intrinsics,
+        depth_size=(depth_w, depth_h),
+        processing_image_size=processing_image_size,
+    )
+    mapping_result = MappingSequenceResult(
+        frame_indices=mapping_result.frame_indices,
+        depth_maps=mapping_result.depth_maps,
+        poses_w_c=mapping_result.poses_w_c,
+        intrinsics=effective_intrinsics,
+        world_points=mapping_result.world_points,
+        local_points=mapping_result.local_points,
+        confidence=mapping_result.confidence,
+        scale_type=mapping_result.scale_type,
+        gravity_vectors=mapping_result.gravity_vectors,
+    )
     if not refine_intrinsics_from_mapper:
         return mapping_result
     refined_intrinsics = mapping.refine_intrinsics(mapping_result)
@@ -578,14 +602,19 @@ def _maybe_refine_intrinsics(
             "Intrinsics refinement requested but no refined intrinsics returned for backend '%s'. "
             "camera_profile_K=%s effective_mapping_K=%s",
             mapping_name,
-            _format_matrix(camera_profile_intrinsics),
+            _format_matrix(camera_profile_intrinsics_depth),
             _format_matrix(mapping_result.intrinsics),
         )
         return mapping_result
+    refined_intrinsics = _coerce_intrinsics_to_depth_scale(
+        intrinsics=refined_intrinsics.astype(np.float32),
+        depth_size=(depth_w, depth_h),
+        processing_image_size=processing_image_size,
+    )
     logger.info(
         "Intrinsics refinement applied for backend '%s'. camera_profile_K=%s refined_K=%s",
         mapping_name,
-        _format_matrix(camera_profile_intrinsics),
+        _format_matrix(camera_profile_intrinsics_depth),
         _format_matrix(refined_intrinsics),
     )
     return MappingSequenceResult(
@@ -617,6 +646,27 @@ def _mapping_without_world_points(mapping_result: MappingSequenceResult) -> Mapp
 
 def _format_matrix(matrix: np.ndarray) -> str:
     return np.array2string(np.asarray(matrix), precision=4, suppress_small=False)
+
+
+def _coerce_intrinsics_to_depth_scale(
+    *,
+    intrinsics: np.ndarray,
+    depth_size: tuple[int, int],
+    processing_image_size: tuple[int, int],
+) -> np.ndarray:
+    """Ensure intrinsics are in the same pixel frame as depth maps.
+
+    Backends are expected to return depth-scale intrinsics already. If principal
+    point is clearly out of depth bounds, treat it as processing-scale K and
+    rescale to depth size.
+    """
+    depth_w, depth_h = depth_size
+    k = np.asarray(intrinsics, dtype=np.float32).copy()
+    cx = float(k[0, 2])
+    cy = float(k[1, 2])
+    if cx > depth_w * 1.25 or cy > depth_h * 1.25:
+        return scale_intrinsics(k, processing_image_size, (depth_w, depth_h))
+    return k
 
 
 def _build_geometry_cloud(

@@ -31,6 +31,7 @@ def test_maybe_refine_intrinsics_applies_mapper_override():
         mapping=_RefiningMapper(refined),
         mapping_result=mapping_result,
         camera_profile_intrinsics=np.eye(3, dtype=np.float32),
+        processing_image_size=(2, 2),
         refine_intrinsics_from_mapper=True,
     )
 
@@ -46,6 +47,7 @@ def test_maybe_refine_intrinsics_keeps_original_when_mapper_returns_none():
         mapping=_RefiningMapper(None),
         mapping_result=mapping_result,
         camera_profile_intrinsics=np.eye(3, dtype=np.float32),
+        processing_image_size=(2, 2),
         refine_intrinsics_from_mapper=True,
     )
 
@@ -60,3 +62,26 @@ def test_mapping_without_world_points_forces_unprojection_path():
     assert out.world_points is None
     assert np.allclose(out.depth_maps, mapping_result.depth_maps)
     assert np.allclose(out.intrinsics, mapping_result.intrinsics)
+
+
+def test_maybe_refine_intrinsics_rescales_processing_frame_intrinsics():
+    mapping_result = _mapping_result()
+    mapping_result = MappingSequenceResult(
+        frame_indices=mapping_result.frame_indices,
+        depth_maps=np.ones((1, 10, 20), dtype=np.float32),
+        poses_w_c=mapping_result.poses_w_c,
+        intrinsics=np.array([[1000.0, 0.0, 688.0], [0.0, 1000.0, 384.0], [0.0, 0.0, 1.0]], dtype=np.float32),
+        world_points=mapping_result.world_points,
+    )
+
+    out = _maybe_refine_intrinsics(
+        mapping_name="loger",
+        mapping=_RefiningMapper(None),
+        mapping_result=mapping_result,
+        camera_profile_intrinsics=np.array([[1000.0, 0.0, 688.0], [0.0, 1000.0, 384.0], [0.0, 0.0, 1.0]], dtype=np.float32),
+        processing_image_size=(1376, 768),
+        refine_intrinsics_from_mapper=True,
+    )
+
+    assert out.intrinsics[0, 2] == np.float32(10.0)
+    assert out.intrinsics[1, 2] == np.float32(5.0)
