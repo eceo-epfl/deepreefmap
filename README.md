@@ -1,6 +1,8 @@
-# DeepReefMap v2
+# DeepReefMap
 
-DeepReefMap turns reef videos into 3D reconstructions and semantic maps (for example, coral classes overlaid on geometry). It is designed so you can swap segmentation and reconstruction backends while keeping the same command-line workflow.
+[DeepReefMap](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.14307) turns reef videos into 3D reconstructions and semantic maps (for example, coral classes overlaid on geometry). It is designed so you can swap segmentation and reconstruction backends while keeping the same command-line workflow.
+
+Repository maintained by [Hugues Sibille](https://github.com/HuguesSib) (EPFL) and [Jonathan Sauder](https://josauder.github.io/) (MIT/EPFL).
 
 ## Quick overview
 
@@ -45,15 +47,15 @@ Important performance note:
 
 ### SC-SfMLearner path (simplest)
 
-Use `--mapping scsfmlearner`. By default, the checkpoint is downloaded from Hugging Face (`EPFL-ECEO/deepreefmap-sfm-net/scsfmlearner.pt`). You can also provide a local checkpoint path:
+Use `--mapping scsfmlearner`. By default, the checkpoint is downloaded from Hugging Face (`EPFL-ECEO/deepreefmap-sfm-net/scsfmlearner.pt`).
 
 ```bash
 uv run deepreefmap reconstruct \
   --videos GX010001.MP4 \
   --mapping scsfmlearner \
-  --scsfmlearner-checkpoint-path /path/to/scsfmlearner.pt \
   --camera-profile gopro_hero_10 \
-  --out out_local_ckpt
+  --tsdf \
+  --out out_scsfm
 ```
 
 ### LoGeR path (higher quality, more setup)
@@ -75,6 +77,18 @@ curl -L -C - "https://huggingface.co/Junyi42/LoGeR/resolve/main/LoGeR/latest.pt?
 curl -L -C - "https://huggingface.co/Junyi42/LoGeR/resolve/main/LoGeR_star/latest.pt?download=true" \
   -o third_party/LoGeR/ckpts/LoGeR_star/latest.pt
 ```
+
+And then you can run:
+
+```bash
+uv run deepreefmap reconstruct \
+  --videos GX010001.MP4 \
+  --mapping loger_star \
+  --camera-profile gopro_hero_10 \
+  --out out_loger \
+```
+
+
 
 ### DINOv3 segmentation models (access + authentication)
 
@@ -229,8 +243,27 @@ Viewer highlights:
 - Toggle class visibility and switch color mode (RGB vs semantic colors).
 - Use `Accumulate` to overlay filtered points up to current timeline index.
 
+
+## Citation
+
+If you use this repository or build on it, please cite:
+
+```bibtex
+@article{sauder2024scalable,
+  title={Scalable semantic 3D mapping of coral reefs with deep learning},
+  author={Sauder, Jonathan and Banc-Prandi, Guilhem and Meibom, Anders and Tuia, Devis},
+  journal={Methods in Ecology and Evolution},
+  volume={15},
+  number={5},
+  pages={916--934},
+  year={2024},
+  publisher={Wiley Online Library}
+}
+```
+
 ## License
 
 DeepReefMap is licensed under the [Apache License 2.0](LICENSE).
 
 Vendored or optional third-party components (notably `third_party/LoGeR` and downloaded checkpoints) carry their own terms; see `THIRD_PARTY_NOTICES.md` before redistribution.
+

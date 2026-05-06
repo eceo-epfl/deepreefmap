@@ -49,7 +49,7 @@ class LoGeRBackend(MappingBackend):
         overlap_size: int = 3,
         model_path: str | None = None,
         config_path: str | None = None,
-        target_resolution: tuple[int, int] = (448, 252),
+        target_resolution: tuple[int, int] = (504, 280),
         se3: bool = False,
         sim3: bool = False,
         turn_off_ttt: bool = False,

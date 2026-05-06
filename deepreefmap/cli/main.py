@@ -74,7 +74,7 @@ def reconstruct(
     loger_window_size: int = typer.Option(32, help="LoGeR window size."),
     loger_overlap_size: int = typer.Option(3, help="LoGeR overlap size."),
     refine_intrinsics_from_mapper: bool = typer.Option(
-        False,
+        True,
         help=(
             "Allow mapping backend to refine camera intrinsics and override camera profile K for "
             "downstream 3D reconstruction."
