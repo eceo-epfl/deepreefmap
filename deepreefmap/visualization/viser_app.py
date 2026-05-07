@@ -715,6 +715,7 @@ class ViserLiveApp:
         cv2.imwrite(str(output_dir / "ortho.png"), cv2.cvtColor(grid.rgb, cv2.COLOR_RGB2BGR))
         save_ortho_grid(output_dir / "ortho.npz", grid)
         save_cover_report(output_dir / "benthic_cover.json", self._current_ortho_outputs.cover)
+        self._persist_crop_to_manifest(output_dir, self._active_crop_params)
         self._set_markdown_content(
             self._crop_summary_markdown_handle,
             self._cover_summary_markdown(
@@ -724,6 +725,28 @@ class ViserLiveApp:
             )
             + f"\n- Saved: `{output_dir}`",
         )
+
+    @staticmethod
+    def _persist_crop_to_manifest(output_dir: Path, crop: TransectCropParams | None) -> None:
+        import json
+
+        manifest_path = output_dir / "run_manifest.json"
+        if not manifest_path.exists():
+            return
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (OSError, ValueError):
+            return
+        if crop is None:
+            manifest["transect_crop"] = {"enabled": False}
+        else:
+            manifest["transect_crop"] = {
+                "enabled": True,
+                "transect_length_m": float(crop.transect_length_m),
+                "crop_width_m": float(crop.crop_width_m),
+            }
+        with suppress(OSError):
+            manifest_path.write_text(json.dumps(manifest, indent=2))
 
     def _current_crop_params(self) -> TransectCropParams | None:
         if not bool(self._crop_enabled_toggle is not None and self._crop_enabled_toggle.value):

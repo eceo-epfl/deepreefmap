@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional
 import json
+import logging
 
 import typer
 
@@ -217,8 +218,27 @@ def verify_calibration(
 @app.command("render-video")
 def render_video(
     run_dir: Path = typer.Option(..., exists=True, help="Run output directory from reconstruct."),
+    transect_length_m: Optional[float] = typer.Option(
+        None,
+        "--transect-length-m",
+        help="Transect length in meters; enables ortho crop (matches viser). Falls back to manifest.",
+    ),
+    crop_width_m: Optional[float] = typer.Option(
+        None,
+        "--crop-width-m",
+        help="Crop width in meters around the transect line. Falls back to manifest.",
+    ),
 ) -> None:
-    render_offline_video_placeholder(run_dir)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    render_offline_video_placeholder(
+        run_dir,
+        transect_length_m=transect_length_m,
+        crop_width_m=crop_width_m,
+    )
     typer.echo(f"Offline render completed in {run_dir}")
 
 
