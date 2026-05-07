@@ -6,6 +6,8 @@ from pathlib import Path
 import imageio.v3 as iio
 import numpy as np
 
+from deepreefmap.io.video import _first_sample_time, selected_local_indices_for_clip
+
 
 GravityStream = tuple[np.ndarray, np.ndarray]
 logger = logging.getLogger(__name__)
@@ -33,8 +35,8 @@ def extract_gravity_vectors_for_video_selection(
     """Return one normalized gravity vector per frame selected by `iter_video_frames`."""
     parts: list[np.ndarray] = []
     cumulative_time = 0.0
-    interval_start = 0.0 if begin_s is None else max(0.0, float(begin_s))
     interval_end = float("inf") if end_s is None else max(0.0, float(end_s))
+    next_sample_time = _first_sample_time(begin_s, target_fps)
 
     for path in video_paths:
         meta = iio.immeta(path)
@@ -46,15 +48,14 @@ def extract_gravity_vectors_for_video_selection(
             return None
 
         clip_duration = nframes / src_fps
-        stride = max(1, int(round(src_fps / max(1, target_fps))))
-        selected_local_indices = []
-        for local_idx in range(0, nframes, stride):
-            t = cumulative_time + local_idx / src_fps
-            if t < interval_start:
-                continue
-            if t >= interval_end:
-                break
-            selected_local_indices.append(local_idx)
+        selected_local_indices, next_sample_time = selected_local_indices_for_clip(
+            nframes=nframes,
+            src_fps=src_fps,
+            target_fps=target_fps,
+            cumulative_time=cumulative_time,
+            next_sample_time=next_sample_time,
+            end_s=end_s,
+        )
 
         if selected_local_indices:
             stream = _extract_gravity_stream(path)

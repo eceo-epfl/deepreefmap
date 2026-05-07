@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import shutil
 import time
 from pathlib import Path
 from typing import Callable
@@ -15,7 +16,7 @@ from deepreefmap.camera.intrinsics import CameraProfile, scale_intrinsics
 from deepreefmap.camera.rectification import Rectifier
 from deepreefmap.config.classes import ClassConfig, DEFAULT_CLASSES_PATH, load_classes
 from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_semantic_cloud
-from deepreefmap.io.video import iter_video_frames
+from deepreefmap.io.video import _first_sample_time, iter_video_frames, selected_local_indices_for_clip
 from deepreefmap.mapping.registry import create_mapping_backend
 from deepreefmap.pipeline import resume as resume_mod
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
@@ -114,6 +115,7 @@ def run_reconstruction(
             # Preprocess invalidated → mapping cache also invalid (depends on prep key).
             resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_PREPROCESS)
             resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_MAPPING)
+            _clear_preprocess_artifacts(output_dir)
 
         if skip_segmentation:
             segmentation = None
@@ -158,6 +160,7 @@ def run_reconstruction(
                 logger.warning("Resume: preprocess artifacts incomplete, recomputing.")
                 resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_PREPROCESS)
                 resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_MAPPING)
+                _clear_preprocess_artifacts(output_dir)
                 prep_hit = False
                 if not skip_segmentation:
                     logger.info("Loading segmentation model '%s'", segmentation_name)
@@ -668,6 +671,12 @@ def _coerce_intrinsics_to_depth_scale(
         return scale_intrinsics(k, processing_image_size, (depth_w, depth_h))
     return k
 
+def _clear_preprocess_artifacts(output_dir: Path) -> None:
+    for dirname in ("frames", "labels", "masks"):
+        path = output_dir / dirname
+        if path.exists():
+            shutil.rmtree(path)
+
 
 def _build_geometry_cloud(
     frame_batch: FrameBatch,
@@ -750,12 +759,12 @@ def _estimate_selected_frame_count(
     interval_end = float("inf") if end_s is None else max(0.0, end_s)
     total = 0
     cumulative_time = 0.0
+    next_sample_time = _first_sample_time(begin_s, fps)
 
     for path in video_paths:
         meta = iio.immeta(path)
         src_fps = float(meta.get("fps", fps))
         src_fps = src_fps if src_fps > 0 else float(max(1, fps))
-        stride = max(1, int(round(src_fps / max(1, fps))))
 
         nframes_raw = meta.get("nframes")
         nframes: int | None = None
@@ -785,12 +794,15 @@ def _estimate_selected_frame_count(
         sel_start = max(interval_start, clip_start)
         sel_end = min(interval_end, clip_end)
         if sel_end > sel_start and nframes > 0:
-            local_start_idx = max(0, int(np.ceil((sel_start - clip_start) * src_fps)))
-            local_end_idx_exclusive = min(nframes, int(np.ceil((sel_end - clip_start) * src_fps)))
-            if local_end_idx_exclusive > local_start_idx:
-                first = ((local_start_idx + stride - 1) // stride) * stride
-                if first < local_end_idx_exclusive:
-                    total += ((local_end_idx_exclusive - 1 - first) // stride) + 1
+            selected, next_sample_time = selected_local_indices_for_clip(
+                nframes=nframes,
+                src_fps=src_fps,
+                target_fps=fps,
+                cumulative_time=cumulative_time,
+                next_sample_time=next_sample_time,
+                end_s=end_s,
+            )
+            total += len(selected)
 
         cumulative_time = clip_end
         if interval_end <= cumulative_time:
