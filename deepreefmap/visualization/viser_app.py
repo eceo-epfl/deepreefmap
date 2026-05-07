@@ -715,7 +715,7 @@ class ViserLiveApp:
         cv2.imwrite(str(output_dir / "ortho.png"), cv2.cvtColor(grid.rgb, cv2.COLOR_RGB2BGR))
         save_ortho_grid(output_dir / "ortho.npz", grid)
         save_cover_report(output_dir / "benthic_cover.json", self._current_ortho_outputs.cover)
-        self._persist_crop_to_manifest(output_dir, self._active_crop_params)
+        self._persist_crop_to_manifest(output_dir, getattr(self, "_active_crop_params", None))
         self._set_markdown_content(
             self._crop_summary_markdown_handle,
             self._cover_summary_markdown(
