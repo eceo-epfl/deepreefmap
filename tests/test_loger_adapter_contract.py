@@ -4,10 +4,12 @@ import pytest
 from deepreefmap.camera.intrinsics import scale_intrinsics
 from deepreefmap.mapping.loger_backend import (
     LoGeRBackend,
+    _estimate_intrinsics_from_local_points,
     _assert_pose_convention,
     _nearest_multiple,
     _reanchor_to_first_camera,
 )
+from deepreefmap.pipeline.artifacts import MappingSequenceResult
 
 
 def test_loger_disables_per_frame_proxy_path():
@@ -100,3 +102,39 @@ def _se3(rotation: np.ndarray, translation: tuple[float, float, float]) -> np.nd
     matrix[:3, :3] = rotation
     matrix[:3, 3] = translation
     return matrix
+
+
+def test_estimate_intrinsics_from_local_points_recovers_focal():
+    h, w = 6, 8
+    fx, fy = 120.0, 140.0
+    cx, cy = 3.0, 2.0
+    z = np.full((1, h, w, 1), 2.0, dtype=np.float32)
+    u = np.arange(w, dtype=np.float32)[None, None, :, None]
+    v = np.arange(h, dtype=np.float32)[None, :, None, None]
+    x = (u - cx) / fx * z
+    y = (v - cy) / fy * z
+    local_points = np.concatenate([x, y, z], axis=-1)
+    seed_k = np.array([[100.0, 0.0, cx], [0.0, 100.0, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
+
+    refined = _estimate_intrinsics_from_local_points(local_points=local_points, seed_intrinsics=seed_k)
+
+    assert refined is not None
+    assert refined[0, 0] == pytest.approx(fx, rel=1e-3)
+    assert refined[1, 1] == pytest.approx(fy, rel=1e-3)
+    assert refined[0, 2] == pytest.approx(cx)
+    assert refined[1, 2] == pytest.approx(cy)
+
+
+def test_loger_refine_intrinsics_returns_none_without_local_points():
+    backend = LoGeRBackend.__new__(LoGeRBackend)
+    mapping_result = MappingSequenceResult(
+        frame_indices=np.array([0], dtype=np.int32),
+        depth_maps=np.ones((1, 2, 2), dtype=np.float32),
+        poses_w_c=np.eye(4, dtype=np.float32)[None],
+        intrinsics=np.eye(3, dtype=np.float32),
+        local_points=None,
+    )
+
+    refined = backend.refine_intrinsics(mapping_result)
+
+    assert refined is None

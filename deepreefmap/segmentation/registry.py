@@ -21,6 +21,7 @@ class _DummySegmentation(SegmentationModel):
 
 
 _MODELS: dict[str, tuple[int, int]] = {
+    "coralscapes-vit-s-dpt": (384, 688),
     "coralscapes-vit-l-dpt": (768, 1376),
     "coralscapes-vit-b-dpt": (768, 1376),
     "segformer-b2": (1024, 1024),
@@ -39,6 +40,8 @@ def create_segmentation_model(name: str) -> SegmentationModel:
         return DinoV3DPTWrapper("EPFL-ECEO/coralscapes-vit-l-dpt", _MODELS[name])
     if name == "coralscapes-vit-b-dpt":
         return DinoV3DPTWrapper("EPFL-ECEO/coralscapes-vit-b-dpt", _MODELS[name])
+    if name == "coralscapes-vit-s-dpt":
+        return DinoV3DPTWrapper("EPFL-ECEO/coralscapes-vit-s-dpt", _MODELS[name])
     return _DummySegmentation(name=name, resolution=_MODELS[name])
 
 

@@ -76,3 +76,12 @@ class MappingBackend(ABC):
             scale_type=estimates[0].scale_type,
             gravity_vectors=None if gravity_vectors is None else gravity_vectors.astype(np.float32),
         )
+
+    def refine_intrinsics(self, mapping_result) -> np.ndarray | None:
+        """Optionally return refined 3x3 intrinsics for this sequence.
+
+        Backends can override this hook when they can estimate intrinsics from
+        sequence outputs. Returning ``None`` keeps the caller-provided intrinsics.
+        """
+        del mapping_result
+        return None
