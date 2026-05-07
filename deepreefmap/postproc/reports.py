@@ -1,10 +1,18 @@
 from pathlib import Path
 import json
+import logging
 
 import cv2
 import numpy as np
+from tqdm.auto import tqdm
 
 from deepreefmap.config.classes import load_classes
+from deepreefmap.pointcloud.transect_crop import (
+    build_transect_crop_geometry,
+    build_transect_crop_selection,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def save_cover_report(path: Path, cover: dict[str, object]) -> None:
@@ -15,7 +23,11 @@ def save_run_manifest(path: Path, manifest: dict[str, object]) -> None:
     path.write_text(json.dumps(manifest, indent=2))
 
 
-def render_offline_video_placeholder(run_dir: Path) -> None:
+def render_offline_video_placeholder(
+    run_dir: Path,
+    transect_length_m: float | None = None,
+    crop_width_m: float | None = None,
+) -> None:
     """Render a DRM-style 4-panel QC video from manifest artifacts.
 
     Layout per frame (matching the original mee-deepreefmap render):
@@ -60,6 +72,24 @@ def render_offline_video_placeholder(run_dir: Path) -> None:
 
     ortho = _load_ortho(run_dir / "ortho.npz", class_colors)
 
+    crop_block = manifest.get("transect_crop") if isinstance(manifest.get("transect_crop"), dict) else None
+    if transect_length_m is None and crop_block and crop_block.get("enabled"):
+        transect_length_m = float(crop_block.get("transect_length_m"))
+    if crop_width_m is None and crop_block and crop_block.get("enabled"):
+        crop_width_m = float(crop_block.get("crop_width_m"))
+    if ortho is not None and transect_length_m is not None and crop_width_m is not None:
+        ortho = _apply_transect_crop_to_ortho(
+            ortho,
+            transect_label=classes_config.single_id_for_role("transect_line"),
+            transect_tools_label=classes_config.single_id_for_role("transect_tools"),
+            transect_length_m=transect_length_m,
+            crop_width_m=crop_width_m,
+        )
+    if ortho is not None:
+        # Always tighten to the bbox of mapped pixels so the ortho panel does
+        # not include vast empty borders when no explicit transect crop was set.
+        ortho = _tighten_ortho_to_valid_bbox(ortho)
+
     out_path = run_dir / "videos" / "qc_render.mp4"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     first = cv2.imread(str(frame_paths[0]))
@@ -69,7 +99,11 @@ def render_offline_video_placeholder(run_dir: Path) -> None:
     writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), 10, (w * 2, h * 2))
     legend_cache: dict[tuple[int, ...], np.ndarray] = {}
 
-    for idx, frame_path in enumerate(frame_paths[: len(depths)]):
+    n_frames = len(frame_paths[: len(depths)])
+    logger.info("Rendering QC video → %s (%d frames)", out_path, n_frames)
+    iterable = list(enumerate(frame_paths[: len(depths)]))
+    progress = tqdm(iterable, desc="render-video", unit="frame", total=n_frames)
+    for idx, frame_path in progress:
         bgr = cv2.imread(str(frame_path))
         if bgr is None:
             continue
@@ -100,7 +134,9 @@ def render_offline_video_placeholder(run_dir: Path) -> None:
         top = np.concatenate([bgr, seg_panel], axis=1)
         bottom = np.concatenate([depth_panel, ortho_panel], axis=1)
         writer.write(np.concatenate([top, bottom], axis=0))
+    progress.close()
     writer.release()
+    logger.info("Render-video complete: %s", out_path)
 
 
 def _colorize_depth(depth: np.ndarray, size_wh: tuple[int, int]) -> np.ndarray:
@@ -149,6 +185,72 @@ def _load_ortho(path: Path, class_colors: dict[int, tuple[int, int, int]]) -> di
     return {"rgb": rgb, "class_rgb": class_rgb, "labels": labels, "frame_index": frame_index}
 
 
+def _tighten_ortho_to_valid_bbox(ortho: dict) -> dict:
+    """Crop the ortho dict to the bbox of pixels that received any frame data.
+
+    Pixels with `frame_index < 0` are treated as empty. When all pixels are
+    valid, the ortho is returned unchanged. This avoids the ortho panel
+    rendering a mostly-empty rectangle (which then has to be stretched to fit
+    the panel cell, squishing the actual content).
+    """
+    fi = ortho.get("frame_index")
+    if fi is None or fi.size == 0:
+        return ortho
+    valid = fi >= 0
+    if not np.any(valid) or np.all(valid):
+        return ortho
+    rows = np.any(valid, axis=1)
+    cols = np.any(valid, axis=0)
+    y0 = int(np.argmax(rows))
+    y1 = int(rows.size - np.argmax(rows[::-1]))
+    x0 = int(np.argmax(cols))
+    x1 = int(cols.size - np.argmax(cols[::-1]))
+    if y1 <= y0 or x1 <= x0:
+        return ortho
+    return {
+        "rgb": ortho["rgb"][y0:y1, x0:x1],
+        "class_rgb": ortho["class_rgb"][y0:y1, x0:x1],
+        "labels": ortho["labels"][y0:y1, x0:x1],
+        "frame_index": ortho["frame_index"][y0:y1, x0:x1],
+    }
+
+
+def _apply_transect_crop_to_ortho(
+    ortho: dict,
+    transect_label: int | None,
+    transect_tools_label: int | None,
+    transect_length_m: float,
+    crop_width_m: float,
+) -> dict:
+    geometry = build_transect_crop_geometry(
+        labels=ortho["labels"],
+        transect_label=transect_label,
+        transect_tools_label=transect_tools_label,
+    )
+    selection = build_transect_crop_selection(
+        geometry=geometry,
+        transect_length_m=transect_length_m,
+        crop_width_m=crop_width_m,
+    )
+    if selection is None:
+        return ortho
+    y0, y1, x0, x1 = selection.y0, selection.y1, selection.x0, selection.x1
+    mask = selection.mask
+
+    def _slice(arr: np.ndarray, fill: int) -> np.ndarray:
+        sub = arr[y0:y1, x0:x1]
+        if sub.ndim == 3:
+            return np.where(mask[..., None], sub, fill).astype(sub.dtype)
+        return np.where(mask, sub, fill).astype(sub.dtype)
+
+    return {
+        "rgb": _slice(ortho["rgb"], 0),
+        "class_rgb": _slice(ortho["class_rgb"], 0),
+        "labels": _slice(ortho["labels"], 0),
+        "frame_index": _slice(ortho["frame_index"], -1),
+    }
+
+
 def _ortho_panel(
     ortho: dict | None,
     class_colors: dict[int, tuple[int, int, int]],
@@ -167,16 +269,12 @@ def _ortho_panel(
     rgb_cum = (ortho["rgb"] * mask3).astype(np.uint8)
     class_cum = (ortho["class_rgb"] * mask3).astype(np.uint8)
 
-    h_o, w_o = rgb_cum.shape[:2]
-    if h_o < w_o:
-        stacked = np.concatenate([rgb_cum, class_cum], axis=0)
-    else:
-        stacked = np.concatenate([rgb_cum, class_cum], axis=1)
+    stacked = np.concatenate([rgb_cum, class_cum], axis=0)
     stacked_bgr = cv2.cvtColor(stacked, cv2.COLOR_RGB2BGR)
 
     present = _present_class_ids(ortho.get("labels"), valid, class_colors)
     if not present:
-        return cv2.resize(stacked_bgr, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        return _letterbox_into(stacked_bgr, target_w, target_h)
 
     legend_bgr = legend_cache.get(present)
     if legend_bgr is None:
@@ -190,9 +288,31 @@ def _ortho_panel(
     legend_cap = max(80, target_w // 3)
     legend_w = max(1, min(legend_bgr.shape[1], legend_cap, target_w - 1))
     legend_resized = cv2.resize(legend_bgr, (legend_w, target_h), interpolation=cv2.INTER_AREA)
-    stacked_w = target_w - legend_w
-    stacked_resized = cv2.resize(stacked_bgr, (stacked_w, target_h), interpolation=cv2.INTER_AREA)
-    return np.concatenate([stacked_resized, legend_resized], axis=1)
+    stacked_cell_w = target_w - legend_w
+    stacked_letterboxed = _letterbox_into(stacked_bgr, stacked_cell_w, target_h)
+    return np.concatenate([stacked_letterboxed, legend_resized], axis=1)
+
+
+def _letterbox_into(image: np.ndarray, cell_w: int, cell_h: int) -> np.ndarray:
+    """Resize `image` into a `cell_w x cell_h` BGR canvas preserving aspect.
+
+    Uses INTER_AREA on shrink and INTER_LINEAR on enlarge; pads with black.
+    """
+    cell_w = max(1, int(cell_w))
+    cell_h = max(1, int(cell_h))
+    h, w = image.shape[:2]
+    if h <= 0 or w <= 0:
+        return np.zeros((cell_h, cell_w, 3), dtype=np.uint8)
+    scale = min(cell_w / w, cell_h / h)
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    resized = cv2.resize(image, (new_w, new_h), interpolation=interp)
+    canvas = np.zeros((cell_h, cell_w, 3), dtype=np.uint8)
+    x0 = (cell_w - new_w) // 2
+    y0 = (cell_h - new_h) // 2
+    canvas[y0 : y0 + new_h, x0 : x0 + new_w] = resized
+    return canvas
 
 
 def _present_class_ids(

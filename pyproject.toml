@@ -23,13 +23,13 @@ classifiers = [
 dependencies = [
   "numpy>=1.26.0",
   "opencv-python>=4.10.0.84",
-  "imageio[ffmpeg]>=2.37.0",
-  "typer>=0.16.0",
+  "imageio[ffmpeg]>=2.37.3",
+  "typer>=0.25.1",
   "pyyaml>=6.0.2",
   "scikit-learn>=1.5.0",
   "open3d>=0.18.0",
-  "transformers>=4.53.0",
-  "huggingface_hub>=0.34.0",
+  "transformers>=5.8.0",
+  "huggingface_hub>=1.14.0",
   # Keep PyTorch on CUDA 12.1 wheels for the workstation's NVIDIA 535 driver
   # (CUDA 12.2). Newer torch releases may resolve to cu130 and fail CUDA init.
   "torch==2.4.1",
@@ -37,8 +37,8 @@ dependencies = [
   # Upper-bounded so the dual-API fallback in deepreefmap.camera.colmap_calibration
   # (ImageReaderOptions.single_camera vs pycolmap.CameraMode.SINGLE) stays the
   # documented contract; bump after retesting calibrate against a new major.
-  "pycolmap>=3.13.0,<4.0",
-  "viser>=0.2.23",
+  "pycolmap>=4.0.4,<5.0",
+  "viser>=1.0.27",
   "tqdm>=4.67.3",
 ]
 
@@ -60,7 +60,7 @@ gopro = [
   "py-gpmf-parser>=0.1.1,<0.2.0; sys_platform == 'linux' and platform_machine == 'x86_64'"
 ]
 train = ["wandb>=0.20.0", "tensorboard>=2.18.0"]
-dev = ["pytest>=8.4.0", "ruff>=0.12.0", "mypy>=1.16.0"]
+dev = ["pytest>=8.4.0", "ruff>=0.12.0", "mypy>=2.0.0"]
 
 [project.urls]
 Repository = "https://github.com/EPFL-ECEO/deepreefmap"
