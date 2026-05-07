@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import shutil
 import time
 from pathlib import Path
 from typing import Callable
@@ -15,7 +16,7 @@ from deepreefmap.camera.intrinsics import CameraProfile, scale_intrinsics
 from deepreefmap.camera.rectification import Rectifier
 from deepreefmap.config.classes import ClassConfig, DEFAULT_CLASSES_PATH, load_classes
 from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_semantic_cloud
-from deepreefmap.io.video import iter_video_frames
+from deepreefmap.io.video import _first_sample_time, iter_video_frames, selected_local_indices_for_clip
 from deepreefmap.mapping.registry import create_mapping_backend
 from deepreefmap.pipeline import resume as resume_mod
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
@@ -59,6 +60,7 @@ def run_reconstruction(
     processing_width: int | None = None,
     processing_height: int | None = None,
     skip_segmentation: bool = False,
+    refine_intrinsics_from_mapper: bool = False,
 ) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -113,6 +115,7 @@ def run_reconstruction(
             # Preprocess invalidated → mapping cache also invalid (depends on prep key).
             resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_PREPROCESS)
             resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_MAPPING)
+            _clear_preprocess_artifacts(output_dir)
 
         if skip_segmentation:
             segmentation = None
@@ -157,6 +160,7 @@ def run_reconstruction(
                 logger.warning("Resume: preprocess artifacts incomplete, recomputing.")
                 resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_PREPROCESS)
                 resume_mod.clear_sidecar(output_dir, resume_mod.STAGE_MAPPING)
+                _clear_preprocess_artifacts(output_dir)
                 prep_hit = False
                 if not skip_segmentation:
                     logger.info("Loading segmentation model '%s'", segmentation_name)
@@ -230,10 +234,12 @@ def run_reconstruction(
 
         logger.info("Prepared %d sampled frames in %.1fs", frame_count, time.monotonic() - t_start)
 
+        map_key_options = dict(mapping_options or {})
+        map_key_options["refine_intrinsics_from_mapper"] = bool(refine_intrinsics_from_mapper)
         map_key = resume_mod.mapping_key(
             preprocess_key_str=prep_key,
             mapping_name=mapping_name,
-            mapping_options=mapping_options,
+            mapping_options=map_key_options,
             gravity_available=frame_batch.gravity_vectors is not None,
         )
         map_sidecar = resume_mod.read_sidecar(output_dir, resume_mod.STAGE_MAPPING)
@@ -263,6 +269,14 @@ def run_reconstruction(
                 frame_batch.images,
                 gravity_vectors=frame_batch.gravity_vectors,
             )
+            mapping_result = _maybe_refine_intrinsics(
+                mapping_name=mapping_name,
+                mapping=mapping,
+                mapping_result=mapping_result,
+                camera_profile_intrinsics=processing_intrinsics,
+                processing_image_size=processing_image_size,
+                refine_intrinsics_from_mapper=refine_intrinsics_from_mapper,
+            )
             if viewer is not None:
                 viewer.update_progress("mapping", current=frame_count, total=frame_count, message="Mapping complete")
                 viewer.set_stage("mapping", "completed", "3D mapping complete")
@@ -279,6 +293,20 @@ def run_reconstruction(
                 scale_type=np.asarray(mapping_result.scale_type),
             )
             resume_mod.write_sidecar(output_dir, resume_mod.STAGE_MAPPING, map_key)
+        elif refine_intrinsics_from_mapper:
+            logger.info(
+                "Intrinsics refinement flag is enabled with cached mapping output."
+                " camera_profile_K=%s effective_mapping_K=%s",
+                _format_matrix(processing_intrinsics),
+                _format_matrix(mapping_result.intrinsics),
+            )
+
+        mapping_result_for_cloud = mapping_result
+        if refine_intrinsics_from_mapper and mapping_name in {"loger", "loger_star"}:
+            logger.info(
+                "LoGeR intrinsics refinement mode: forcing depth+pose unprojection for cloud assembly."
+            )
+            mapping_result_for_cloud = _mapping_without_world_points(mapping_result)
 
         if skip_segmentation:
             logger.info("Skip segmentation: building geometry-only point cloud...")
@@ -287,7 +315,7 @@ def run_reconstruction(
             active_stage = "outputs"
             geometry_xyz, geometry_rgb = _build_geometry_cloud(
                 frame_batch=frame_batch,
-                mapping_result=mapping_result,
+                mapping_result=mapping_result_for_cloud,
                 voxel_size=0.003,
             )
             output_files = [
@@ -329,7 +357,7 @@ def run_reconstruction(
         logger.info("Building filtered semantic reference cloud...")
         reference_cloud = build_semantic_reference_cloud(
             frame_batch,
-            mapping_result,
+            mapping_result_for_cloud,
             classes_config,
             PointFilterConfig(
                 replacement_radius_factor=1.0
@@ -357,9 +385,9 @@ def run_reconstruction(
             masks_for_depth = [_resize_mask(frame.keep_mask, depth_shape) for frame in frame_batch.frames]
             tsdf_xyz, tsdf_rgb = integrate_tsdf(
                 rgb_for_depth,
-                [d for d in mapping_result.depth_maps],
-                [p for p in mapping_result.poses_w_c],
-                mapping_result.intrinsics,
+                [d for d in mapping_result_for_cloud.depth_maps],
+                [p for p in mapping_result_for_cloud.poses_w_c],
+                mapping_result_for_cloud.intrinsics,
                 masks=masks_for_depth,
             )
             semantic_tsdf = align_tsdf_to_reference(tsdf_xyz, tsdf_rgb, reference_cloud)
@@ -538,6 +566,118 @@ def _prepare_frames(
     )
 
 
+def _maybe_refine_intrinsics(
+    *,
+    mapping_name: str,
+    mapping,
+    mapping_result: MappingSequenceResult,
+    camera_profile_intrinsics: np.ndarray,
+    processing_image_size: tuple[int, int],
+    refine_intrinsics_from_mapper: bool,
+) -> MappingSequenceResult:
+    depth_h, depth_w = mapping_result.depth_maps[0].shape
+    camera_profile_intrinsics_depth = scale_intrinsics(
+        camera_profile_intrinsics,
+        processing_image_size,
+        (depth_w, depth_h),
+    )
+    effective_intrinsics = _coerce_intrinsics_to_depth_scale(
+        intrinsics=mapping_result.intrinsics,
+        depth_size=(depth_w, depth_h),
+        processing_image_size=processing_image_size,
+    )
+    mapping_result = MappingSequenceResult(
+        frame_indices=mapping_result.frame_indices,
+        depth_maps=mapping_result.depth_maps,
+        poses_w_c=mapping_result.poses_w_c,
+        intrinsics=effective_intrinsics,
+        world_points=mapping_result.world_points,
+        local_points=mapping_result.local_points,
+        confidence=mapping_result.confidence,
+        scale_type=mapping_result.scale_type,
+        gravity_vectors=mapping_result.gravity_vectors,
+    )
+    if not refine_intrinsics_from_mapper:
+        return mapping_result
+    refined_intrinsics = mapping.refine_intrinsics(mapping_result)
+    if refined_intrinsics is None:
+        logger.info(
+            "Intrinsics refinement requested but no refined intrinsics returned for backend '%s'. "
+            "camera_profile_K=%s effective_mapping_K=%s",
+            mapping_name,
+            _format_matrix(camera_profile_intrinsics_depth),
+            _format_matrix(mapping_result.intrinsics),
+        )
+        return mapping_result
+    refined_intrinsics = _coerce_intrinsics_to_depth_scale(
+        intrinsics=refined_intrinsics.astype(np.float32),
+        depth_size=(depth_w, depth_h),
+        processing_image_size=processing_image_size,
+    )
+    logger.info(
+        "Intrinsics refinement applied for backend '%s'. camera_profile_K=%s refined_K=%s",
+        mapping_name,
+        _format_matrix(camera_profile_intrinsics_depth),
+        _format_matrix(refined_intrinsics),
+    )
+    return MappingSequenceResult(
+        frame_indices=mapping_result.frame_indices,
+        depth_maps=mapping_result.depth_maps,
+        poses_w_c=mapping_result.poses_w_c,
+        intrinsics=refined_intrinsics.astype(np.float32),
+        world_points=mapping_result.world_points,
+        local_points=mapping_result.local_points,
+        confidence=mapping_result.confidence,
+        scale_type=mapping_result.scale_type,
+        gravity_vectors=mapping_result.gravity_vectors,
+    )
+
+
+def _mapping_without_world_points(mapping_result: MappingSequenceResult) -> MappingSequenceResult:
+    return MappingSequenceResult(
+        frame_indices=mapping_result.frame_indices,
+        depth_maps=mapping_result.depth_maps,
+        poses_w_c=mapping_result.poses_w_c,
+        intrinsics=mapping_result.intrinsics,
+        world_points=None,
+        local_points=mapping_result.local_points,
+        confidence=mapping_result.confidence,
+        scale_type=mapping_result.scale_type,
+        gravity_vectors=mapping_result.gravity_vectors,
+    )
+
+
+def _format_matrix(matrix: np.ndarray) -> str:
+    return np.array2string(np.asarray(matrix), precision=4, suppress_small=False)
+
+
+def _coerce_intrinsics_to_depth_scale(
+    *,
+    intrinsics: np.ndarray,
+    depth_size: tuple[int, int],
+    processing_image_size: tuple[int, int],
+) -> np.ndarray:
+    """Ensure intrinsics are in the same pixel frame as depth maps.
+
+    Backends are expected to return depth-scale intrinsics already. If principal
+    point is clearly out of depth bounds, treat it as processing-scale K and
+    rescale to depth size.
+    """
+    depth_w, depth_h = depth_size
+    k = np.asarray(intrinsics, dtype=np.float32).copy()
+    cx = float(k[0, 2])
+    cy = float(k[1, 2])
+    if cx > depth_w * 1.25 or cy > depth_h * 1.25:
+        return scale_intrinsics(k, processing_image_size, (depth_w, depth_h))
+    return k
+
+def _clear_preprocess_artifacts(output_dir: Path) -> None:
+    for dirname in ("frames", "labels", "masks"):
+        path = output_dir / dirname
+        if path.exists():
+            shutil.rmtree(path)
+
+
 def _build_geometry_cloud(
     frame_batch: FrameBatch,
     mapping_result: MappingSequenceResult,
@@ -619,12 +759,12 @@ def _estimate_selected_frame_count(
     interval_end = float("inf") if end_s is None else max(0.0, end_s)
     total = 0
     cumulative_time = 0.0
+    next_sample_time = _first_sample_time(begin_s, fps)
 
     for path in video_paths:
         meta = iio.immeta(path)
         src_fps = float(meta.get("fps", fps))
         src_fps = src_fps if src_fps > 0 else float(max(1, fps))
-        stride = max(1, int(round(src_fps / max(1, fps))))
 
         nframes_raw = meta.get("nframes")
         nframes: int | None = None
@@ -654,12 +794,15 @@ def _estimate_selected_frame_count(
         sel_start = max(interval_start, clip_start)
         sel_end = min(interval_end, clip_end)
         if sel_end > sel_start and nframes > 0:
-            local_start_idx = max(0, int(np.ceil((sel_start - clip_start) * src_fps)))
-            local_end_idx_exclusive = min(nframes, int(np.ceil((sel_end - clip_start) * src_fps)))
-            if local_end_idx_exclusive > local_start_idx:
-                first = ((local_start_idx + stride - 1) // stride) * stride
-                if first < local_end_idx_exclusive:
-                    total += ((local_end_idx_exclusive - 1 - first) // stride) + 1
+            selected, next_sample_time = selected_local_indices_for_clip(
+                nframes=nframes,
+                src_fps=src_fps,
+                target_fps=fps,
+                cumulative_time=cumulative_time,
+                next_sample_time=next_sample_time,
+                end_s=end_s,
+            )
+            total += len(selected)
 
         cumulative_time = clip_end
         if interval_end <= cumulative_time:

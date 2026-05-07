@@ -57,3 +57,16 @@ def test_prepare_frames_segments_rectified_frames_in_batches(tmp_path, monkeypat
     assert all(frame.image_path is not None and frame.image_path.exists() for frame in batch.frames)
     assert all(frame.labels_path is not None and frame.labels_path.exists() for frame in batch.frames)
     assert all(frame.mask_path is not None and frame.mask_path.exists() for frame in batch.frames)
+
+
+def test_clear_preprocess_artifacts_removes_stale_frame_outputs(tmp_path) -> None:
+    for dirname in ("frames", "labels", "masks"):
+        artifact_dir = tmp_path / dirname
+        artifact_dir.mkdir()
+        (artifact_dir / "00000099.stale").write_text("old")
+
+    orchestrator._clear_preprocess_artifacts(tmp_path)
+
+    assert not (tmp_path / "frames").exists()
+    assert not (tmp_path / "labels").exists()
+    assert not (tmp_path / "masks").exists()

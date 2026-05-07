@@ -68,3 +68,30 @@ def test_reconstruct_passes_custom_scsfmlearner_resolution(tmp_path: Path):
     assert isinstance(mapping_options, dict)
     assert mapping_options["target_width"] == 320
     assert mapping_options["target_height"] == 192
+
+
+def test_reconstruct_threads_intrinsics_refinement_flag(tmp_path: Path):
+    profile_dir = tmp_path / "profiles"
+    profile_dir.mkdir()
+    (profile_dir / "reefcam.json").write_text("{}", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    def _fake_run_reconstruction(**kwargs):
+        captured.update(kwargs)
+
+    with patch.object(cli_main, "CAMERA_PROFILE_DIR", profile_dir), patch.object(
+        intrinsics, "CAMERA_PROFILE_DIR", profile_dir
+    ), patch.object(
+        cli_main,
+        "run_reconstruction",
+        _fake_run_reconstruction,
+    ):
+        cli_main.reconstruct(
+            videos="clip.mp4",
+            camera_profile="reefcam",
+            mapping="loger",
+            refine_intrinsics_from_mapper=True,
+        )
+
+    assert captured["refine_intrinsics_from_mapper"] is True

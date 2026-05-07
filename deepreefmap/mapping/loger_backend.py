@@ -49,7 +49,7 @@ class LoGeRBackend(MappingBackend):
         overlap_size: int = 3,
         model_path: str | None = None,
         config_path: str | None = None,
-        target_resolution: tuple[int, int] = (448, 252),
+        target_resolution: tuple[int, int] = (504, 280),
         se3: bool = False,
         sim3: bool = False,
         turn_off_ttt: bool = False,
@@ -239,6 +239,24 @@ class LoGeRBackend(MappingBackend):
         except Exception as exc:
             raise RuntimeError("LoGeR sequence inference failed") from exc
 
+    def refine_intrinsics(self, mapping_result: MappingSequenceResult) -> np.ndarray | None:
+        local_points = mapping_result.local_points
+        if local_points is None or local_points.ndim != 4 or local_points.shape[0] == 0:
+            logger.info("LoGeR intrinsics refinement skipped: local_points unavailable.")
+            return None
+        try:
+            refined = _estimate_intrinsics_from_local_points(
+                local_points=local_points.astype(np.float32),
+                seed_intrinsics=mapping_result.intrinsics.astype(np.float32),
+            )
+        except Exception as exc:
+            logger.warning("LoGeR intrinsics refinement failed: %s", exc)
+            return None
+        if refined is None:
+            logger.info("LoGeR intrinsics refinement produced no valid estimate; keeping camera profile K.")
+            return None
+        return refined.astype(np.float32)
+
 
 def _reanchor_to_first_camera(
     poses: np.ndarray,
@@ -315,3 +333,71 @@ def _tensor_to_numpy(value) -> np.ndarray | None:
     if hasattr(value, "detach"):
         value = value.squeeze(0).detach().cpu().float().numpy()
     return np.asarray(value)
+
+
+def _estimate_intrinsics_from_local_points(
+    *,
+    local_points: np.ndarray,
+    seed_intrinsics: np.ndarray,
+) -> np.ndarray | None:
+    """Estimate pinhole intrinsics from per-pixel local 3D points.
+
+    LoGeR predicts local points as camera-frame XYZ. We estimate focal lengths
+    by robustly solving x/z=(u-cx)/fx and y/z=(v-cy)/fy over all frames.
+    Principal point is kept from the seed intrinsics.
+    """
+    if local_points.shape[-1] != 3:
+        return None
+    n, h, w, _ = local_points.shape
+    if h <= 0 or w <= 0 or n <= 0:
+        return None
+    k = seed_intrinsics.astype(np.float32).copy()
+    cx = float(k[0, 2])
+    cy = float(k[1, 2])
+
+    z = local_points[..., 2]
+    x = local_points[..., 0]
+    y = local_points[..., 1]
+    valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(z) & (np.abs(z) > 1e-6)
+    if not np.any(valid):
+        return None
+
+    rx = x / z
+    ry = y / z
+    u = np.broadcast_to(np.arange(w, dtype=np.float32)[None, None, :], (n, h, w))
+    v = np.broadcast_to(np.arange(h, dtype=np.float32)[None, :, None], (n, h, w))
+
+    fx_samples = (u - cx) / np.where(np.abs(rx) > 1e-6, rx, np.nan)
+    fy_samples = (v - cy) / np.where(np.abs(ry) > 1e-6, ry, np.nan)
+    fx = _robust_positive_median(fx_samples[valid])
+    fy = _robust_positive_median(fy_samples[valid])
+    if fx is None and fy is None:
+        return None
+    if fx is None:
+        fx = fy
+    if fy is None:
+        fy = fx
+    assert fx is not None and fy is not None
+
+    max_dim = float(max(h, w))
+    fx = float(np.clip(fx, 0.1 * max_dim, 20.0 * max_dim))
+    fy = float(np.clip(fy, 0.1 * max_dim, 20.0 * max_dim))
+    k[0, 0] = fx
+    k[1, 1] = fy
+    k[0, 1] = 0.0
+    k[1, 0] = 0.0
+    k[2] = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    return k
+
+
+def _robust_positive_median(values: np.ndarray) -> float | None:
+    if values.size == 0:
+        return None
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return None
+    positive = np.abs(finite)
+    positive = positive[positive > 1e-6]
+    if positive.size == 0:
+        return None
+    return float(np.median(positive))

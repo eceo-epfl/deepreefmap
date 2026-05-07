@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional
 import json
+import logging
 
 import typer
 
@@ -48,7 +49,10 @@ def reconstruct(
     fps: int = typer.Option(10, help="Target processing framerate."),
     segmentation: str = typer.Option("coralscapes-vit-b-dpt", help="Segmentation model name."),
     mapping: str = typer.Option("scsfmlearner", help="3D mapping backend name."),
-    camera_profile: str = typer.Option(..., help="Camera profile name (in camera_profiles)."),
+    camera_profile: str = typer.Option(
+        ...,
+        help="Camera profile name: bundled under deepreefmap or `./camera_profiles/<name>.json` in CWD.",
+    ),
     out: Path = typer.Option(Path("out"), help="Output directory."),
     begin: Optional[float] = typer.Option(None, help="Start timestamp in the concatenated stream (seconds)."),
     end: Optional[float] = typer.Option(None, help="End timestamp in the concatenated stream (seconds)."),
@@ -73,6 +77,13 @@ def reconstruct(
     loger_model_path: Optional[Path] = typer.Option(None, help="LoGeR checkpoint path (defaults to vendored)."),
     loger_window_size: int = typer.Option(32, help="LoGeR window size."),
     loger_overlap_size: int = typer.Option(3, help="LoGeR overlap size."),
+    refine_intrinsics_from_mapper: bool = typer.Option(
+        False,
+        help=(
+            "Allow mapping backend to refine camera intrinsics and override camera profile K for "
+            "downstream 3D reconstruction."
+        ),
+    ),
     scsfmlearner_checkpoint_path: Optional[Path] = typer.Option(
         None,
         help="Optional SC-SfMLearner checkpoint path (.pt containing disp_state_dict and pose_state_dict). Defaults to EPFL-ECEO/deepreefmap-sfm-net/scsfmlearner.pt on Hugging Face Hub.",
@@ -169,13 +180,14 @@ def reconstruct(
         processing_width=processing_width,
         processing_height=processing_height,
         skip_segmentation=skip_segmentation,
+        refine_intrinsics_from_mapper=refine_intrinsics_from_mapper,
     )
 
 
 @app.command("calibrate")
 def calibrate(
     video: Path = typer.Argument(..., exists=True),
-    name: str = typer.Option(..., help="Profile name for camera_profiles/<name>.json"),
+    name: str = typer.Option(..., help="Profile name; writes `./camera_profiles/<name>.json`."),
     n_frames: int = typer.Option(100),
     fps: int = typer.Option(10),
     begin: Optional[float] = typer.Option(None, help="Optional begin timestamp (seconds) for calibration window."),
@@ -194,7 +206,10 @@ def calibrate(
 
 @app.command("verify-calibration")
 def verify_calibration(
-    name: str = typer.Argument(..., help="Camera profile name in camera_profiles."),
+    name: str = typer.Argument(
+        ...,
+        help="Camera profile name (bundled or `./camera_profiles/<name>.json` in CWD).",
+    ),
 ) -> None:
     report = verify_camera_profile(name)
     typer.echo(json.dumps(report, indent=2))
@@ -203,8 +218,27 @@ def verify_calibration(
 @app.command("render-video")
 def render_video(
     run_dir: Path = typer.Option(..., exists=True, help="Run output directory from reconstruct."),
+    transect_length_m: Optional[float] = typer.Option(
+        None,
+        "--transect-length-m",
+        help="Transect length in meters; enables ortho crop (matches viser). Falls back to manifest.",
+    ),
+    crop_width_m: Optional[float] = typer.Option(
+        None,
+        "--crop-width-m",
+        help="Crop width in meters around the transect line. Falls back to manifest.",
+    ),
 ) -> None:
-    render_offline_video_placeholder(run_dir)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    render_offline_video_placeholder(
+        run_dir,
+        transect_length_m=transect_length_m,
+        crop_width_m=crop_width_m,
+    )
     typer.echo(f"Offline render completed in {run_dir}")
 
 
