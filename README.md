@@ -1,7 +1,6 @@
 # DeepReefMap
 
-[DeepReefMap](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.14307) turns reef videos into 3D reconstructions and semantic maps (for example, coral classes overlaid on geometry). It is designed so you can swap segmentation and reconstruction backends while keeping the same command-line workflow.
-
+[DeepReefMap](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.14307) is a software for rapid 3D semantic mapping of coral reefs from handheld cameras. 
 Repository maintained by [Hugues Sibille](https://github.com/HuguesSib) (EPFL) and [Jonathan Sauder](https://josauder.github.io/) (MIT/EPFL).
 
 ## Quick overview
@@ -113,7 +112,7 @@ uv run huggingface-cli login
 
 If your footage is from a GoPro Hero 10 in Linear mode with the GoPro casing setup used by this project, use the built-in profile:
 
-- Camera profile: `gopro_hero_10` (file: `camera_profiles/gopro_hero_10.json`)
+- Camera profile: `gopro_hero_10` (bundled JSON: `deepreefmap/resources/camera_profiles/gopro_hero_10.json`). You can also override or add profiles with `./camera_profiles/<name>.json` in the current working directory.
 
 Example:
 

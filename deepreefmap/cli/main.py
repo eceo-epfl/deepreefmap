@@ -48,7 +48,10 @@ def reconstruct(
     fps: int = typer.Option(10, help="Target processing framerate."),
     segmentation: str = typer.Option("coralscapes-vit-b-dpt", help="Segmentation model name."),
     mapping: str = typer.Option("scsfmlearner", help="3D mapping backend name."),
-    camera_profile: str = typer.Option(..., help="Camera profile name (in camera_profiles)."),
+    camera_profile: str = typer.Option(
+        ...,
+        help="Camera profile name: bundled under deepreefmap or `./camera_profiles/<name>.json` in CWD.",
+    ),
     out: Path = typer.Option(Path("out"), help="Output directory."),
     begin: Optional[float] = typer.Option(None, help="Start timestamp in the concatenated stream (seconds)."),
     end: Optional[float] = typer.Option(None, help="End timestamp in the concatenated stream (seconds)."),
@@ -74,7 +77,7 @@ def reconstruct(
     loger_window_size: int = typer.Option(32, help="LoGeR window size."),
     loger_overlap_size: int = typer.Option(3, help="LoGeR overlap size."),
     refine_intrinsics_from_mapper: bool = typer.Option(
-        True,
+        False,
         help=(
             "Allow mapping backend to refine camera intrinsics and override camera profile K for "
             "downstream 3D reconstruction."
@@ -183,7 +186,7 @@ def reconstruct(
 @app.command("calibrate")
 def calibrate(
     video: Path = typer.Argument(..., exists=True),
-    name: str = typer.Option(..., help="Profile name for camera_profiles/<name>.json"),
+    name: str = typer.Option(..., help="Profile name; writes `./camera_profiles/<name>.json`."),
     n_frames: int = typer.Option(100),
     fps: int = typer.Option(10),
     begin: Optional[float] = typer.Option(None, help="Optional begin timestamp (seconds) for calibration window."),
@@ -202,7 +205,10 @@ def calibrate(
 
 @app.command("verify-calibration")
 def verify_calibration(
-    name: str = typer.Argument(..., help="Camera profile name in camera_profiles."),
+    name: str = typer.Argument(
+        ...,
+        help="Camera profile name (bundled or `./camera_profiles/<name>.json` in CWD).",
+    ),
 ) -> None:
     report = verify_camera_profile(name)
     typer.echo(json.dumps(report, indent=2))
