@@ -48,3 +48,4 @@ camera_profiles/*_diagnostics/
 *.tar.gz
 *.tgz
 *.7z
+demo/
