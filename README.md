@@ -288,6 +288,18 @@ If you use this repository or build on it, please cite DeepReefMap:
 }
 ```
 
+The segmentation models are trained on the [Coralscapes](https://josauder.github.io/coralscapes/) dataset. If you use them, please cite
+
+```bibtex
+@inproceedings{sauder2025coralscapes,
+  title={The Coralscapes Dataset: Semantic scene understanding in coral reefs},
+  author={Sauder, Jonathan and Domazetoski, Viktor and Banc-Prandi, Guilhem and Perna, Gabriela and Meibom, Anders and Tuia, Devis},
+  booktitle={ICCV Joint Workshop on Marine Vision},
+  year={2025}
+}
+}
+```
+
 If you use the **LoGeR** backend (`--mapping loger` or `loger_star`), please also cite:
 
 ```bibtex
