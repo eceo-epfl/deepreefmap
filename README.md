@@ -3,24 +3,61 @@
 [DeepReefMap](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.14307) is a software for rapid 3D semantic mapping of coral reefs from handheld cameras. 
 Repository maintained by [Hugues Sibille](https://github.com/HuguesSib) (EPFL) and [Jonathan Sauder](https://josauder.github.io/) (MIT/EPFL).
 
-## Quick overview
+![DeepReefMap 3D viewer](assets/deepreefmap_view_3d_2x.gif)
+
+## What you get
+
+From one input video, a run produces:
+
+- A semantic 3D point cloud of the reef (`.ply`) - that you can open in Meshlab or CloudCompare.
+- An ortho-mosaic image (`ortho.png`)
+- Benthic cover statistics per class (`benthic_cover.json`)
+- An interactive 3D viewer to inspect the result
+
+## Quickstart
+
+Example input clip (10s GoPro Hero 10, Linear mode):
+
+![Example input clip](assets/demo_input.gif)
+
+Get a first reconstruction running in three commands. This uses the lightest backend (`scsfmlearner`) and the bundled GoPro Hero 10 profile.
+
+```bash
+# 1. Install
+uv sync
+
+# 2. Run a reconstruction
+uv run deepreefmap reconstruct \
+  --videos assets/demo_input.mp4 \
+  --camera-profile gopro_hero_10 \
+  --mapping scsfmlearner \
+  --out out \
+  --viser
+
+# 3. Reopen the interactive viewer later
+uv run deepreefmap view-run --run-dir out --viser-port 8080
+```
+
+Don't have a GoPro Hero 10? See [Camera setup](#camera-setup-and-calibration) to calibrate your own. 
+Want better quality? See the [LoGeR backend](#loger-higher-quality-more-setup).
+
+## How it works
 
 At a high level, a run does four things:
 
-1. Read one or more videos in order.
-2. Rectify frames using a camera profile.
-3. Run semantic segmentation and depth/pose reconstruction.
-4. Export point clouds, ortho products, and reports.
+1. Reads one or more videos in order.
+2. Rectifies frames using a camera profile.
+3. Runs semantic segmentation and depth/pose reconstruction.
+4. Exports point clouds, ortho products, and reports.
 
-## Installation and minimum setup
-
-### Base install
-
-Requirements:
+## Requirements
 
 - Python 3.10, 3.11, or 3.12
-- `uv`
-- FFmpeg-compatible video support (`imageio[ffmpeg]`)
+- `[uv](https://docs.astral.sh/uv/)` for dependency management
+- FFmpeg (pulled in via `imageio[ffmpeg]`)
+- **GPU**: strongly recommended. CPU-only runs work with `scsfmlearner` but are slow. The `loger` / `loger_star` backends require CUDA.
+
+## Installation
 
 ```bash
 uv sync
@@ -66,11 +103,8 @@ Install dependencies and initialize submodule:
 ```bash
 git submodule update --init --recursive
 uv sync --extra loger
-```
 
-Download required LoGeR checkpoints:
-
-```bash
+# Download checkpoints
 curl -L -C - "https://huggingface.co/Junyi42/LoGeR/resolve/main/LoGeR/latest.pt?download=true" \
   -o third_party/LoGeR/ckpts/LoGeR/latest.pt
 curl -L -C - "https://huggingface.co/Junyi42/LoGeR/resolve/main/LoGeR_star/latest.pt?download=true" \
@@ -87,20 +121,19 @@ uv run deepreefmap reconstruct \
   --out out_loger \
 ```
 
+- **DINOv3-based** (`coralscapes-vit-*-dpt`): higher quality, **requires Hugging Face authentication** (gated models).
+- **SegFormer**: lighter and faster, no authentication needed.
 
-
-### DINOv3 segmentation models (access + authentication)
-
-The DINOv3-based segmentation models are higher quality than SegFormer models, but you need access/authentication on Hugging Face.
-
-1. Request access to gated model assets by following Hugging Face gated model instructions: [https://huggingface.co/docs/hub/models-gated](https://huggingface.co/docs/hub/models-gated)
-2. Authenticate locally:
+Select with `--segmentation <model_name>`. List all available models:
 
 ```bash
-uv run python -c "from huggingface_hub import login; login()"
+uv run deepreefmap list-models
 ```
 
-Or with CLI:
+### Using DINOv3 models (authentication)
+
+1. Request access on Hugging Face: see [gated model docs](https://huggingface.co/docs/hub/models-gated).
+2. Authenticate locally:
 
 ```bash
 uv run huggingface-cli login
@@ -119,17 +152,21 @@ Example:
 ```bash
 uv run deepreefmap reconstruct \
   --videos GX010001.MP4 \
-  --fps 10 \
+  --segmentation coralscapes-vit-b-dpt \
   --camera-profile gopro_hero_10 \
   --mapping scsfmlearner \
-  --out out_gopro
+  --out out
 ```
 
-### Different camera or lens setup
+## Camera setup and calibration
 
-If your camera/lens setup is different, create your own profile first.
+### Bundled profile: GoPro Hero 10 (Linear mode, GoPro casing)
 
-Calibration command:
+If your footage matches this setup, use `--camera-profile gopro_hero_10` (bundled at `deepreefmap/resources/camera_profiles/gopro_hero_10.json`). You can also drop your own profile at `./camera_profiles/<name>.json` in the working directory.
+
+### Calibrating a different camera
+
+Run a calibration clip through the built-in COLMAP-based calibrator:
 
 ```bash
 uv run deepreefmap calibrate /path/to/new_video.mp4 \
@@ -140,72 +177,64 @@ uv run deepreefmap calibrate /path/to/new_video.mp4 \
   --end 120.0
 ```
 
-Practical guidance for better calibration:
+Tips for a good calibration:
 
-- Use a clip with strong camera translation (moving through the scene), not mostly rotation.
-- Use `--begin` and `--end` to trim to the clearest section.
-- This calibration uses COLMAP under the hood, and COLMAP is more reliable when frames have strong parallax from translation.
+- Pick a clip with **strong camera translation** (moving through the scene), not mostly rotation — COLMAP needs parallax.
+- Use `--begin` / `--end` to trim to the cleanest section.
 
-Validate the profile:
+Validate, then use it:
 
 ```bash
 uv run deepreefmap verify-calibration my_new_camera
-```
 
-Run reconstruction with the new profile:
-
-```bash
 uv run deepreefmap reconstruct \
   --videos /path/to/new_video.mp4 \
-  --fps 10 \
   --camera-profile my_new_camera \
   --mapping loger \
   --out out_new_camera
 ```
 
-## Segmentation models
+## Outputs
 
-DeepReefMap supports both SegFormer and DINOv3-based segmentation backends.
+Each run writes:
 
-- DINOv3-based models (`coralscapes-vit-*-dpt`) are higher quality.
-- SegFormer models are still available for lighter/faster workflows.
-- Default segmentation model is `coralscapes-vit-b-dpt`.
+- `frames/`, `labels/`, `masks/` — rectified frames, semantic labels, keep masks.
+- `mapping_outputs.npz` — depth, poses, intrinsics, confidence, frame indices.
+- `semantic_reference_cloud.ply` — filtered semantic point cloud.
+- `tsdf_cloud.ply`, `semantic_tsdf_cloud.ply` — when `--tsdf` is enabled.
+- `ortho.png`, `ortho.npz` — aggregated ortho products.
+- `benthic_cover.json` — class counts and cover fractions.
+- `geometry_cloud.ply` — geometry-only cloud (when `--skip-segmentation`).
+- `run_manifest.json` — canonical run manifest (`semantic` or `geometry_only`).
 
-## CLI commands
+## Interactive viewer (viser)
 
-List available models and camera profiles:
+Live during reconstruction with `--viser`, or open an existing run:
 
 ```bash
-uv run deepreefmap list-models
-uv run deepreefmap list-profiles
+uv run deepreefmap view-run --run-dir out --viser-port 8080
 ```
 
-Main reconstruction flow:
+In the viewer you can:
+
+- Click a camera frustum to jump to that point in the timeline.
+- Inspect RGB, segmentation, and depth per frame.
+- Toggle class visibility and switch between RGB and semantic colors.
+- Use **Accumulate** to overlay filtered points up to the current timeline index.
+
+## CLI reference
 
 ```bash
-uv run deepreefmap reconstruct \
-  --videos GX010001.MP4,GX020001.MP4 \
-  --fps 10 \
-  --segmentation coralscapes-vit-b-dpt \
-  --mapping scsfmlearner \
-  --camera-profile gopro_hero_10 \
-  --processing-width 1376 \
-  --processing-height 768 \
-  --out out \
-  --viser \
-  --tsdf
-```
-
-Other commands:
-
-```bash
-uv run deepreefmap calibrate VIDEO.mp4 --name <profile_name> --n-frames 100 --fps 10 --begin 12.0 --end 72.0
-uv run deepreefmap verify-calibration <profile_name>
+uv run deepreefmap list-models           # available segmentation + mapping models
+uv run deepreefmap list-profiles         # available camera profiles
+uv run deepreefmap reconstruct ...       # main pipeline
+uv run deepreefmap calibrate VIDEO ...   # camera calibration via COLMAP
+uv run deepreefmap verify-calibration NAME
 uv run deepreefmap render-video --run-dir out
 uv run deepreefmap view-run --run-dir out --viser-port 8080
 ```
 
-Useful reconstruction flags:
+Useful `reconstruct` flags:
 
 - `--grid-bins`: ortho aggregation resolution.
 - `--keep-viser-open` / `--no-keep-viser-open`: keep viewer running after processing.
@@ -242,10 +271,9 @@ Viewer highlights:
 - Toggle class visibility and switch color mode (RGB vs semantic colors).
 - Use `Accumulate` to overlay filtered points up to current timeline index.
 
-
 ## Citation
 
-If you use this repository or build on it, please cite:
+If you use this repository or build on it, please cite DeepReefMap:
 
 ```bibtex
 @article{sauder2024scalable,
@@ -260,9 +288,37 @@ If you use this repository or build on it, please cite:
 }
 ```
 
+The segmentation models are trained on the [Coralscapes](https://josauder.github.io/coralscapes/) dataset. If you use them, please cite
+
+```bibtex
+@inproceedings{sauder2025coralscapes,
+  title={The Coralscapes Dataset: Semantic scene understanding in coral reefs},
+  author={Sauder, Jonathan and Domazetoski, Viktor and Banc-Prandi, Guilhem and Perna, Gabriela and Meibom, Anders and Tuia, Devis},
+  booktitle={ICCV Joint Workshop on Marine Vision},
+  year={2025}
+}
+```
+
+If you use the **LoGeR** backend (`--mapping loger` or `loger_star`), please also cite:
+
+```bibtex
+@article{zhang2026loger,
+  title={LoGeR: Long-Context Geometric Reconstruction with Hybrid Memory},
+  author={Zhang, Junyi and Herrmann, Charles and Hur, Junhwa and Sun, Chen and Yang, Ming-Hsuan and Cole, Forrester and Darrell, Trevor and Sun, Deqing},
+  journal={arXiv preprint arXiv:2603.03269},
+  year={2026}
+}
+```
+
+## Acknowledgements
+
+DeepReefMap builds on:
+
+- [LoGeR](https://github.com/Junyi42/LoGeR) by Zhang et al. — high-quality reconstruction backend.
+- [viser](https://github.com/nerfstudio-project/viser) — interactive 3D viewer.
+
 ## License
 
 DeepReefMap is licensed under the [Apache License 2.0](LICENSE).
 
 Vendored or optional third-party components (notably `third_party/LoGeR` and downloaded checkpoints) carry their own terms; see `THIRD_PARTY_NOTICES.md` before redistribution.
-
