@@ -297,7 +297,6 @@ The segmentation models are trained on the [Coralscapes](https://josauder.github
   booktitle={ICCV Joint Workshop on Marine Vision},
   year={2025}
 }
-}
 ```
 
 If you use the **LoGeR** backend (`--mapping loger` or `loger_star`), please also cite:
