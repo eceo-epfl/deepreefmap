@@ -3,9 +3,7 @@
 [DeepReefMap](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.14307) is a software for rapid 3D semantic mapping of coral reefs from handheld cameras. 
 Repository maintained by [Hugues Sibille](https://github.com/HuguesSib) (EPFL) and [Jonathan Sauder](https://josauder.github.io/) (MIT/EPFL).
 
-<video src="assets/deepreefmap_view_3d_2x.mp4" controls width="720" muted loop>
-  <a href="assets/deepreefmap_view_3d_2x.mp4">Watch the demo video</a>
-</video>
+![DeepReefMap 3D viewer](assets/deepreefmap_view_3d_2x.gif)
 
 ## What you get
 
@@ -20,9 +18,7 @@ From one input video, a run produces:
 
 Example input clip (10s GoPro Hero 10, Linear mode):
 
-<video src="assets/demo_input.mp4" controls width="720" muted loop>
-  <a href="assets/demo_input.mp4">Download example input clip</a>
-</video>
+![Example input clip](assets/demo_input.gif)
 
 Get a first reconstruction running in three commands. This uses the lightest backend (`scsfmlearner`) and the bundled GoPro Hero 10 profile.
 
@@ -41,8 +37,6 @@ uv run deepreefmap reconstruct \
 # 3. Reopen the interactive viewer later
 uv run deepreefmap view-run --run-dir out --viser-port 8080
 ```
-
-![DeepReefMap demo](assets/demo.gif)
 
 Don't have a GoPro Hero 10? See [Camera setup](#camera-setup-and-calibration) to calibrate your own. 
 Want better quality? See the [LoGeR backend](#loger-higher-quality-more-setup).
