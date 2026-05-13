@@ -53,7 +53,7 @@ At a high level, a run does four things:
 ## Requirements
 
 - Python 3.10, 3.11, or 3.12
-- `[uv](https://docs.astral.sh/uv/)` for dependency management
+- [`uv`](https://docs.astral.sh/uv/) for dependency management
 - FFmpeg (pulled in via `imageio[ffmpeg]`)
 - **GPU**: strongly recommended. CPU-only runs work with `scsfmlearner` but are slow. The `loger` / `loger_star` backends require CUDA.
 
