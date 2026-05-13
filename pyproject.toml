@@ -28,7 +28,7 @@ dependencies = [
   "pyyaml>=6.0.2",
   "scikit-learn>=1.5.0",
   "open3d>=0.18.0",
-  "transformers>=5.8.0",
+  "transformers>=5.8.1",
   "huggingface_hub>=1.14.0",
   # Keep PyTorch on CUDA 12.1 wheels for the workstation's NVIDIA 535 driver
   # (CUDA 12.2). Newer torch releases may resolve to cu130 and fail CUDA init.
@@ -60,7 +60,7 @@ gopro = [
   "py-gpmf-parser>=0.1.1,<0.2.0; sys_platform == 'linux' and platform_machine == 'x86_64'"
 ]
 train = ["wandb>=0.20.0", "tensorboard>=2.18.0"]
-dev = ["pytest>=8.4.0", "ruff>=0.12.0", "mypy>=2.0.0"]
+dev = ["pytest>=8.4.0", "ruff>=0.12.0", "mypy>=2.1.0"]
 
 [project.urls]
 Repository = "https://github.com/EPFL-ECEO/deepreefmap"
