@@ -27,8 +27,6 @@ from deepreefmap.postproc.ortho_outputs import TransectCropParams, build_ortho_o
 from deepreefmap.postproc.reports import save_cover_report, save_run_manifest
 from deepreefmap.segmentation.registry import create_segmentation_model
 from deepreefmap.telemetry.gopro import extract_gravity_vectors_for_video_selection
-from deepreefmap.visualization.viser_app import ViserLiveApp
-from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
 from deepreefmap.pointcloud.unprojection import depth_to_points
 
 logger = logging.getLogger(__name__)
@@ -43,7 +41,7 @@ def run_reconstruction(
     output_dir: Path,
     transect_length: float | None,
     transect_crop_width: float | None,
-    enable_viser: bool,
+    enable_viser: bool = False,
     viser_port: int = 8080,
     enable_tsdf: bool = False,
     replacement_radius_factor: float | None = None,
@@ -54,13 +52,14 @@ def run_reconstruction(
     mapping_options: dict[str, object] | None = None,
     classes_path: Path = DEFAULT_CLASSES_PATH,
     grid_bins: int = 2000,
-    keep_viser_open: bool = True,
+    keep_viser_open: bool = False,
     require_gravity_telemetry: bool = False,
     preprocess_batch_size: int = 4,
     processing_width: int | None = None,
     processing_height: int | None = None,
     skip_segmentation: bool = False,
     refine_intrinsics_from_mapper: bool = False,
+    viewer: object | None = None,
 ) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -71,17 +70,6 @@ def run_reconstruction(
 
     logger.info("Loading classes from %s", classes_path)
     classes_config = load_classes(classes_path)
-    if enable_viser:
-        if skip_segmentation:
-            viewer = SimpleGeometryViserApp(port=viser_port)
-        else:
-            viewer = ViserLiveApp(
-                class_colors=classes_config.id_to_color,
-                class_names=classes_config.id_to_name,
-                port=viser_port,
-            )
-    else:
-        viewer = None
     if viewer is not None:
         viewer.start_run(run_label="DeepReefMap reconstruction", output_dir=str(output_dir))
         viewer.set_stage("startup", "running", "Loading camera + segmentation + mapping backends")

@@ -7,16 +7,32 @@ import typer
 
 from deepreefmap.camera.colmap_calibration import calibrate_camera_profile, verify_camera_profile
 from deepreefmap.pipeline.orchestrator import run_reconstruction
-from deepreefmap.pipeline.run_loader import load_cached_run
-from deepreefmap.pointcloud.filters import PointFilterConfig
 from deepreefmap.postproc.reports import render_offline_video_placeholder
 from deepreefmap.segmentation.registry import list_segmentation_models
 from deepreefmap.mapping.registry import list_mapping_backends
 from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR, available_profile_names
-from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
-from deepreefmap.visualization.viser_app import ViserLiveApp
 
 app = typer.Typer(help="DeepReefMap command line interface")
+
+
+@app.callback(invoke_without_command=True)
+def _default(
+    ctx: typer.Context,
+) -> None:
+    """When invoked with no subcommand, start the native Qt launcher."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from deepreefmap.launcher.qt_app import launch
+
+    launch()
+
+
+@app.command("launch")
+def launch_command() -> None:
+    """Start the native Qt desktop launcher."""
+    from deepreefmap.launcher.qt_app import launch
+
+    launch()
 
 
 def _available_profiles() -> list[str]:
@@ -59,8 +75,6 @@ def reconstruct(
     transect_length: Optional[float] = typer.Option(None, help="Transect length in meters."),
     transect_crop_width: Optional[float] = typer.Option(None, help="Crop width around transect in meters."),
     classes: Path = typer.Option(Path("configs/classes_coralscapes.yaml"), help="Classes YAML with class roles and colors."),
-    viser: bool = typer.Option(False, help="Enable viser visualization."),
-    viser_port: int = typer.Option(8080, help="Port for viser visualization server."),
     tsdf: bool = typer.Option(False, help="Enable optional TSDF fusion output."),
     replacement_radius_factor: Optional[float] = typer.Option(
         None,
@@ -97,10 +111,6 @@ def reconstruct(
         help="SC-SfMLearner mapping height (independent of global processing height).",
     ),
     grid_bins: int = typer.Option(2000, help="Number of bins used to build the ortho grid."),
-    keep_viser_open: bool = typer.Option(
-        True,
-        help="Keep viser open after outputs are generated.",
-    ),
     require_gravity_telemetry: bool = typer.Option(
         False,
         help="Fail reconstruction if gravity telemetry cannot be loaded/aligned.",
@@ -120,7 +130,7 @@ def reconstruct(
     skip_segmentation: bool = typer.Option(
         False,
         "--skip-segmentation",
-        help="Skip segmentation entirely. Produces only the 3D reconstruction (geometry cloud + poses + depths) and runs a minimal viser app.",
+        help="Skip segmentation entirely. Produces only the 3D reconstruction (geometry cloud + poses + depths).",
     ),
 ) -> None:
     if camera_profile not in _available_profiles():
@@ -165,8 +175,6 @@ def reconstruct(
         end_s=end,
         transect_length=transect_length,
         transect_crop_width=transect_crop_width,
-        enable_viser=viser,
-        viser_port=viser_port,
         enable_tsdf=tsdf,
         replacement_radius_factor=replacement_radius_factor,
         replacement_radius_estimation_frames=replacement_radius_estimation_frames,
@@ -174,7 +182,6 @@ def reconstruct(
         mapping_options=mapping_options,
         classes_path=classes,
         grid_bins=grid_bins,
-        keep_viser_open=keep_viser_open,
         require_gravity_telemetry=require_gravity_telemetry,
         preprocess_batch_size=preprocess_batch_size,
         processing_width=processing_width,
@@ -221,7 +228,7 @@ def render_video(
     transect_length_m: Optional[float] = typer.Option(
         None,
         "--transect-length-m",
-        help="Transect length in meters; enables ortho crop (matches viser). Falls back to manifest.",
+        help="Transect length in meters; enables ortho crop. Falls back to manifest.",
     ),
     crop_width_m: Optional[float] = typer.Option(
         None,
@@ -245,111 +252,8 @@ def render_video(
 @app.command("view-run")
 def view_run(
     run_dir: Path = typer.Option(..., exists=True, file_okay=False, help="Run output directory from reconstruct."),
-    viser_port: int = typer.Option(8080, help="Port for viser visualization server."),
-    json_output: bool = typer.Option(False, "--json", help="Print a structured readiness event before blocking."),
-    replacement_radius_factor: Optional[float] = typer.Option(
-        None,
-        help="Multiplier on the auto replacement radius used when rebuilding the semantic cloud.",
-    ),
-    replacement_radius_estimation_frames: int = typer.Option(
-        30,
-        help="Number of leading depth maps used to estimate the default replacement radius.",
-    ),
-    replacement_radius_override: Optional[float] = typer.Option(
-        None,
-        help="Absolute replacement voxel size in meters for the rebuilt semantic cloud.",
-    ),
-    ortho_bins: int = typer.Option(1000, help="Bins used for the interactive ortho preview."),
 ) -> None:
-    try:
-        loaded = load_cached_run(
-            run_dir,
-            point_filter_config=PointFilterConfig(
-                replacement_radius_factor=1.0 if replacement_radius_factor is None else replacement_radius_factor,
-                replacement_radius_estimation_frames=replacement_radius_estimation_frames,
-                replacement_radius_override=replacement_radius_override,
-            ),
-        )
-    except (OSError, RuntimeError, ValueError) as exc:
-        typer.echo(f"Failed to load cached run: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+    """Open a cached reconstruction in the native Qt viewer."""
+    from deepreefmap.launcher.qt_app import launch
 
-    if loaded.mode == "geometry_only":
-        if loaded.geometry_xyz is None or loaded.geometry_rgb is None:
-            typer.echo("Geometry-only run is missing geometry_cloud.ply payload.", err=True)
-            raise typer.Exit(code=1)
-        geometry_viewer = SimpleGeometryViserApp(port=viser_port)
-        if not geometry_viewer.enabled:
-            reason = getattr(geometry_viewer, "startup_error", None)
-            suffix = f": {reason}" if reason else ""
-            typer.echo(f"Failed to start viser server on port {viser_port}{suffix}", err=True)
-            raise typer.Exit(code=1)
-        try:
-            geometry_viewer.start_run(run_label="DeepReefMap cached run", output_dir=str(loaded.run_dir))
-            geometry_viewer.set_stage("preprocess", "completed", f"Loaded {len(loaded.frame_batch.frames)} cached frames")
-            geometry_viewer.set_stage("mapping", "completed", "Loaded mapping_outputs.npz")
-            geometry_viewer.set_stage("outputs", "completed", f"Loaded {int(loaded.geometry_xyz.shape[0])} geometry points")
-            geometry_viewer.set_data(
-                frame_batch=loaded.frame_batch,
-                mapping_result=loaded.mapping_result,
-                geometry_xyz=loaded.geometry_xyz,
-                geometry_rgb=loaded.geometry_rgb,
-            )
-            geometry_viewer.mark_outputs_ready(str(loaded.run_dir), loaded.output_files)
-            if json_output:
-                typer.echo(json.dumps({
-                    "status": "ready",
-                    "run_dir": str(loaded.run_dir),
-                    "port": viser_port,
-                    "url": f"http://localhost:{viser_port}",
-                    "frames": len(loaded.frame_batch.frames),
-                    "geometry_points": int(loaded.geometry_xyz.shape[0]),
-                    "mode": loaded.mode,
-                    "output_files": loaded.output_files,
-                }))
-            else:
-                typer.echo(f"Viewing cached geometry-only run in {run_dir}. Press Ctrl-C to close viser.")
-            geometry_viewer.wait_forever()
-        finally:
-            geometry_viewer.close()
-        return
-
-    viewer = ViserLiveApp(
-        class_colors=loaded.classes_config.id_to_color,
-        class_names=loaded.classes_config.id_to_name,
-        port=viser_port,
-    )
-    if not viewer.enabled:
-        reason = getattr(viewer, "startup_error", None)
-        suffix = f": {reason}" if reason else ""
-        typer.echo(f"Failed to start viser server on port {viser_port}{suffix}", err=True)
-        raise typer.Exit(code=1)
-    try:
-        viewer.start_run(run_label="DeepReefMap cached run", output_dir=str(loaded.run_dir))
-        viewer.set_stage("preprocess", "completed", f"Loaded {len(loaded.frame_batch.frames)} cached frames")
-        viewer.set_stage("mapping", "completed", "Loaded mapping_outputs.npz")
-        viewer.set_stage("outputs", "completed", f"Loaded {len(loaded.reference_cloud)} semantic points")
-        viewer.set_data(
-            frame_batch=loaded.frame_batch,
-            mapping_result=loaded.mapping_result,
-            reference_cloud=loaded.reference_cloud,
-            classes_config=loaded.classes_config,
-            ortho_bins=ortho_bins,
-        )
-        viewer.mark_outputs_ready(str(loaded.run_dir), loaded.output_files)
-        if json_output:
-            typer.echo(json.dumps({
-                "status": "ready",
-                "run_dir": str(loaded.run_dir),
-                "port": viser_port,
-                "url": f"http://localhost:{viser_port}",
-                "frames": len(loaded.frame_batch.frames),
-                "semantic_points": len(loaded.reference_cloud),
-                "ortho_bins": ortho_bins,
-                "output_files": loaded.output_files,
-            }))
-        else:
-            typer.echo(f"Viewing cached run in {run_dir}. Press Ctrl-C to close viser.")
-        viewer.wait_forever()
-    finally:
-        viewer.close()
+    launch(view_run_dir=run_dir)

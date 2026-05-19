@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -e
+
+rm -f dist/*.whl dist/*.tar.gz
+uv build
+
+WHEEL=$(ls dist/deepreefmap-*-py3-none-any.whl)
+VERSION=${WHEEL#dist/deepreefmap-}; VERSION=${VERSION%-py3-none-any.whl}
+
+# Clone PyApp source and patch it so install output streams to the terminal
+# (stock PyApp pipes pip/uv output into a spinner and hides it; we want users
+# to see real progress during the ~5-15 minute first-run install).
+PYAPP_VER=v0.29.0
+PYAPP_DIR=/tmp/pyapp-${PYAPP_VER}
+if [ ! -d "$PYAPP_DIR" ]; then
+  git clone --depth=1 --branch "$PYAPP_VER" https://github.com/ofek/pyapp.git "$PYAPP_DIR"
+fi
+cat > "$PYAPP_DIR/src/process.rs" <<'RUST'
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+use std::process::exit;
+use std::process::{Command, ExitStatus};
+
+use anyhow::Result;
+
+use crate::app;
+
+pub fn wait_for(mut command: Command, message: String) -> Result<(ExitStatus, String)> {
+    eprintln!("==> {}", message);
+    let mut child = command.spawn()?;
+    let status = child.wait()?;
+    Ok((status, String::new()))
+}
+
+#[cfg(unix)]
+pub fn exec(mut command: Command) -> Result<()> {
+    if app::is_gui() {
+        exec_gui(command)
+    } else {
+        Err(command.exec().into())
+    }
+}
+
+#[cfg(windows)]
+pub fn exec(mut command: Command) -> Result<()> {
+    if app::is_gui() {
+        exec_gui(command)
+    } else {
+        let status = command.status()?;
+        exit(status.code().unwrap_or(1));
+    }
+}
+
+fn exec_gui(mut command: Command) -> Result<()> {
+    let mut child = command.spawn()?;
+    match child.try_wait() {
+        Ok(Some(status)) => exit(status.code().unwrap_or(1)),
+        Ok(None) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+RUST
+
+PYAPP_PROJECT_NAME=deepreefmap \
+PYAPP_PROJECT_VERSION="$VERSION" \
+PYAPP_PROJECT_PATH="$PWD/$WHEEL" \
+PYAPP_EXEC_SPEC="deepreefmap.cli.main:app" \
+PYAPP_PYTHON_VERSION=3.11 \
+PYAPP_FULL_ISOLATION=1 \
+PYAPP_UV_ENABLED=1 \
+PYAPP_PASS_LOCATION=1 \
+cargo install --path "$PYAPP_DIR" --force --root /tmp/pyapp-builder
+
+cp /tmp/pyapp-builder/bin/pyapp dist/deepreefmap-linux-x64
+dist/deepreefmap-linux-x64 self remove 2>/dev/null || true
