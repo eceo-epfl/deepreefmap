@@ -8,7 +8,7 @@ import sys
 import threading
 from pathlib import Path
 from PySide6.QtCore import QSettings, QSize, QStandardPaths, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QPixmap, QSurfaceFormat
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPixmap, QSurfaceFormat
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -2834,6 +2834,9 @@ def launch(classes_path: Path | None = None, view_run_dir: Path | None = None) -
     fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
     QSurfaceFormat.setDefaultFormat(fmt)
     qt_app = QApplication.instance() or QApplication(sys.argv)
+    from importlib import resources
+    icon_path = resources.files("deepreefmap.resources").joinpath("icon.png")
+    qt_app.setWindowIcon(QIcon(str(icon_path)))
     classes_config = load_classes(classes_path)
     window = DeepReefMapWindow(classes_config, classes_path)
     window.show()
