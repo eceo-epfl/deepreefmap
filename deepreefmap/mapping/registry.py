@@ -1,9 +1,10 @@
-from pathlib import Path
-from typing import Any
+from __future__ import annotations
 
-from deepreefmap.mapping.base import MappingBackend
-from deepreefmap.mapping.loger_backend import LoGeRBackend
-from deepreefmap.mapping.scsfmlearner_backend import SCSfMLearnerBackend
+from pathlib import Path
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from deepreefmap.mapping.base import MappingBackend
 
 
 _BACKENDS: tuple[str, ...] = ("scsfmlearner", "loger", "loger_star")
@@ -22,6 +23,9 @@ def _loger_star_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
 
 
 def create_mapping_backend(name: str, **kwargs: Any) -> MappingBackend:
+    from deepreefmap.mapping.loger_backend import LoGeRBackend
+    from deepreefmap.mapping.scsfmlearner_backend import SCSfMLearnerBackend
+
     if name not in _BACKENDS:
         raise ValueError(f"Unsupported mapping backend: {name}")
     if name == "scsfmlearner":

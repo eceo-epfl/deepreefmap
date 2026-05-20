@@ -1,23 +1,12 @@
+from __future__ import annotations
+
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
-from deepreefmap.segmentation.base import SegmentationModel, SegmentationOutput
-from deepreefmap.segmentation.dinov3_dpt import DinoV3DPTWrapper
-from deepreefmap.segmentation.segformer import SegformerWrapper
 
-
-class _DummySegmentation(SegmentationModel):
-    def __init__(self, name: str, resolution: tuple[int, int]) -> None:
-        self.name = name
-        self.default_resolution = resolution
-
-    def predict(self, image_rgb: np.ndarray) -> SegmentationOutput:
-        h, w = image_rgb.shape[:2]
-        labels = np.zeros((h, w), dtype=np.uint8)
-        return SegmentationOutput(labels=labels)
-
-    def predict_batch(self, images_rgb: Sequence[np.ndarray]) -> list[SegmentationOutput]:
-        return [self.predict(image_rgb) for image_rgb in images_rgb]
+if TYPE_CHECKING:
+    from deepreefmap.segmentation.base import SegmentationModel
 
 
 _MODELS: dict[str, tuple[int, int]] = {
@@ -30,6 +19,23 @@ _MODELS: dict[str, tuple[int, int]] = {
 
 
 def create_segmentation_model(name: str) -> SegmentationModel:
+    from deepreefmap.segmentation.base import SegmentationModel, SegmentationOutput
+    from deepreefmap.segmentation.dinov3_dpt import DinoV3DPTWrapper
+    from deepreefmap.segmentation.segformer import SegformerWrapper
+
+    class _DummySegmentation(SegmentationModel):
+        def __init__(self, name: str, resolution: tuple[int, int]) -> None:
+            self.name = name
+            self.default_resolution = resolution
+
+        def predict(self, image_rgb: np.ndarray) -> SegmentationOutput:
+            h, w = image_rgb.shape[:2]
+            labels = np.zeros((h, w), dtype=np.uint8)
+            return SegmentationOutput(labels=labels)
+
+        def predict_batch(self, images_rgb: Sequence[np.ndarray]) -> list[SegmentationOutput]:
+            return [self.predict(image_rgb) for image_rgb in images_rgb]
+
     if name not in _MODELS:
         raise ValueError(f"Unsupported segmentation model: {name}")
     if name == "segformer-b2":

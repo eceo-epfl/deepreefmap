@@ -200,17 +200,23 @@ class DeepReefMapWindow(QMainWindow):
         layout.addWidget(self._map_combo)
 
         layout.addWidget(QLabel("Output root"))
-        root_row = QHBoxLayout()
         self._out_root_input = QLineEdit(default_root)
-        root_row.addWidget(self._out_root_input, 1)
+        layout.addWidget(self._out_root_input)
+        root_btn_row = QHBoxLayout()
+        root_btn_row.setContentsMargins(0, 0, 0, 0)
         root_browse_btn = QPushButton("Browse")
         root_browse_btn.clicked.connect(self._browse_output_root)
-        root_row.addWidget(root_browse_btn)
+        root_btn_row.addWidget(root_browse_btn)
         root_open_btn = QPushButton("Open")
         root_open_btn.setToolTip("Open the output root folder in the system file manager")
         root_open_btn.clicked.connect(self._open_output_root)
-        root_row.addWidget(root_open_btn)
-        layout.addLayout(root_row)
+        root_btn_row.addWidget(root_open_btn)
+        root_default_btn = QPushButton("Default")
+        root_default_btn.setToolTip("Reset to <Documents>/DeepReefMap")
+        root_default_btn.clicked.connect(self._reset_output_root_to_default)
+        root_btn_row.addWidget(root_default_btn)
+        root_btn_row.addStretch(1)
+        layout.addLayout(root_btn_row)
 
         layout.addWidget(QLabel("Run name"))
         self._run_name_input = QLineEdit(datetime.now().strftime("%Y%m%d-%H%M%S"))
@@ -439,8 +445,16 @@ class DeepReefMapWindow(QMainWindow):
         self._recompute_submit_state()
 
         last_run = self._settings.value("last_run_dir", "", type=str)
-        if last_run and (Path(last_run) / "run_manifest.json").exists():
-            QTimer.singleShot(0, lambda: self._auto_load_run(Path(last_run)))
+        if last_run:
+            last_run_path = Path(last_run)
+            manifest_ok = (last_run_path / "run_manifest.json").exists()
+            mapping_ok = (last_run_path / "mapping_outputs.npz").exists()
+            if manifest_ok and mapping_ok:
+                QTimer.singleShot(0, lambda: self._auto_load_run(last_run_path))
+            else:
+                # Stale or half-finished run — forget it silently so the next
+                # startup is clean.
+                self._settings.remove("last_run_dir")
         layout.addWidget(models_group)
         threading.Thread(target=self._refresh_model_status, daemon=True).start()
 
@@ -900,6 +914,11 @@ class DeepReefMapWindow(QMainWindow):
         root = Path(self._out_root_input.text()).expanduser()
         root.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(root)))
+
+    def _reset_output_root_to_default(self) -> None:
+        documents = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+        default = str(Path(documents or str(Path.home())) / "DeepReefMap")
+        self._out_root_input.setText(default)
 
     @staticmethod
     def _sanitize_run_name(name: str) -> str:
