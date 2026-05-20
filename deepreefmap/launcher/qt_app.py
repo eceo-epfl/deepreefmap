@@ -280,6 +280,35 @@ class DeepReefMapWindow(QMainWindow):
         self._fps_spin.setValue(10)
         layout.addWidget(self._fps_spin)
 
+        # Begin/end timestamps in seconds. Max range is filled in once a video
+        # is picked via Browse and we probe its duration with cv2.
+        range_row = QHBoxLayout()
+        range_row.setContentsMargins(0, 0, 0, 0)
+        begin_col = QVBoxLayout()
+        begin_col.setContentsMargins(0, 0, 0, 0)
+        begin_col.addWidget(QLabel("Begin (s)"))
+        self._begin_spin = QDoubleSpinBox()
+        self._begin_spin.setDecimals(2)
+        self._begin_spin.setRange(0.0, 1e9)
+        self._begin_spin.setSingleStep(1.0)
+        self._begin_spin.setValue(0.0)
+        begin_col.addWidget(self._begin_spin)
+        range_row.addLayout(begin_col, 1)
+
+        end_col = QVBoxLayout()
+        end_col.setContentsMargins(0, 0, 0, 0)
+        end_col.addWidget(QLabel("End (s)"))
+        self._end_spin = QDoubleSpinBox()
+        self._end_spin.setDecimals(2)
+        self._end_spin.setRange(0.0, 1e9)
+        self._end_spin.setSingleStep(1.0)
+        self._end_spin.setValue(0.0)
+        end_col.addWidget(self._end_spin)
+        range_row.addLayout(end_col, 1)
+        layout.addLayout(range_row)
+
+        self._video_duration_s: float | None = None
+
         self._advanced_toggle = QCheckBox("Advanced settings")
         self._advanced_toggle.toggled.connect(self._on_advanced_toggled)
         layout.addWidget(self._advanced_toggle)
@@ -478,6 +507,7 @@ class DeepReefMapWindow(QMainWindow):
         self._map_combo.currentTextChanged.connect(self._on_required_models_changed)
         self._skip_seg_check.toggled.connect(self._on_required_models_changed)
         self._video_input.textChanged.connect(self._recompute_submit_state)
+        self._video_input.editingFinished.connect(self._on_video_input_committed)
         self._out_root_input.textChanged.connect(self._on_output_root_changed)
         self._run_name_input.textChanged.connect(self._on_run_name_changed)
 
@@ -489,6 +519,7 @@ class DeepReefMapWindow(QMainWindow):
         last_video = self._settings.value("last_video_path", "", type=str)
         if last_video and Path(last_video).exists():
             self._video_input.setText(last_video)
+            self._auto_probe_video_duration(last_video)
         saved_root = self._settings.value("output_root_dir", "", type=str)
         if saved_root:
             self._out_root_input.setText(saved_root)
@@ -1007,6 +1038,25 @@ class DeepReefMapWindow(QMainWindow):
         )
         if path:
             self._video_input.setText(path)
+            self._auto_probe_video_duration(path)
+
+    def _auto_probe_video_duration(self, video_path: str) -> None:
+        """Probe with cv2 and fill the End spinbox so the user has a sane default."""
+        duration = _probe_video_duration_s(video_path)
+        if duration is None:
+            return
+        self._video_duration_s = duration
+        # Cap is generous to allow concatenated streams beyond a single file.
+        self._end_spin.setMaximum(max(duration, 1e9))
+        self._begin_spin.setMaximum(max(duration, 1e9))
+        self._begin_spin.setValue(0.0)
+        self._end_spin.setValue(duration)
+
+    def _on_video_input_committed(self) -> None:
+        """Probe duration if the user typed/pasted a path bypassing Browse."""
+        path = self._video_input.text().strip()
+        if path and Path(path).exists():
+            self._auto_probe_video_duration(path)
 
     def _browse_output_root(self) -> None:
         path = QFileDialog.getExistingDirectory(
@@ -1344,6 +1394,7 @@ class DeepReefMapWindow(QMainWindow):
             self._status_label.setText(f"Error: {exc}")
             return
 
+        begin_s, end_s = self._effective_time_range()
         kwargs = {
             "video_paths": [str(video_path)],
             "fps": self._fps_spin.value(),
@@ -1358,6 +1409,8 @@ class DeepReefMapWindow(QMainWindow):
             "skip_segmentation": self._skip_seg_check.isChecked(),
             "classes_path": self._classes_path,
             "run_name": run_name,
+            "begin_s": begin_s,
+            "end_s": end_s,
         }
 
         self._set_form_enabled(False)
@@ -1391,10 +1444,27 @@ class DeepReefMapWindow(QMainWindow):
         for w in (
             self._video_input, self._profile_combo, self._seg_combo,
             self._map_combo, self._out_root_input, self._run_name_input,
-            self._fps_spin, self._transect_length, self._crop_width,
+            self._fps_spin, self._begin_spin, self._end_spin,
+            self._transect_length, self._crop_width,
             self._tsdf_check, self._skip_seg_check, self._submit_btn,
         ):
             w.setEnabled(enabled)
+
+    def _effective_time_range(self) -> tuple[float | None, float | None]:
+        """Translate the spinboxes into (begin_s, end_s) arguments.
+
+        A zero begin means "from start" (None). An end that equals the probed
+        video duration also means "to end" (None) so the orchestrator skips
+        clamping and trusts ffmpeg.
+        """
+        begin = float(self._begin_spin.value())
+        end = float(self._end_spin.value())
+        begin_arg: float | None = begin if begin > 0.0 else None
+        end_arg: float | None = end if end > 0.0 else None
+        if end_arg is not None and self._video_duration_s is not None:
+            if abs(end_arg - self._video_duration_s) < 1e-3:
+                end_arg = None
+        return begin_arg, end_arg
 
     def _render_test_cloud(self) -> None:
         import numpy as np
@@ -1824,6 +1894,27 @@ class _PastRunCardDelegate(QStyledItemDelegate):
             painter.drawText(r.left(), cursor_y + video_fm.ascent(), elided)
 
         painter.restore()
+
+
+def _probe_video_duration_s(video_path: str) -> float | None:
+    """Return seconds via cv2 frame count / fps, or None on failure."""
+    try:
+        import cv2
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return None
+        try:
+            frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+        finally:
+            cap.release()
+        if not fps or fps <= 0 or not frames or frames <= 0:
+            return None
+        return float(frames) / float(fps)
+    except Exception:
+        logger.warning("Failed to probe video duration", exc_info=True)
+        return None
 
 
 def _format_disk_size(run_dir: Path) -> str | None:
