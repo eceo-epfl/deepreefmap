@@ -4,6 +4,7 @@ import importlib.metadata
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -13,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QSettings, QStandardPaths, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPixmap, QSurfaceFormat
 from PySide6.QtWidgets import (
     QApplication,
@@ -44,8 +45,12 @@ from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
 logger = logging.getLogger(__name__)
 
 
-_GH_REPO = os.environ.get("DEEPREEFMAP_GH_REPO", "eceo-epfl/deepreefmap")
-_GH_API_RELEASES = f"https://api.github.com/repos/{_GH_REPO}/releases"
+_DEFAULT_GH_REPO = "eceo-epfl/deepreefmap"
+
+
+def _gh_releases_url() -> str:
+    repo = os.environ.get("DEEPREEFMAP_GH_REPO", _DEFAULT_GH_REPO)
+    return f"https://api.github.com/repos/{repo}/releases"
 
 
 def _pyapp_binary_path() -> str | None:
@@ -62,7 +67,7 @@ def _fetch_release_versions(timeout: float = 8.0) -> list[str] | None:
     if mock is not None:
         return [v.strip() for v in mock.split(",") if v.strip()]
     try:
-        req = urllib.request.Request(_GH_API_RELEASES, headers={"Accept": "application/vnd.github+json"})
+        req = urllib.request.Request(_gh_releases_url(), headers={"Accept": "application/vnd.github+json"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             releases = json.load(resp)
         versions = []
@@ -137,14 +142,31 @@ class DeepReefMapWindow(QMainWindow):
         profiles = available_profile_names() or ["gopro_hero_10"]
         seg_models = list_segmentation_models()
         map_backends = list_mapping_backends()
-        default_out = str(
-            Path.home() / "DeepReefMap" / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
-        )
+        documents = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+        default_root = str(Path(documents or str(Path.home())) / "DeepReefMap")
 
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setAlignment(Qt.AlignTop)
 
+        layout.addWidget(QLabel("<b>Past runs</b>"))
+        past_row = QHBoxLayout()
+        self._past_runs_combo = QComboBox()
+        self._past_runs_combo.setMinimumContentsLength(20)
+        self._past_runs_combo.currentIndexChanged.connect(self._on_past_run_selected)
+        past_row.addWidget(self._past_runs_combo, 1)
+        past_open_btn = QPushButton("Open")
+        past_open_btn.setToolTip("Open the selected run's folder in the system file manager")
+        past_open_btn.clicked.connect(self._open_selected_past_run)
+        past_row.addWidget(past_open_btn)
+        layout.addLayout(past_row)
+
+        new_btn = QPushButton("New reconstruction")
+        new_btn.setToolTip("Clear the viewer and start a fresh run")
+        new_btn.clicked.connect(self._on_new_reconstruction)
+        layout.addWidget(new_btn)
+
+        layout.addWidget(_separator())
         layout.addWidget(QLabel("<b>New reconstruction</b>"))
 
         video_row = QHBoxLayout()
@@ -177,9 +199,28 @@ class DeepReefMapWindow(QMainWindow):
             self._map_combo.setCurrentIndex(idx)
         layout.addWidget(self._map_combo)
 
-        layout.addWidget(QLabel("Output directory"))
-        self._out_input = QLineEdit(default_out)
-        layout.addWidget(self._out_input)
+        layout.addWidget(QLabel("Output root"))
+        root_row = QHBoxLayout()
+        self._out_root_input = QLineEdit(default_root)
+        root_row.addWidget(self._out_root_input, 1)
+        root_browse_btn = QPushButton("Browse")
+        root_browse_btn.clicked.connect(self._browse_output_root)
+        root_row.addWidget(root_browse_btn)
+        root_open_btn = QPushButton("Open")
+        root_open_btn.setToolTip("Open the output root folder in the system file manager")
+        root_open_btn.clicked.connect(self._open_output_root)
+        root_row.addWidget(root_open_btn)
+        layout.addLayout(root_row)
+
+        layout.addWidget(QLabel("Run name"))
+        self._run_name_input = QLineEdit(datetime.now().strftime("%Y%m%d-%H%M%S"))
+        self._run_name_input.setPlaceholderText("Friendly name (e.g. barrier-reef-2026-05-20)")
+        layout.addWidget(self._run_name_input)
+
+        self._effective_dir_label = QLabel("")
+        self._effective_dir_label.setStyleSheet("color: #888;")
+        self._effective_dir_label.setWordWrap(True)
+        layout.addWidget(self._effective_dir_label)
 
         layout.addWidget(QLabel("FPS"))
         self._fps_spin = QSpinBox()
@@ -302,6 +343,25 @@ class DeepReefMapWindow(QMainWindow):
         self._cover_label = QLabel()
         self._cover_label.setWordWrap(True)
         res_layout.addWidget(self._cover_label)
+
+        rename_row = QHBoxLayout()
+        self._rename_btn = QPushButton("Rename…")
+        self._rename_btn.clicked.connect(self._begin_rename)
+        rename_row.addWidget(self._rename_btn)
+        self._rename_edit = QLineEdit()
+        self._rename_edit.setVisible(False)
+        self._rename_edit.returnPressed.connect(self._commit_rename)
+        rename_row.addWidget(self._rename_edit, 1)
+        self._rename_ok_btn = QPushButton("OK")
+        self._rename_ok_btn.setVisible(False)
+        self._rename_ok_btn.clicked.connect(self._commit_rename)
+        rename_row.addWidget(self._rename_ok_btn)
+        self._rename_cancel_btn = QPushButton("Cancel")
+        self._rename_cancel_btn.setVisible(False)
+        self._rename_cancel_btn.clicked.connect(self._cancel_rename)
+        rename_row.addWidget(self._rename_cancel_btn)
+        res_layout.addLayout(rename_row)
+
         self._open_dir_btn = QPushButton("Open output directory")
         self._open_dir_btn.clicked.connect(self._open_output_dir)
         res_layout.addWidget(self._open_dir_btn)
@@ -361,14 +421,26 @@ class DeepReefMapWindow(QMainWindow):
         self._map_combo.currentTextChanged.connect(self._on_required_models_changed)
         self._skip_seg_check.toggled.connect(self._on_required_models_changed)
         self._video_input.textChanged.connect(self._recompute_submit_state)
-        self._out_input.textChanged.connect(self._recompute_submit_state)
+        self._out_root_input.textChanged.connect(self._on_output_root_changed)
+        self._run_name_input.textChanged.connect(self._on_run_name_changed)
+
+        self._active_run_dir: Path | None = None
+        self._active_run_manifest: dict | None = None
 
         self._settings = QSettings("ECEO", "deepreefmap")
         last_video = self._settings.value("last_video_path", "", type=str)
         if last_video and Path(last_video).exists():
             self._video_input.setText(last_video)
-
+        saved_root = self._settings.value("output_root_dir", "", type=str)
+        if saved_root:
+            self._out_root_input.setText(saved_root)
+        self._update_effective_dir_label()
+        self._refresh_past_runs_combo()
         self._recompute_submit_state()
+
+        last_run = self._settings.value("last_run_dir", "", type=str)
+        if last_run and (Path(last_run) / "run_manifest.json").exists():
+            QTimer.singleShot(0, lambda: self._auto_load_run(Path(last_run)))
         layout.addWidget(models_group)
         threading.Thread(target=self._refresh_model_status, daemon=True).start()
 
@@ -589,8 +661,10 @@ class DeepReefMapWindow(QMainWindow):
             reasons.append("pick a video file")
         elif not Path(video).exists():
             reasons.append("video file not found")
-        if not self._out_input.text().strip():
-            reasons.append("set an output directory")
+        if not self._out_root_input.text().strip():
+            reasons.append("set an output root")
+        if not self._run_name_input.text().strip():
+            reasons.append("set a run name")
 
         cached_names = {info.name for info, cached in self._last_model_states if cached}
         missing = [m for m in sorted(self._required_model_names()) if m not in cached_names]
@@ -815,6 +889,157 @@ class DeepReefMapWindow(QMainWindow):
         if path:
             self._video_input.setText(path)
 
+    def _browse_output_root(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self, "Select output root directory", self._out_root_input.text()
+        )
+        if path:
+            self._out_root_input.setText(path)
+
+    def _open_output_root(self) -> None:
+        root = Path(self._out_root_input.text()).expanduser()
+        root.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(root)))
+
+    @staticmethod
+    def _sanitize_run_name(name: str) -> str:
+        cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name.strip())
+        return cleaned.strip("._-") or datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    def _effective_run_dir(self) -> Path:
+        root = Path(self._out_root_input.text()).expanduser()
+        name = self._sanitize_run_name(self._run_name_input.text())
+        return root / name
+
+    def _update_effective_dir_label(self) -> None:
+        try:
+            target = self._effective_run_dir()
+            self._effective_dir_label.setText(f"→ {target}")
+        except Exception:
+            self._effective_dir_label.setText("")
+
+    def _on_output_root_changed(self, _text: str = "") -> None:
+        self._update_effective_dir_label()
+        self._recompute_submit_state()
+        self._settings.setValue("output_root_dir", self._out_root_input.text())
+        self._refresh_past_runs_combo()
+
+    def _on_run_name_changed(self, _text: str = "") -> None:
+        self._update_effective_dir_label()
+        self._recompute_submit_state()
+
+    def _refresh_past_runs_combo(self) -> None:
+        root = Path(self._out_root_input.text()).expanduser()
+        entries: list[tuple[Path, str, float]] = []
+        if root.exists() and root.is_dir():
+            for child in root.iterdir():
+                manifest = child / "run_manifest.json"
+                if not (child.is_dir() and manifest.exists()):
+                    continue
+                display = child.name
+                try:
+                    data = json.loads(manifest.read_text())
+                    name = data.get("name")
+                    if name:
+                        display = f"{name}  ({child.name})"
+                except Exception:
+                    pass
+                entries.append((child, display, manifest.stat().st_mtime))
+        entries.sort(key=lambda e: e[2], reverse=True)
+
+        # Block signals to avoid triggering _on_past_run_selected during repopulation.
+        self._past_runs_combo.blockSignals(True)
+        try:
+            self._past_runs_combo.clear()
+            self._past_runs_combo.addItem("— Select a past run —", userData=None)
+            for path, display, _mtime in entries:
+                self._past_runs_combo.addItem(display, userData=str(path))
+            if self._active_run_dir is not None:
+                for i in range(1, self._past_runs_combo.count()):
+                    if self._past_runs_combo.itemData(i) == str(self._active_run_dir):
+                        self._past_runs_combo.setCurrentIndex(i)
+                        break
+        finally:
+            self._past_runs_combo.blockSignals(False)
+
+    def _on_past_run_selected(self, index: int) -> None:
+        if index <= 0:
+            return
+        run_dir = self._past_runs_combo.itemData(index)
+        if not run_dir:
+            return
+        self._auto_load_run(Path(run_dir))
+
+    def _open_selected_past_run(self) -> None:
+        index = self._past_runs_combo.currentIndex()
+        run_dir = self._past_runs_combo.itemData(index) if index > 0 else None
+        if not run_dir:
+            run_dir = str(self._active_run_dir) if self._active_run_dir else self._out_root_input.text()
+        path = Path(run_dir).expanduser()
+        if path.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        else:
+            self._status_label.setText(f"Folder not found: {path}")
+
+    def _begin_rename(self) -> None:
+        if self._active_run_dir is None:
+            return
+        current = ""
+        if self._active_run_manifest:
+            current = str(self._active_run_manifest.get("name") or "")
+        if not current:
+            current = self._active_run_dir.name
+        self._rename_edit.setText(current)
+        self._rename_btn.setVisible(False)
+        self._rename_edit.setVisible(True)
+        self._rename_ok_btn.setVisible(True)
+        self._rename_cancel_btn.setVisible(True)
+        self._rename_edit.setFocus()
+        self._rename_edit.selectAll()
+
+    def _cancel_rename(self) -> None:
+        self._rename_edit.setVisible(False)
+        self._rename_ok_btn.setVisible(False)
+        self._rename_cancel_btn.setVisible(False)
+        self._rename_btn.setVisible(True)
+
+    def _commit_rename(self) -> None:
+        if self._active_run_dir is None:
+            self._cancel_rename()
+            return
+        new_name = self._rename_edit.text().strip()
+        if not new_name:
+            self._cancel_rename()
+            return
+        manifest_path = self._active_run_dir / "run_manifest.json"
+        try:
+            data = json.loads(manifest_path.read_text())
+            data["name"] = new_name
+            tmp = manifest_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(data, indent=2))
+            os.replace(tmp, manifest_path)
+            self._active_run_manifest = data
+            self._status_label.setText(f"Renamed run to '{new_name}'.")
+            self._refresh_past_runs_combo()
+        except Exception as exc:
+            self._status_label.setText(f"Rename failed: {exc}")
+            logger.exception("Failed to rename run")
+        finally:
+            self._cancel_rename()
+
+    def _on_new_reconstruction(self) -> None:
+        self._viewer._clear_scene_data()
+        self._results_group.setVisible(False)
+        self._legend_group.setVisible(False)
+        self._viewer_controls_group.setVisible(False)
+        self._active_run_dir = None
+        self._active_run_manifest = None
+        self._run_name_input.setText(datetime.now().strftime("%Y%m%d-%H%M%S"))
+        self._past_runs_combo.blockSignals(True)
+        self._past_runs_combo.setCurrentIndex(0)
+        self._past_runs_combo.blockSignals(False)
+        self._status_label.setText("Ready. Fill the form above and click Start.")
+
     def _on_submit(self) -> None:
         video = self._video_input.text().strip()
         if not video:
@@ -825,10 +1050,16 @@ class DeepReefMapWindow(QMainWindow):
             self._status_label.setText(f"Error: file not found: {video_path}")
             return
 
-        out_dir = Path(self._out_input.text()).expanduser()
+        run_name = self._sanitize_run_name(self._run_name_input.text())
+        # Reflect the sanitised slug back so the user sees what's actually written.
+        if run_name != self._run_name_input.text():
+            self._run_name_input.setText(run_name)
+        out_dir = Path(self._out_root_input.text()).expanduser() / run_name
         out_dir.mkdir(parents=True, exist_ok=True)
 
         self._settings.setValue("last_video_path", str(video_path))
+        self._settings.setValue("output_root_dir", self._out_root_input.text())
+        self._settings.setValue("last_run_dir", str(out_dir))
 
         def parse_optional_float(s: str) -> float | None:
             s = s.strip()
@@ -854,6 +1085,7 @@ class DeepReefMapWindow(QMainWindow):
             "enable_tsdf": self._tsdf_check.isChecked(),
             "skip_segmentation": self._skip_seg_check.isChecked(),
             "classes_path": self._classes_path,
+            "run_name": run_name,
         }
 
         self._set_form_enabled(False)
@@ -886,8 +1118,8 @@ class DeepReefMapWindow(QMainWindow):
     def _set_form_enabled(self, enabled: bool) -> None:
         for w in (
             self._video_input, self._profile_combo, self._seg_combo,
-            self._map_combo, self._out_input, self._fps_spin,
-            self._transect_length, self._crop_width,
+            self._map_combo, self._out_root_input, self._run_name_input,
+            self._fps_spin, self._transect_length, self._crop_width,
             self._tsdf_check, self._skip_seg_check, self._submit_btn,
         ):
             w.setEnabled(enabled)
@@ -909,44 +1141,19 @@ class DeepReefMapWindow(QMainWindow):
         run_dir = QFileDialog.getExistingDirectory(self, "Select cached run directory")
         if not run_dir:
             return
-        try:
-            from deepreefmap.pipeline.run_loader import GEOMETRY_ONLY_MODE, load_cached_run
-
-            result = load_cached_run(Path(run_dir))
-            if result.get("mode") == GEOMETRY_ONLY_MODE:
-                self._viewer.show_point_cloud(result["geometry_xyz"], result["geometry_rgb"])
-            else:
-                cloud = result.get("reference_cloud")
-                fb = result.get("frame_batch")
-                mr = result.get("mapping_result")
-                if cloud is not None and fb is not None and mr is not None:
-                    self._viewer.load_scene_data(fb, mr, cloud, self._classes_config)
-                    self._build_legend()
-                    self._show_viewer_controls()
-                    self._on_viewer_control_changed()
-                elif cloud is not None:
-                    self._viewer.show_point_cloud(cloud.xyz, cloud.rgb)
-
-            self._status_label.setText(f"Loaded cached run from {run_dir}")
-
-            ortho_path = Path(run_dir) / "ortho.png"
-            if ortho_path.exists():
-                self._show_results(run_dir)
-        except Exception as exc:
-            self._status_label.setText(f"Error loading run: {exc}")
-            logger.exception("Failed to load cached run")
+        self._auto_load_run(Path(run_dir))
 
     def _auto_load_run(self, run_dir: Path) -> None:
         try:
             from deepreefmap.pipeline.run_loader import GEOMETRY_ONLY_MODE, load_cached_run
 
             result = load_cached_run(run_dir)
-            if result.get("mode") == GEOMETRY_ONLY_MODE:
-                self._viewer.show_point_cloud(result["geometry_xyz"], result["geometry_rgb"])
+            if result.mode == GEOMETRY_ONLY_MODE:
+                self._viewer.show_point_cloud(result.geometry_xyz, result.geometry_rgb)
             else:
-                cloud = result.get("reference_cloud")
-                fb = result.get("frame_batch")
-                mr = result.get("mapping_result")
+                cloud = result.reference_cloud
+                fb = result.frame_batch
+                mr = result.mapping_result
                 if cloud is not None and fb is not None and mr is not None:
                     self._viewer.load_scene_data(fb, mr, cloud, self._classes_config)
                     self._build_legend()
@@ -954,7 +1161,12 @@ class DeepReefMapWindow(QMainWindow):
                     self._on_viewer_control_changed()
                 elif cloud is not None:
                     self._viewer.show_point_cloud(cloud.xyz, cloud.rgb)
-            self._status_label.setText(f"Loaded cached run from {run_dir}")
+
+            self._active_run_dir = run_dir
+            self._active_run_manifest = result.manifest
+            display = result.manifest.get("name") or run_dir.name
+            self._status_label.setText(f"Loaded run '{display}' from {run_dir}")
+
             ortho_path = run_dir / "ortho.png"
             if ortho_path.exists():
                 self._show_results(str(run_dir))
@@ -1000,6 +1212,15 @@ class DeepReefMapWindow(QMainWindow):
             self._set_form_enabled(True)
             if output_dir:
                 self._show_results(str(output_dir))
+                self._active_run_dir = Path(str(output_dir))
+                manifest_path = self._active_run_dir / "run_manifest.json"
+                if manifest_path.exists():
+                    try:
+                        self._active_run_manifest = json.loads(manifest_path.read_text())
+                    except Exception:
+                        self._active_run_manifest = None
+                self._settings.setValue("last_run_dir", str(self._active_run_dir))
+                self._refresh_past_runs_combo()
         elif event == "fail_run":
             error = kwargs.get("error_message", "unknown error")
             self._status_label.setText(f"Failed: {error}")

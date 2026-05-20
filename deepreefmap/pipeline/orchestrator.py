@@ -60,6 +60,7 @@ def run_reconstruction(
     skip_segmentation: bool = False,
     refine_intrinsics_from_mapper: bool = False,
     viewer: object | None = None,
+    run_name: str | None = None,
 ) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -327,6 +328,7 @@ def run_reconstruction(
                 gravity_telemetry=mapping_result.gravity_vectors is not None,
                 output_files=output_files,
                 mode="geometry_only",
+                run_name=run_name,
             ))
             if viewer is not None:
                 viewer.set_data(
@@ -434,6 +436,7 @@ def run_reconstruction(
             gravity_telemetry=mapping_result.gravity_vectors is not None,
             output_files=output_files,
             mode="semantic",
+            run_name=run_name,
         ))
         if viewer is not None:
             viewer.mark_outputs_ready(str(output_dir), output_files)
@@ -850,9 +853,11 @@ def _build_manifest(
     gravity_telemetry: bool,
     output_files: list[str],
     mode: str,
+    run_name: str | None = None,
 ) -> dict[str, object]:
     return {
         "schema_version": 2,
+        "name": run_name,
         "mode": mode,
         "frames_processed": frames_processed,
         "segmentation_model": segmentation_name,

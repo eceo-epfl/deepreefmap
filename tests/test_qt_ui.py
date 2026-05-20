@@ -107,12 +107,12 @@ def test_fetch_versions_parses_github_response():
     t.start()
 
     import deepreefmap.launcher.qt_app as mod
-    orig = mod._GH_API_RELEASES
-    mod._GH_API_RELEASES = f"http://127.0.0.1:{port}/releases"
+    orig = mod._gh_releases_url
+    mod._gh_releases_url = lambda: f"http://127.0.0.1:{port}/releases"
     try:
         versions = _fetch_release_versions(timeout=5.0)
     finally:
-        mod._GH_API_RELEASES = orig
+        mod._gh_releases_url = orig
         server.server_close()
 
     assert versions == ["2.0.0", "1.5.0"]
