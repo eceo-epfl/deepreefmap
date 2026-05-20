@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
-import cv2
 import numpy as np
-import pyvista as pv
+
+if TYPE_CHECKING:
+    import pyvista as pv
+    from pyvistaqt import QtInteractor
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QLabel, QSplitter, QVBoxLayout, QWidget
-from pyvistaqt import QtInteractor
 
 from deepreefmap.visualization.final_cloud_index import FinalCloudIndex, build_final_cloud_index
 from deepreefmap.visualization.live_frame_cloud import (
@@ -40,6 +41,8 @@ def _colorize_seg(labels: np.ndarray, class_colors: dict[int, tuple[int, int, in
 
 
 def _colorize_depth(depth: np.ndarray) -> np.ndarray:
+    import cv2
+
     valid = np.isfinite(depth)
     out = np.zeros((*depth.shape, 3), dtype=np.uint8)
     if not valid.any():
@@ -91,6 +94,8 @@ def _as_uint8_rgb(rgb: np.ndarray) -> np.ndarray:
 
 
 def _make_point_polydata(xyz: np.ndarray, rgb: np.ndarray) -> pv.PolyData:
+    import pyvista as pv
+
     pts = np.ascontiguousarray(xyz, dtype=np.float32)
     pd = pv.PolyData(pts)
     pd["colors"] = _as_uint8_rgb(rgb)
@@ -98,6 +103,8 @@ def _make_point_polydata(xyz: np.ndarray, rgb: np.ndarray) -> pv.PolyData:
 
 
 def _make_line_segments_polydata(points: np.ndarray) -> pv.PolyData:
+    import pyvista as pv
+
     pts = np.ascontiguousarray(points, dtype=np.float32)
     n_segments = len(pts) // 2
     cells = np.empty((n_segments, 3), dtype=np.int64)
@@ -186,9 +193,11 @@ class QtPointCloudViewer(QWidget):
     def set_status_callback(self, cb: Callable[..., None]) -> None:
         self._status_callback = cb
 
-    def _ensure_plotter(self) -> QtInteractor:
+    def _ensure_plotter(self):
         if self._plotter is not None:
             return self._plotter
+        from pyvistaqt import QtInteractor
+
         self._plotter = QtInteractor(self._canvas_container)
         self._plotter.set_background("#141414")
         try:
@@ -251,6 +260,8 @@ class QtPointCloudViewer(QWidget):
         reference_cloud: object,
         classes_config: object,
     ) -> None:
+        import pyvista as pv
+
         self._clear_scene_data()
         plotter = self._ensure_plotter()
         self._frame_batch = frame_batch
@@ -574,6 +585,8 @@ class QtPointCloudViewer(QWidget):
         self._image_label.setPixmap(scaled)
 
     def _compose_frame_panel(self, t: int) -> np.ndarray | None:
+        import cv2
+
         fi = self._final_index
         if fi is None or len(fi.frame_order) == 0:
             return None
@@ -612,6 +625,8 @@ class QtPointCloudViewer(QWidget):
         return np.concatenate([rgb, seg_color, depth_color], axis=0)
 
     def _show_live_preprocess_frame(self, frame_index: int) -> None:
+        import cv2
+
         stem = f"{frame_index:08d}"
         frame_path = self._output_dir / "frames" / f"{stem}.png"
         labels_path = self._output_dir / "labels" / f"{stem}.npy"

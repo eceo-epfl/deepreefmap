@@ -1,19 +1,12 @@
 from __future__ import annotations
 
-import importlib.metadata
 import json
 import logging
 import os
-import re
 import signal
-import subprocess
 import sys
 import threading
-import urllib.request
-from datetime import datetime
 from pathlib import Path
-
-import numpy as np
 from PySide6.QtCore import QSettings, QStandardPaths, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPixmap, QSurfaceFormat
 from PySide6.QtWidgets import (
@@ -40,8 +33,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
-
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +54,8 @@ def _pyapp_binary_path() -> str | None:
 
 
 def _fetch_release_versions(timeout: float = 8.0) -> list[str] | None:
+    import urllib.request
+
     mock = os.environ.get("DEEPREEFMAP_MOCK_VERSIONS")
     if mock is not None:
         return [v.strip() for v in mock.split(",") if v.strip()]
@@ -84,6 +77,8 @@ def _fetch_release_versions(timeout: float = 8.0) -> list[str] | None:
 
 
 def _current_version() -> str:
+    import importlib.metadata
+
     try:
         return importlib.metadata.version("deepreefmap")
     except importlib.metadata.PackageNotFoundError:
@@ -236,6 +231,8 @@ class DeepReefMapWindow(QMainWindow):
         layout.addLayout(root_btn_row)
 
         layout.addWidget(QLabel("Run name"))
+        from datetime import datetime
+
         self._run_name_input = QLineEdit(datetime.now().strftime("%Y%m%d-%H%M%S"))
         self._run_name_input.setPlaceholderText("Friendly name (e.g. barrier-reef-2026-05-20)")
         layout.addWidget(self._run_name_input)
@@ -981,6 +978,9 @@ class DeepReefMapWindow(QMainWindow):
 
     @staticmethod
     def _sanitize_run_name(name: str) -> str:
+        import re
+        from datetime import datetime
+
         cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name.strip())
         return cleaned.strip("._-") or datetime.now().strftime("%Y%m%d-%H%M%S")
 
@@ -1112,6 +1112,8 @@ class DeepReefMapWindow(QMainWindow):
         self._viewer_controls_group.setVisible(False)
         self._active_run_dir = None
         self._active_run_manifest = None
+        from datetime import datetime
+
         self._run_name_input.setText(datetime.now().strftime("%Y%m%d-%H%M%S"))
         self._past_runs_combo.blockSignals(True)
         self._past_runs_combo.setCurrentIndex(0)
@@ -1203,6 +1205,8 @@ class DeepReefMapWindow(QMainWindow):
             w.setEnabled(enabled)
 
     def _render_test_cloud(self) -> None:
+        import numpy as np
+
         try:
             n = 500_000
             theta = np.random.uniform(0, 2 * np.pi, n).astype(np.float32)
@@ -1375,6 +1379,8 @@ class DeepReefMapWindow(QMainWindow):
         threading.Thread(target=self._run_update, args=(pyapp_bin,), daemon=True).start()
 
     def _run_update(self, pyapp_bin: str) -> None:
+        import subprocess
+
         if os.environ.get("DEEPREEFMAP_MOCK_PYAPP"):
             self._sig_update_result.emit("Mock update: simulated success. Close and reopen to apply.")
             return
@@ -1432,15 +1438,16 @@ class _HfLoginDialog(QDialog):
         return self._token_edit.text().strip()
 
 
-def launch(classes_path: Path = DEFAULT_CLASSES_PATH, view_run_dir: Path | None = None) -> None:
+def launch(classes_path: Path | None = None, view_run_dir: Path | None = None) -> None:
+    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+
+    if classes_path is None:
+        classes_path = DEFAULT_CLASSES_PATH
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    # NVIDIA on Wayland gives Qt an EGL/GLES context, which rejects vispy's
-    # desktop GLSL 1.20 shaders. Force XWayland (xcb) so we get a real desktop
-    # GL context, and request a compatibility profile compatible with gl2.
     if os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("QT_QPA_PLATFORM"):
         os.environ["QT_QPA_PLATFORM"] = "xcb"
     os.environ.setdefault("QT_OPENGL", "desktop")
