@@ -178,6 +178,8 @@ class QtPointCloudViewer(QWidget):
         self._last_confidence: float | None = None
         self._last_point_size: float | None = None
 
+        self._point_filter: Callable[[np.ndarray], np.ndarray] | None = None
+
         self._frame_panel_cache: dict[int, np.ndarray] = {}
 
         self._sig_start_run.connect(self._on_start_run)
@@ -192,6 +194,15 @@ class QtPointCloudViewer(QWidget):
 
     def set_status_callback(self, cb: Callable[..., None]) -> None:
         self._status_callback = cb
+
+    def set_point_filter(
+        self, fn: Callable[[np.ndarray], np.ndarray] | None
+    ) -> None:
+        """Install an xyz→bool mask filter applied to every point cloud update."""
+        self._point_filter = fn
+        # Invalidate apply_state's idempotency cache so the next call repaints
+        # every actor through the new filter.
+        self._last_t = None
 
     def _ensure_plotter(self):
         if self._plotter is not None:
@@ -397,6 +408,7 @@ class QtPointCloudViewer(QWidget):
         self._last_enabled = None
         self._last_confidence = None
         self._last_point_size = None
+        self._point_filter = None
 
     def _auto_fit_camera(self, positions: np.ndarray) -> None:
         if self._plotter is None:
@@ -497,6 +509,11 @@ class QtPointCloudViewer(QWidget):
         m = mask_points_by_enabled_lut(lab_u, lut)
         if min_conf > 0.0 and conf_u.size:
             m &= conf_u >= min_conf
+        if self._point_filter is not None and xyz_u.shape[0] > 0:
+            try:
+                m &= np.asarray(self._point_filter(xyz_u), dtype=bool).reshape(-1)
+            except Exception:
+                logger.debug("Point filter failed on live cloud", exc_info=True)
         xyz_live = xyz_u[m]
 
         if xyz_live.shape[0] == 0:
@@ -560,6 +577,13 @@ class QtPointCloudViewer(QWidget):
                     keep = conf_c[:n] >= min_conf
                     pts = pts[keep]
                     cols = cols[keep]
+            if self._point_filter is not None and pts.shape[0] > 0:
+                try:
+                    keep_pf = np.asarray(self._point_filter(pts), dtype=bool).reshape(-1)
+                    pts = pts[keep_pf]
+                    cols = cols[keep_pf]
+                except Exception:
+                    logger.debug("Point filter failed on class %s", cid, exc_info=True)
             if pts.shape[0] == 0:
                 actor.SetVisibility(False)
                 continue

@@ -320,13 +320,21 @@ class DeepReefMapWindow(QMainWindow):
         self._advanced_panel = QWidget()
         adv_layout = QVBoxLayout(self._advanced_panel)
         adv_layout.setContentsMargins(12, 0, 0, 0)
-        adv_layout.addWidget(QLabel("Transect length (m)"))
-        self._transect_length = QLineEdit()
-        self._transect_length.setPlaceholderText("optional")
+        adv_layout.addWidget(QLabel("Transect length (m) — 0 disables"))
+        self._transect_length = QDoubleSpinBox()
+        self._transect_length.setRange(0.0, 100.0)
+        self._transect_length.setDecimals(2)
+        self._transect_length.setSingleStep(0.1)
+        self._transect_length.setValue(0.0)
+        self._transect_length.setSuffix(" m")
         adv_layout.addWidget(self._transect_length)
-        adv_layout.addWidget(QLabel("Crop width (m)"))
-        self._crop_width = QLineEdit()
-        self._crop_width.setPlaceholderText("optional")
+        adv_layout.addWidget(QLabel("Crop width (m) — 0 disables"))
+        self._crop_width = QDoubleSpinBox()
+        self._crop_width.setRange(0.0, 50.0)
+        self._crop_width.setDecimals(2)
+        self._crop_width.setSingleStep(0.1)
+        self._crop_width.setValue(0.0)
+        self._crop_width.setSuffix(" m")
         adv_layout.addWidget(self._crop_width)
         self._tsdf_check = QCheckBox("Enable TSDF")
         adv_layout.addWidget(self._tsdf_check)
@@ -435,9 +443,57 @@ class DeepReefMapWindow(QMainWindow):
         self._metadata_label.setWordWrap(True)
         self._metadata_label.setTextFormat(Qt.TextFormat.RichText)
         res_layout.addWidget(self._metadata_label)
+
+        ortho_row = QHBoxLayout()
+        ortho_row.setSpacing(4)
+        self._ortho_rgb_preview = QLabel("RGB ortho")
+        self._ortho_rgb_preview.setAlignment(Qt.AlignCenter)
+        self._ortho_rgb_preview.setMinimumSize(160, 100)
+        self._ortho_rgb_preview.setStyleSheet("background-color: #1a1a1a; color: #666;")
+        ortho_row.addWidget(self._ortho_rgb_preview, 1)
+        self._ortho_seg_preview = QLabel("Seg ortho")
+        self._ortho_seg_preview.setAlignment(Qt.AlignCenter)
+        self._ortho_seg_preview.setMinimumSize(160, 100)
+        self._ortho_seg_preview.setStyleSheet("background-color: #1a1a1a; color: #666;")
+        ortho_row.addWidget(self._ortho_seg_preview, 1)
+        res_layout.addLayout(ortho_row)
+
         self._ortho_label = QLabel()
         self._ortho_label.setAlignment(Qt.AlignCenter)
+        self._ortho_label.setVisible(False)
         res_layout.addWidget(self._ortho_label)
+
+        crop_box = QGroupBox("Transect crop (live)")
+        crop_box.setVisible(False)
+        crop_layout = QGridLayout(crop_box)
+        crop_layout.addWidget(QLabel("Transect length (m)"), 0, 0)
+        self._results_transect_length = QDoubleSpinBox()
+        self._results_transect_length.setRange(0.0, 100.0)
+        self._results_transect_length.setDecimals(2)
+        self._results_transect_length.setSingleStep(0.1)
+        self._results_transect_length.setValue(0.0)
+        crop_layout.addWidget(self._results_transect_length, 0, 1)
+        self._results_transect_slider = QSlider(Qt.Horizontal)
+        self._results_transect_slider.setRange(0, 10000)
+        crop_layout.addWidget(self._results_transect_slider, 1, 0, 1, 2)
+        crop_layout.addWidget(QLabel("Crop width (m)"), 2, 0)
+        self._results_crop_width = QDoubleSpinBox()
+        self._results_crop_width.setRange(0.0, 50.0)
+        self._results_crop_width.setDecimals(2)
+        self._results_crop_width.setSingleStep(0.1)
+        self._results_crop_width.setValue(0.0)
+        crop_layout.addWidget(self._results_crop_width, 2, 1)
+        self._results_crop_slider = QSlider(Qt.Horizontal)
+        self._results_crop_slider.setRange(0, 5000)
+        crop_layout.addWidget(self._results_crop_slider, 3, 0, 1, 2)
+        self._crop_box = crop_box
+        res_layout.addWidget(crop_box)
+
+        self._results_transect_length.valueChanged.connect(self._on_results_transect_length_changed)
+        self._results_crop_width.valueChanged.connect(self._on_results_crop_width_changed)
+        self._results_transect_slider.valueChanged.connect(self._on_results_transect_slider_changed)
+        self._results_crop_slider.valueChanged.connect(self._on_results_crop_slider_changed)
+
         self._cover_label = QLabel()
         self._cover_label.setWordWrap(True)
         res_layout.addWidget(self._cover_label)
@@ -526,6 +582,13 @@ class DeepReefMapWindow(QMainWindow):
         self._active_run_dir: Path | None = None
         self._active_run_manifest: dict | None = None
         self._load_cancelled = False
+
+        self._base_ortho_grid: object | None = None
+        self._ortho_cloud: object | None = None
+        self._ortho_classes_config: object | None = None
+        self._current_ortho_grid: object | None = None
+        self._results_output_dir: Path | None = None
+        self._ortho_crop_refresh_pending = False
 
         self._settings = QSettings("ECEO", "deepreefmap")
         last_video = self._settings.value("last_video_path", "", type=str)
@@ -708,24 +771,166 @@ class DeepReefMapWindow(QMainWindow):
             pixmap = QPixmap(str(ortho_path))
             scaled = pixmap.scaledToWidth(min(340, pixmap.width()), Qt.SmoothTransformation)
             self._ortho_label.setPixmap(scaled)
+            self._ortho_label.setVisible(True)
 
         cover_path = out / "benthic_cover.json"
         if cover_path.exists():
             try:
                 with open(cover_path) as f:
                     cover = json.load(f)
-                classes = cover.get("classes", {})
-                lines = ["<b>Benthic cover:</b><br>"]
-                for cid_str, info in sorted(classes.items(), key=lambda x: -x[1].get("fraction", 0)):
-                    name = info.get("name", cid_str)
-                    frac = info.get("fraction", 0)
-                    if frac > 0.001:
-                        lines.append(f"{name}: {frac * 100:.1f}%<br>")
-                self._cover_label.setText("".join(lines))
+                self._cover_label.setText(self._format_cover_html(cover))
             except Exception:
                 pass
 
         self._results_group.setVisible(True)
+
+    @staticmethod
+    def _format_cover_html(cover: dict) -> str:
+        classes = cover.get("classes", {}) if isinstance(cover, dict) else {}
+        lines = ["<b>Benthic cover:</b><br>"]
+        for cid_str, info in sorted(classes.items(), key=lambda x: -x[1].get("fraction", 0)):
+            name = info.get("name", cid_str)
+            frac = info.get("fraction", 0)
+            if frac > 0.001:
+                lines.append(f"{name}: {frac * 100:.1f}%<br>")
+        return "".join(lines)
+
+    def _set_ortho_sources(
+        self,
+        cloud: object | None,
+        base_grid: object | None,
+        classes_config: object | None,
+    ) -> None:
+        self._ortho_cloud = cloud
+        self._base_ortho_grid = base_grid
+        self._ortho_classes_config = classes_config
+        self._current_ortho_grid = base_grid
+        if base_grid is not None:
+            self._crop_box.setVisible(True)
+            self._refresh_ortho_preview(base_grid)
+        else:
+            self._crop_box.setVisible(False)
+
+    def _refresh_ortho_preview(self, grid: object) -> None:
+        rgb = getattr(grid, "rgb", None)
+        labels = getattr(grid, "labels", None)
+        if rgb is None or labels is None:
+            return
+        self._ortho_rgb_preview.setPixmap(self._numpy_rgb_to_pixmap(rgb))
+        seg_rgb = self._labels_to_rgb(labels, self._ortho_classes_config)
+        self._ortho_seg_preview.setPixmap(self._numpy_rgb_to_pixmap(seg_rgb))
+
+    @staticmethod
+    def _numpy_rgb_to_pixmap(rgb: object, max_width: int = 320) -> QPixmap:
+        import numpy as np
+        from PySide6.QtGui import QImage
+
+        arr = np.ascontiguousarray(np.asarray(rgb, dtype=np.uint8))
+        if arr.ndim == 2:
+            arr = np.stack([arr, arr, arr], axis=-1)
+        h, w = arr.shape[:2]
+        if h == 0 or w == 0:
+            return QPixmap()
+        img = QImage(arr.tobytes(), w, h, w * 3, QImage.Format.Format_RGB888).copy()
+        pix = QPixmap.fromImage(img)
+        if pix.width() > max_width:
+            pix = pix.scaledToWidth(max_width, Qt.SmoothTransformation)
+        return pix
+
+    @staticmethod
+    def _labels_to_rgb(labels: object, classes_config: object | None):
+        import numpy as np
+
+        labels_arr = np.asarray(labels, dtype=np.int32)
+        out = np.zeros((labels_arr.shape[0], labels_arr.shape[1], 3), dtype=np.uint8)
+        if classes_config is None:
+            return out
+        for cid, color in classes_config.id_to_color.items():
+            out[labels_arr == int(cid)] = np.asarray(color, dtype=np.uint8)
+        return out
+
+    def _recompute_ortho_crop(self) -> None:
+        if self._base_ortho_grid is None or self._ortho_classes_config is None:
+            return
+        from deepreefmap.postproc.ortho_outputs import TransectCropParams, apply_ortho_crop
+
+        tl = float(self._results_transect_length.value())
+        cw = float(self._results_crop_width.value())
+        crop = (
+            TransectCropParams(transect_length_m=tl, crop_width_m=cw)
+            if tl > 0.0 and cw > 0.0
+            else None
+        )
+        try:
+            outputs = apply_ortho_crop(self._base_ortho_grid, self._ortho_classes_config, crop=crop)
+        except Exception as exc:
+            self._status_label.setText(f"Crop failed: {exc}")
+            return
+        self._current_ortho_grid = outputs.grid
+        self._refresh_ortho_preview(outputs.grid)
+        self._cover_label.setText(self._format_cover_html(outputs.cover))
+        self._apply_viewer_crop_filter(crop)
+
+    def _apply_viewer_crop_filter(self, crop: object | None) -> None:
+        if self._base_ortho_grid is None:
+            return
+        if not hasattr(self._viewer, "set_point_filter"):
+            return
+        if crop is None:
+            self._viewer.set_point_filter(None)
+            self._on_viewer_control_changed()
+            return
+
+        from deepreefmap.pointcloud.transect_crop import (
+            build_transect_crop_geometry,
+            build_transect_crop_selection,
+            point_mask_with_transect_selection,
+        )
+
+        geometry = build_transect_crop_geometry(
+            labels=self._base_ortho_grid.labels,
+            transect_label=self._ortho_classes_config.single_id_for_role("transect_line"),
+            transect_tools_label=self._ortho_classes_config.single_id_for_role("transect_tools"),
+        )
+        try:
+            selection = build_transect_crop_selection(
+                geometry=geometry,
+                transect_length_m=crop.transect_length_m,
+                crop_width_m=crop.crop_width_m,
+            )
+        except ValueError:
+            return
+        grid_ref = self._base_ortho_grid
+
+        def _filter(xyz):
+            return point_mask_with_transect_selection(grid_ref, xyz, selection)
+
+        self._viewer.set_point_filter(_filter)
+        self._on_viewer_control_changed()
+
+    def _on_results_transect_length_changed(self, value: float) -> None:
+        self._results_transect_slider.blockSignals(True)
+        self._results_transect_slider.setValue(int(value * 100))
+        self._results_transect_slider.blockSignals(False)
+        self._recompute_ortho_crop()
+
+    def _on_results_crop_width_changed(self, value: float) -> None:
+        self._results_crop_slider.blockSignals(True)
+        self._results_crop_slider.setValue(int(value * 100))
+        self._results_crop_slider.blockSignals(False)
+        self._recompute_ortho_crop()
+
+    def _on_results_transect_slider_changed(self, value: int) -> None:
+        self._results_transect_length.blockSignals(True)
+        self._results_transect_length.setValue(value / 100.0)
+        self._results_transect_length.blockSignals(False)
+        self._recompute_ortho_crop()
+
+    def _on_results_crop_slider_changed(self, value: int) -> None:
+        self._results_crop_width.blockSignals(True)
+        self._results_crop_width.setValue(value / 100.0)
+        self._results_crop_width.blockSignals(False)
+        self._recompute_ortho_crop()
 
 
     def _refresh_model_status(self) -> None:
@@ -1366,6 +1571,7 @@ class DeepReefMapWindow(QMainWindow):
         self._hide_run_meta_banner()
         self._active_run_dir = None
         self._active_run_manifest = None
+        self._set_ortho_sources(None, None, None)
         from datetime import datetime
 
         self._run_name_input.setText(datetime.now().strftime("%Y%m%d-%H%M%S"))
@@ -1395,16 +1601,8 @@ class DeepReefMapWindow(QMainWindow):
         self._settings.setValue("output_root_dir", self._out_root_input.text())
         self._settings.setValue("last_run_dir", str(out_dir))
 
-        def parse_optional_float(s: str) -> float | None:
-            s = s.strip()
-            return float(s) if s else None
-
-        try:
-            transect_length = parse_optional_float(self._transect_length.text())
-            transect_crop = parse_optional_float(self._crop_width.text())
-        except ValueError as exc:
-            self._status_label.setText(f"Error: {exc}")
-            return
+        transect_length = self._transect_length.value() or None
+        transect_crop = self._crop_width.value() or None
 
         begin_s, end_s = self._effective_time_range()
         kwargs = {
@@ -1713,6 +1911,26 @@ class DeepReefMapWindow(QMainWindow):
                 self._format_run_metadata(result.manifest, run_dir, include_disk_size=True)
             )
             self._results_output_dir = run_dir
+
+        # If we have a semantic reference cloud, build the live ortho preview
+        # so the user can re-crop on a cached run.
+        if (
+            result.mode != GEOMETRY_ONLY_MODE
+            and result.reference_cloud is not None
+            and len(result.reference_cloud) > 1
+        ):
+            try:
+                from deepreefmap.postproc.ortho_outputs import build_ortho_outputs
+
+                outputs = build_ortho_outputs(
+                    result.reference_cloud, result.classes_config
+                )
+                self._set_ortho_sources(
+                    result.reference_cloud, outputs.grid, result.classes_config
+                )
+                self._cover_label.setText(self._format_cover_html(outputs.cover))
+            except Exception:
+                logger.exception("Failed to build ortho preview for cached run")
             self._results_group.setVisible(True)
 
 
@@ -1747,6 +1965,17 @@ class DeepReefMapWindow(QMainWindow):
                 self._show_viewer_controls()
                 self._on_viewer_control_changed()
                 self._status_label.setText("Reconstruction complete.")
+            ortho_cloud = kwargs.get("ortho_cloud")
+            cc = kwargs.get("classes_config") or self._classes_config
+            if ortho_cloud is not None and len(ortho_cloud) > 1:
+                try:
+                    from deepreefmap.postproc.ortho_outputs import build_ortho_outputs
+
+                    outputs = build_ortho_outputs(ortho_cloud, cc)
+                    self._set_ortho_sources(ortho_cloud, outputs.grid, cc)
+                    self._cover_label.setText(self._format_cover_html(outputs.cover))
+                except Exception:
+                    logger.exception("Failed to build live ortho preview")
         elif event == "setup_progress":
             message = str(kwargs.get("message", "Setting up viewer"))
             current = int(kwargs.get("current", 0) or 0)
