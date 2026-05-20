@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -245,7 +246,6 @@ def _current_version() -> str:
 
 class DeepReefMapWindow(QMainWindow):
     _sig_update_check_done = Signal(str, object, object)
-    _sig_update_result = Signal(str)
     _sig_model_status_done = Signal(object, object)
     _sig_pipeline_error = Signal(str)
     _sig_status_text = Signal(str)
@@ -265,7 +265,6 @@ class DeepReefMapWindow(QMainWindow):
         self._playback_timer.timeout.connect(self._on_playback_tick)
 
         self._sig_update_check_done.connect(self._apply_update_check)
-        self._sig_update_result.connect(lambda t: self._update_label.setText(t))
         self._sig_model_status_done.connect(self._apply_model_status)
         self._sig_pipeline_error.connect(self._on_pipeline_error)
         self._sig_status_text.connect(lambda t: self._status_label.setText(t))
@@ -2444,29 +2443,29 @@ class DeepReefMapWindow(QMainWindow):
             )
 
     def _on_update(self) -> None:
-        pyapp_bin = _pyapp_binary_path()
-        if pyapp_bin is None:
-            return
-        self._update_btn.setEnabled(False)
-        self._update_label.setText("Updating... this may take a few minutes.")
-        threading.Thread(target=self._run_update, args=(pyapp_bin,), daemon=True).start()
-
-    def _run_update(self, pyapp_bin: str) -> None:
         import subprocess
 
+        pyapp_bin = _pyapp_binary_path()
+        if pyapp_bin is None:
+            logger.warning("Update button clicked but no PyApp binary detected")
+            return
+        self._update_btn.setEnabled(False)
         if os.environ.get("DEEPREEFMAP_MOCK_PYAPP"):
-            self._sig_update_result.emit("Mock update: simulated success. Close and reopen to apply.")
+            logger.info("would have run pyapp self update")
+            QMessageBox.information(self, "Update", "Update simulated successfully (mock mode).")
             return
         try:
-            result = subprocess.run([pyapp_bin, "self", "update"], capture_output=True, text=True, check=False)
-            if result.returncode == 0:
-                text = "Update installed. Close this window and reopen the app."
-            else:
-                tail = (result.stderr or result.stdout)[-300:]
-                text = f"Update failed: {tail}"
+            subprocess.Popen([pyapp_bin, "self", "update"])
         except Exception as exc:
-            text = f"Update failed: {exc!r}"
-        self._sig_update_result.emit(text)
+            logger.exception("Failed to launch pyapp self update")
+            QMessageBox.warning(self, "Update", f"Failed to launch updater: {exc!r}")
+            self._update_btn.setEnabled(True)
+            return
+        QMessageBox.information(
+            self,
+            "Update",
+            "Update is running in the background. Please relaunch the app once it completes.",
+        )
 
 
 _PAST_RUN_META_ROLE = Qt.ItemDataRole.UserRole + 1
