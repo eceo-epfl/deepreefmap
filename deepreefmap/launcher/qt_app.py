@@ -761,11 +761,16 @@ def launch(classes_path: Path = DEFAULT_CLASSES_PATH, view_run_dir: Path | None 
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    # NVIDIA on Wayland gives Qt an EGL/GLES context, which rejects vispy's
+    # desktop GLSL 1.20 shaders. Force XWayland (xcb) so we get a real desktop
+    # GL context, and request a compatibility profile compatible with gl2.
+    if os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("QT_QPA_PLATFORM"):
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
     os.environ.setdefault("QT_OPENGL", "desktop")
     fmt = QSurfaceFormat()
     fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
-    fmt.setVersion(3, 3)
-    fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
+    fmt.setVersion(2, 1)
+    fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
     QSurfaceFormat.setDefaultFormat(fmt)
     qt_app = QApplication.instance() or QApplication(sys.argv)
     classes_config = load_classes(classes_path)
