@@ -10,7 +10,7 @@ from deepreefmap.cli import main as cli_main
 from deepreefmap.config.classes import ClassConfig, SemanticClass
 from deepreefmap.io.exports import save_geometry_cloud
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame, SemanticPointCloud
-from deepreefmap.pipeline.run_loader import LoadedRun, load_cached_run
+from deepreefmap.pipeline.run_loader import LoadedRun, _resolve_classes_path, load_cached_run
 from deepreefmap.pointcloud.filters import PointFilterConfig
 
 
@@ -328,3 +328,24 @@ def test_view_run_cli_reports_disabled_viser(tmp_path: Path, monkeypatch) -> Non
 
     assert result.exit_code == 1
     assert "Failed to start viser server on port 9999: port in use" in result.stderr
+
+
+def test_resolve_classes_path_falls_back_to_default_when_cwd_lacks_configs(tmp_path, monkeypatch) -> None:
+    # Regression: running `deepreefmap` from a cwd where `configs/` doesn't
+    # exist (e.g. from inside the repo's configs subdir) previously raised
+    # FileNotFoundError before load_classes could try its bundled fallback.
+    monkeypatch.chdir(tmp_path)
+    manifest = {"classes": "configs/classes_coralscapes.yaml"}
+    resolved = _resolve_classes_path(tmp_path / "missing_run", manifest)
+    assert resolved == Path("configs/classes_coralscapes.yaml")
+
+
+def test_resolve_classes_path_raises_for_unknown_custom_path(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    manifest = {"classes": "custom/elsewhere.yaml"}
+    try:
+        _resolve_classes_path(tmp_path / "missing_run", manifest)
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("Expected FileNotFoundError for unknown custom path")

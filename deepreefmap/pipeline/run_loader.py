@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from deepreefmap.config.classes import ClassConfig, load_classes
+from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, ClassConfig, load_classes
 from deepreefmap.io.exports import load_geometry_cloud
 from deepreefmap.pipeline import resume as resume_mod
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, SemanticPointCloud
@@ -148,6 +148,11 @@ def _resolve_classes_path(run_dir: Path, manifest: dict[str, Any]) -> Path:
         return run_relative
 
     if classes_path.exists():
+        return classes_path
+
+    # The default path falls back to the bundled package resource inside
+    # load_classes(), so it's fine even if no on-disk file is found.
+    if classes_path == DEFAULT_CLASSES_PATH:
         return classes_path
 
     raise FileNotFoundError(f"Classes config not found for run viewer: {classes_path}")
