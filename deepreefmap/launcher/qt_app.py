@@ -44,6 +44,7 @@ from deepreefmap.launcher.log_view import (
     install_qt_log_handler,
     open_run_log_file,
 )
+from deepreefmap.launcher.qt_app_hf_dialog import HfLoginDialog
 from deepreefmap.visualization.sunburst_widget import SunburstWidget
 
 logger = logging.getLogger(__name__)
@@ -1824,7 +1825,7 @@ class DeepReefMapWindow(QMainWindow):
             threading.Thread(target=_do_logout, daemon=True).start()
             return
 
-        dlg = _HfLoginDialog(self)
+        dlg = HfLoginDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         token = dlg.token()
@@ -3138,41 +3139,6 @@ def _separator() -> QWidget:
     line.setFixedHeight(1)
     line.setStyleSheet("background-color: #555;")
     return line
-
-
-class _HfLoginDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Log in to Hugging Face")
-        self.setModal(True)
-
-        layout = QVBoxLayout(self)
-        intro = QLabel(
-            'Paste an access token from '
-            '<a href="https://huggingface.co/settings/tokens">'
-            'huggingface.co/settings/tokens</a>. '
-            "A read token is enough for gated models."
-        )
-        intro.setOpenExternalLinks(True)
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-
-        self._token_edit = QLineEdit()
-        self._token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._token_edit.setPlaceholderText("hf_...")
-        layout.addWidget(self._token_edit)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        self.resize(420, 140)
-
-    def token(self) -> str:
-        return self._token_edit.text().strip()
 
 
 def launch(classes_path: Path | None = None, view_run_dir: Path | None = None) -> None:
