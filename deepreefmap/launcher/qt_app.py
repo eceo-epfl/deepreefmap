@@ -4,6 +4,7 @@ import importlib.metadata
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -12,14 +13,17 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPixmap, QSurfaceFormat
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -87,6 +91,8 @@ class DeepReefMapWindow(QMainWindow):
     _sig_model_status_done = Signal(object, object)
     _sig_pipeline_error = Signal(str)
     _sig_status_text = Signal(str)
+    _sig_hf_auth_done = Signal(object, str)
+    _sig_download_progress = Signal(str, int)
 
     def __init__(self, classes_config: object, classes_path: Path) -> None:
         super().__init__()
@@ -101,6 +107,8 @@ class DeepReefMapWindow(QMainWindow):
         self._sig_model_status_done.connect(self._apply_model_status)
         self._sig_pipeline_error.connect(self._on_pipeline_error)
         self._sig_status_text.connect(lambda t: self._status_label.setText(t))
+        self._sig_hf_auth_done.connect(self._on_hf_auth_done)
+        self._sig_download_progress.connect(self._on_download_progress)
 
         self.setWindowTitle("DeepReefMap")
         self.resize(1400, 900)
@@ -179,10 +187,13 @@ class DeepReefMapWindow(QMainWindow):
         self._fps_spin.setValue(10)
         layout.addWidget(self._fps_spin)
 
-        advanced_group = QGroupBox("Advanced")
-        advanced_group.setCheckable(True)
-        advanced_group.setChecked(False)
-        adv_layout = QVBoxLayout(advanced_group)
+        self._advanced_toggle = QCheckBox("Advanced settings")
+        self._advanced_toggle.toggled.connect(self._on_advanced_toggled)
+        layout.addWidget(self._advanced_toggle)
+
+        self._advanced_panel = QWidget()
+        adv_layout = QVBoxLayout(self._advanced_panel)
+        adv_layout.setContentsMargins(12, 0, 0, 0)
         adv_layout.addWidget(QLabel("Transect length (m)"))
         self._transect_length = QLineEdit()
         self._transect_length.setPlaceholderText("optional")
@@ -195,11 +206,17 @@ class DeepReefMapWindow(QMainWindow):
         adv_layout.addWidget(self._tsdf_check)
         self._skip_seg_check = QCheckBox("Skip segmentation")
         adv_layout.addWidget(self._skip_seg_check)
-        layout.addWidget(advanced_group)
+        self._advanced_panel.setVisible(False)
+        layout.addWidget(self._advanced_panel)
 
         self._submit_btn = QPushButton("Start reconstruction")
         self._submit_btn.clicked.connect(self._on_submit)
         layout.addWidget(self._submit_btn)
+
+        self._submit_hint = QLabel("")
+        self._submit_hint.setWordWrap(True)
+        self._submit_hint.setStyleSheet("color: #c84; font-style: italic;")
+        layout.addWidget(self._submit_hint)
 
         self._status_label = QLabel("Ready. Fill the form above and click Start.")
         self._status_label.setWordWrap(True)
@@ -304,10 +321,45 @@ class DeepReefMapWindow(QMainWindow):
         layout.addWidget(_separator())
         models_group = QGroupBox("Models")
         self._models_layout = QVBoxLayout(models_group)
-        self._hf_auth_label = QLabel("HF auth: checking...")
+
+        auth_row = QHBoxLayout()
+        self._hf_auth_label = QLabel("Checking Hugging Face login...")
         self._hf_auth_label.setWordWrap(True)
-        self._models_layout.addWidget(self._hf_auth_label)
-        self._model_rows: dict[str, QLabel] = {}
+        auth_row.addWidget(self._hf_auth_label, 1)
+        self._hf_auth_btn = QPushButton("Log in...")
+        self._hf_auth_btn.setFixedWidth(90)
+        self._hf_auth_btn.clicked.connect(self._on_hf_auth_button)
+        auth_row.addWidget(self._hf_auth_btn)
+        self._models_layout.addLayout(auth_row)
+
+        self._models_grid_host = QWidget()
+        self._models_grid = QGridLayout(self._models_grid_host)
+        self._models_grid.setContentsMargins(0, 4, 0, 0)
+        self._models_grid.setHorizontalSpacing(10)
+        self._models_grid.setVerticalSpacing(4)
+        self._models_grid.setColumnStretch(0, 1)
+        self._models_grid.setColumnStretch(1, 0)
+        self._models_layout.addWidget(self._models_grid_host)
+
+        self._hf_auth_user: str | None = None
+        self._model_rows: dict[str, QWidget] = {}
+        self._model_actions: dict[str, QWidget] = {}
+        self._downloading: set[str] = set()
+        self._delete_armed: dict[str, QPushButton] = {}
+        self._last_model_states: list = []
+
+        self._seg_combo.currentTextChanged.connect(self._on_required_models_changed)
+        self._map_combo.currentTextChanged.connect(self._on_required_models_changed)
+        self._skip_seg_check.toggled.connect(self._on_required_models_changed)
+        self._video_input.textChanged.connect(self._recompute_submit_state)
+        self._out_input.textChanged.connect(self._recompute_submit_state)
+
+        self._settings = QSettings("ECEO", "deepreefmap")
+        last_video = self._settings.value("last_video_path", "", type=str)
+        if last_video and Path(last_video).exists():
+            self._video_input.setText(last_video)
+
+        self._recompute_submit_state()
         layout.addWidget(models_group)
         threading.Thread(target=self._refresh_model_status, daemon=True).start()
 
@@ -441,54 +493,279 @@ class DeepReefMapWindow(QMainWindow):
         self._sig_model_status_done.emit(auth_user, model_states)
 
     def _apply_model_status(self, auth_user: str | None, model_states: list) -> None:
+        self._hf_auth_user = auth_user
+        self._last_model_states = list(model_states)
         if auth_user:
-            self._hf_auth_label.setText(f"HF auth: <b>{auth_user}</b>")
+            self._hf_auth_label.setText(
+                f'<span style="color:#4a4">●</span> Logged in as <b>{auth_user}</b>'
+            )
+            self._hf_auth_btn.setText("Log out")
+            self._hf_auth_btn.setEnabled(True)
         else:
-            self._hf_auth_label.setText("HF auth: <b>not logged in</b> (gated models unavailable)")
+            self._hf_auth_label.setText(
+                '<span style="color:#a84">○</span> Not logged in to Hugging Face'
+            )
+            self._hf_auth_btn.setText("Log in...")
+            self._hf_auth_btn.setEnabled(True)
 
-        for label in self._model_rows.values():
-            label.deleteLater()
+        for w in self._model_rows.values():
+            w.deleteLater()
         self._model_rows.clear()
+        self._model_actions.clear()
+        self._delete_armed.clear()
+        while self._models_grid.count():
+            item = self._models_grid.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
 
-        for info, cached in model_states:
-            if cached:
-                status = '<span style="color:#4a4">cached</span>'
-            elif info.gated and not auth_user:
-                status = '<span style="color:#a84">gated (login required)</span>'
-            else:
-                status = '<span style="color:#888">not downloaded</span>'
-            text = f"{info.name} — {status}"
-            row_layout = QHBoxLayout()
-            label = QLabel(text)
-            label.setWordWrap(True)
-            row_layout.addWidget(label, 1)
-            if not cached and not (info.gated and not auth_user):
-                dl_btn = QPushButton("Download")
-                dl_btn.setFixedWidth(80)
-                model_name = info.name
-                dl_btn.clicked.connect(lambda checked=False, n=model_name: self._download_model(n))
-                row_layout.addWidget(dl_btn)
-            container = QWidget()
-            container.setLayout(row_layout)
-            self._models_layout.addWidget(container)
-            self._model_rows[info.name] = container
+        required = self._required_model_names()
+        ordered_states = sorted(model_states, key=lambda s: s[0].name not in required)
+        for row, (info, cached) in enumerate(ordered_states):
+            name_html = f'<span style="color:#cfd">{info.name}</span>'
+            if info.name in required:
+                name_html += (
+                    '&nbsp;<span style="color:#e8a04a; '
+                    'font-size:10px; font-weight:bold">REQUIRED</span>'
+                )
+            name_label = QLabel(name_html)
+            self._models_grid.addWidget(name_label, row, 0)
+
+            action = self._make_action_widget(info, cached, auth_user)
+            self._models_grid.addWidget(action, row, 1)
+            self._model_rows[info.name] = name_label
+            self._model_actions[info.name] = action
+
+        self._recompute_submit_state()
+
+    def _required_model_names(self) -> set[str]:
+        required = {self._map_combo.currentText()}
+        if not self._skip_seg_check.isChecked():
+            required.add(self._seg_combo.currentText())
+        return required
+
+    def _on_required_models_changed(self, _value: object = "") -> None:
+        if self._last_model_states:
+            self._apply_model_status(self._hf_auth_user, self._last_model_states)
+        self._recompute_submit_state()
+
+    def _on_advanced_toggled(self, checked: bool) -> None:
+        self._advanced_panel.setVisible(checked)
+
+    def _recompute_submit_state(self) -> None:
+        reasons: list[str] = []
+        video = self._video_input.text().strip()
+        if not video:
+            reasons.append("pick a video file")
+        elif not Path(video).exists():
+            reasons.append("video file not found")
+        if not self._out_input.text().strip():
+            reasons.append("set an output directory")
+
+        cached_names = {info.name for info, cached in self._last_model_states if cached}
+        missing = [m for m in sorted(self._required_model_names()) if m not in cached_names]
+        if missing and self._last_model_states:
+            reasons.append(f"download required model{'s' if len(missing) > 1 else ''}: {', '.join(missing)}")
+
+        ok = not reasons
+        self._submit_btn.setEnabled(ok)
+        if ok:
+            self._submit_hint.setText("")
+        else:
+            self._submit_hint.setText("Cannot start: " + "; ".join(reasons) + ".")
+
+    def _make_action_widget(self, info, cached: bool, auth_user: str | None) -> QWidget:
+        if info.name in self._downloading:
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setValue(0)
+            bar.setFormat("Downloading %p%")
+            bar.setFixedWidth(150)
+            return bar
+
+        container = QWidget()
+        hb = QHBoxLayout(container)
+        hb.setContentsMargins(0, 0, 0, 0)
+        hb.setSpacing(6)
+
+        icon = QLabel()
+        icon.setFixedWidth(14)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if cached:
+            icon.setText('<span style="color:#4a4; font-weight:bold">✓</span>')
+            icon.setToolTip("cached")
+        elif info.gated and not auth_user:
+            icon.setText('<span style="color:#e8a04a; font-weight:bold">!</span>')
+            icon.setToolTip("login required")
+        else:
+            icon.setText('<span style="color:#888">○</span>')
+            icon.setToolTip("not downloaded")
+        hb.addWidget(icon)
+
+        if cached:
+            btn = QPushButton("Delete")
+            btn.setFixedWidth(110)
+            btn.setToolTip(f"Delete cached files for {info.name}")
+            model_name = info.name
+            btn.clicked.connect(lambda checked=False, n=model_name: self._on_delete_click(n))
+        elif info.gated and not auth_user:
+            btn = QPushButton("Log in")
+            btn.setFixedWidth(110)
+            btn.clicked.connect(self._on_hf_auth_button)
+        else:
+            btn = QPushButton("Download")
+            btn.setFixedWidth(110)
+            model_name = info.name
+            btn.clicked.connect(lambda checked=False, n=model_name: self._download_model(n))
+        hb.addWidget(btn)
+        return container
+
+    def _on_hf_auth_button(self) -> None:
+        if self._hf_auth_user:
+            self._hf_auth_btn.setEnabled(False)
+            self._status_label.setText("Logging out of Hugging Face...")
+
+            def _do_logout() -> None:
+                from deepreefmap.launcher.model_manager import hf_logout
+
+                try:
+                    hf_logout()
+                    self._sig_hf_auth_done.emit(None, "")
+                except Exception as exc:
+                    self._sig_hf_auth_done.emit(self._hf_auth_user, str(exc)[:200])
+
+            threading.Thread(target=_do_logout, daemon=True).start()
+            return
+
+        dlg = _HfLoginDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        token = dlg.token()
+        if not token:
+            return
+
+        self._hf_auth_btn.setEnabled(False)
+        self._status_label.setText("Logging in to Hugging Face...")
+
+        def _do_login() -> None:
+            from deepreefmap.launcher.model_manager import hf_login
+
+            try:
+                user = hf_login(token)
+                self._sig_hf_auth_done.emit(user, "")
+            except Exception as exc:
+                self._sig_hf_auth_done.emit(None, str(exc)[:200])
+
+        threading.Thread(target=_do_login, daemon=True).start()
+
+    def _on_delete_click(self, model_name: str) -> None:
+        # First click arms the button; second click within 3 s executes.
+        container = self._model_actions.get(model_name)
+        if container is None:
+            return
+        btn = container.findChild(QPushButton)
+        if btn is None:
+            return
+        if self._delete_armed.get(model_name) is btn:
+            self._delete_armed.pop(model_name, None)
+            self._execute_delete(model_name)
+            return
+
+        self._delete_armed[model_name] = btn
+        btn.setText("Confirm?")
+        btn.setStyleSheet("background-color: #8a2222; color: white; font-weight: bold;")
+
+        def _revert() -> None:
+            if self._delete_armed.get(model_name) is btn:
+                self._delete_armed.pop(model_name, None)
+                try:
+                    btn.setText("Delete")
+                    btn.setStyleSheet("")
+                except RuntimeError:
+                    pass  # widget was destroyed by a refresh
+
+        QTimer.singleShot(3000, _revert)
+
+    def _execute_delete(self, model_name: str) -> None:
+        from deepreefmap.launcher.model_manager import ALL_MODELS, delete_model
+
+        info = next((m for m in ALL_MODELS if m.name == model_name), None)
+        if info is None:
+            return
+        self._status_label.setText(f"Deleting {model_name}...")
+
+        def _do_delete() -> None:
+            try:
+                removed = delete_model(info)
+                if removed:
+                    self._sig_status_text.emit(f"Deleted cached files for {model_name}.")
+                else:
+                    self._sig_status_text.emit(f"No cached revisions found for {model_name}.")
+            except Exception as exc:
+                self._sig_status_text.emit(f"Delete failed: {str(exc)[:200]}")
+            finally:
+                threading.Thread(target=self._refresh_model_status, daemon=True).start()
+
+        threading.Thread(target=_do_delete, daemon=True).start()
+
+    def _swap_action_to_progress(self, model_name: str) -> None:
+        old = self._model_actions.get(model_name)
+        if old is None:
+            return
+        # Locate the cell so we can drop in the progress bar at the same spot.
+        idx = self._models_grid.indexOf(old)
+        if idx < 0:
+            return
+        row, col, _, _ = self._models_grid.getItemPosition(idx)
+        self._models_grid.removeWidget(old)
+        old.deleteLater()
+        bar = QProgressBar()
+        bar.setRange(0, 100)
+        bar.setValue(0)
+        bar.setFormat("Downloading %p%")
+        bar.setFixedWidth(130)
+        self._models_grid.addWidget(bar, row, col)
+        self._model_actions[model_name] = bar
+
+    def _on_download_progress(self, model_name: str, percent: int) -> None:
+        widget = self._model_actions.get(model_name)
+        if isinstance(widget, QProgressBar):
+            widget.setValue(max(0, min(100, percent)))
+
+    def _on_hf_auth_done(self, user: object, error: str) -> None:
+        if error:
+            self._status_label.setText(f"Hugging Face auth failed: {error}")
+        elif user:
+            self._status_label.setText(f"Logged in to Hugging Face as {user}.")
+        else:
+            self._status_label.setText("Logged out of Hugging Face.")
+        threading.Thread(target=self._refresh_model_status, daemon=True).start()
 
     def _download_model(self, model_name: str) -> None:
         from deepreefmap.launcher.model_manager import ALL_MODELS, prefetch_model
 
         info = next((m for m in ALL_MODELS if m.name == model_name), None)
-        if info is None:
+        if info is None or model_name in self._downloading:
             return
         self._status_label.setText(f"Downloading model {model_name}...")
+        self._downloading.add(model_name)
+        self._swap_action_to_progress(model_name)
+
+        def _progress(n: int, total: int) -> None:
+            if total <= 0:
+                return
+            self._sig_download_progress.emit(model_name, int(100 * n / total))
 
         def _do_download() -> None:
             try:
-                prefetch_model(info)
+                prefetch_model(info, progress_cb=_progress)
                 self._sig_status_text.emit(f"Model {model_name} downloaded.")
-                threading.Thread(target=self._refresh_model_status, daemon=True).start()
             except Exception as exc:
                 msg = str(exc)[:200]
                 self._sig_status_text.emit(f"Download failed: {msg}")
+            finally:
+                self._downloading.discard(model_name)
+                threading.Thread(target=self._refresh_model_status, daemon=True).start()
 
         threading.Thread(target=_do_download, daemon=True).start()
 
@@ -517,6 +794,8 @@ class DeepReefMapWindow(QMainWindow):
 
         out_dir = Path(self._out_input.text()).expanduser()
         out_dir.mkdir(parents=True, exist_ok=True)
+
+        self._settings.setValue("last_video_path", str(video_path))
 
         def parse_optional_float(s: str) -> float | None:
             s = s.strip()
@@ -753,6 +1032,41 @@ def _separator() -> QWidget:
     line.setFixedHeight(1)
     line.setStyleSheet("background-color: #555;")
     return line
+
+
+class _HfLoginDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Log in to Hugging Face")
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            'Paste an access token from '
+            '<a href="https://huggingface.co/settings/tokens">'
+            'huggingface.co/settings/tokens</a>. '
+            "A read token is enough for gated models."
+        )
+        intro.setOpenExternalLinks(True)
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        self._token_edit = QLineEdit()
+        self._token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._token_edit.setPlaceholderText("hf_...")
+        layout.addWidget(self._token_edit)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.resize(420, 140)
+
+    def token(self) -> str:
+        return self._token_edit.text().strip()
 
 
 def launch(classes_path: Path = DEFAULT_CLASSES_PATH, view_run_dir: Path | None = None) -> None:

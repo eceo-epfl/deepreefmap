@@ -1,6 +1,7 @@
 """Tests for the Qt launcher, viewer, model manager, and version checking.
 
-Uses QT_QPA_PLATFORM=offscreen so no display is needed.
+Requires a real display because VTK (used by the 3D viewer) needs a working
+OpenGL context. CI runs these under xvfb.
 """
 
 from __future__ import annotations
@@ -236,7 +237,8 @@ def test_build_frustum_lines_origin_at_pose_position():
 
 @pytest.fixture(scope="module")
 def qapp():
-    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    if os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("QT_QPA_PLATFORM"):
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
     from PySide6.QtWidgets import QApplication
 
     app = QApplication.instance()

@@ -6,15 +6,14 @@ from typing import Callable
 
 import cv2
 import numpy as np
+import pyvista as pv
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QLabel, QSplitter, QVBoxLayout, QWidget
-import vispy
-vispy.use(gl="gl2")
-from vispy import scene  # noqa: E402
+from pyvistaqt import QtInteractor
 
-from deepreefmap.visualization.final_cloud_index import FinalCloudIndex, build_final_cloud_index  # noqa: E402
-from deepreefmap.visualization.live_frame_cloud import (  # noqa: E402
+from deepreefmap.visualization.final_cloud_index import FinalCloudIndex, build_final_cloud_index
+from deepreefmap.visualization.live_frame_cloud import (
     LiveFrameCloudCache,
     build_enabled_label_lut,
     mask_points_by_enabled_lut,
@@ -23,7 +22,6 @@ from deepreefmap.visualization.live_frame_cloud import (  # noqa: E402
 logger = logging.getLogger(__name__)
 
 _EMPTY_XYZ = np.zeros((0, 3), dtype=np.float32)
-_EMPTY_RGBA = np.zeros((0, 4), dtype=np.float32)
 
 
 def _to_rgba(rgb: np.ndarray) -> np.ndarray:
@@ -82,6 +80,35 @@ def _build_frustum_lines(pose_w_c: np.ndarray, fov_y: float, aspect: float, scal
     return np.array(lines, dtype=np.float32)
 
 
+def _as_uint8_rgb(rgb: np.ndarray) -> np.ndarray:
+    arr = np.asarray(rgb)
+    if arr.dtype == np.uint8:
+        return np.ascontiguousarray(arr)
+    f = arr.astype(np.float32)
+    if f.size and f.max() <= 1.0 + 1e-6:
+        f = f * 255.0
+    return np.ascontiguousarray(np.clip(f, 0, 255).astype(np.uint8))
+
+
+def _make_point_polydata(xyz: np.ndarray, rgb: np.ndarray) -> pv.PolyData:
+    pts = np.ascontiguousarray(xyz, dtype=np.float32)
+    pd = pv.PolyData(pts)
+    pd["colors"] = _as_uint8_rgb(rgb)
+    return pd
+
+
+def _make_line_segments_polydata(points: np.ndarray) -> pv.PolyData:
+    pts = np.ascontiguousarray(points, dtype=np.float32)
+    n_segments = len(pts) // 2
+    cells = np.empty((n_segments, 3), dtype=np.int64)
+    cells[:, 0] = 2
+    cells[:, 1] = np.arange(0, n_segments * 2, 2)
+    cells[:, 2] = np.arange(1, n_segments * 2, 2)
+    pd = pv.PolyData(pts)
+    pd.lines = cells.ravel()
+    return pd
+
+
 class QtPointCloudViewer(QWidget):
     _sig_start_run = Signal(str, str)
     _sig_set_stage = Signal(str, str, object)
@@ -102,17 +129,34 @@ class QtPointCloudViewer(QWidget):
         self._class_names = class_names or {}
         self._output_dir: Path | None = None
 
-        self._canvas = scene.SceneCanvas(keys="interactive", show=False)
-        self._view = self._canvas.central_widget.add_view()
-        self._view.camera = scene.TurntableCamera(fov=60, distance=5.0)
-        self._view.bgcolor = "#141414"
+        self._image_label = QLabel()
+        self._image_label.setAlignment(Qt.AlignCenter)
+        self._image_label.setMinimumHeight(120)
+        self._image_label.setStyleSheet("background-color: #1a1a1a;")
 
-        self._simple_markers = scene.visuals.Markers(parent=self._view.scene)
-        self._simple_markers.scaling = "fixed"
-        self._live_markers = scene.visuals.Markers(parent=self._view.scene)
-        self._live_markers.scaling = "fixed"
-        self._class_markers: dict[int, scene.visuals.Markers] = {}
-        self._frustum_visuals: dict[int, scene.visuals.Line] = {}
+        self._main_splitter = QSplitter(Qt.Vertical)
+        self._canvas_container = QWidget()
+        self._canvas_layout = QVBoxLayout(self._canvas_container)
+        self._canvas_layout.setContentsMargins(0, 0, 0, 0)
+        self._main_splitter.addWidget(self._canvas_container)
+        self._main_splitter.addWidget(self._image_label)
+        self._main_splitter.setStretchFactor(0, 3)
+        self._main_splitter.setStretchFactor(1, 1)
+        self._canvas_revealed = False
+        self._canvas_container.setVisible(False)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._main_splitter)
+
+        self._plotter: QtInteractor | None = None
+
+        self._simple_actor = None
+        self._live_actor = None
+        self._live_polydata: pv.PolyData | None = None
+        self._class_actors: dict[int, object] = {}
+        self._class_polydata: dict[int, pv.PolyData] = {}
+        self._frustum_actors: dict[int, object] = {}
 
         self._final_index: FinalCloudIndex | None = None
         self._live_cache: LiveFrameCloudCache | None = None
@@ -129,27 +173,6 @@ class QtPointCloudViewer(QWidget):
 
         self._frame_panel_cache: dict[int, np.ndarray] = {}
 
-        self._image_label = QLabel()
-        self._image_label.setAlignment(Qt.AlignCenter)
-        self._image_label.setMinimumHeight(120)
-        self._image_label.setStyleSheet("background-color: #1a1a1a;")
-
-        self._main_splitter = QSplitter(Qt.Vertical)
-        self._canvas_container = QWidget()
-        cl = QVBoxLayout(self._canvas_container)
-        cl.setContentsMargins(0, 0, 0, 0)
-        cl.addWidget(self._canvas.native)
-        self._main_splitter.addWidget(self._canvas_container)
-        self._main_splitter.addWidget(self._image_label)
-        self._main_splitter.setStretchFactor(0, 3)
-        self._main_splitter.setStretchFactor(1, 1)
-        self._canvas_revealed = False
-        self._canvas_container.setVisible(False)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._main_splitter)
-
         self._sig_start_run.connect(self._on_start_run)
         self._sig_set_stage.connect(self._on_set_stage)
         self._sig_update_progress.connect(self._on_update_progress)
@@ -163,7 +186,20 @@ class QtPointCloudViewer(QWidget):
     def set_status_callback(self, cb: Callable[..., None]) -> None:
         self._status_callback = cb
 
+    def _ensure_plotter(self) -> QtInteractor:
+        if self._plotter is not None:
+            return self._plotter
+        self._plotter = QtInteractor(self._canvas_container)
+        self._plotter.set_background("#141414")
+        try:
+            self._plotter.enable_eye_dome_lighting()
+        except Exception:
+            logger.debug("Eye dome lighting unavailable", exc_info=True)
+        self._canvas_layout.addWidget(self._plotter)
+        return self._plotter
+
     def _reveal_canvas(self) -> None:
+        self._ensure_plotter()
         if self._canvas_revealed:
             return
         self._canvas_revealed = True
@@ -197,13 +233,13 @@ class QtPointCloudViewer(QWidget):
         if xyz.shape[0] == 0:
             return
         self._clear_scene_data()
-        positions = np.ascontiguousarray(xyz, dtype=np.float32)
-        self._simple_markers.set_data(
-            pos=positions, face_color=_to_rgba(rgb), edge_width=0,
-            size=point_size,
+        plotter = self._ensure_plotter()
+        pd = _make_point_polydata(xyz, rgb)
+        self._simple_actor = plotter.add_mesh(
+            pd, scalars="colors", rgb=True, point_size=point_size,
+            style="points", name="simple_cloud",
         )
-        self._simple_markers.visible = True
-        self._auto_fit_camera(positions)
+        plotter.reset_camera()
         self._reveal_canvas()
 
     # --- Scene data ---
@@ -216,6 +252,7 @@ class QtPointCloudViewer(QWidget):
         classes_config: object,
     ) -> None:
         self._clear_scene_data()
+        plotter = self._ensure_plotter()
         self._frame_batch = frame_batch
         self._mapping_result = mapping_result
 
@@ -232,18 +269,24 @@ class QtPointCloudViewer(QWidget):
         )
 
         for cid in self._final_index.class_ids:
-            m = scene.visuals.Markers(parent=self._view.scene)
-            m.scaling = "fixed"
-            m.visible = False
-            self._class_markers[cid] = m
+            empty = pv.PolyData(np.zeros((1, 3), dtype=np.float32))
+            empty["colors"] = np.zeros((1, 3), dtype=np.uint8)
+            actor = plotter.add_mesh(
+                empty, scalars="colors", rgb=True, point_size=2.0,
+                style="points", name=f"class_{cid}",
+            )
+            actor.SetVisibility(False)
+            self._class_actors[cid] = actor
+            self._class_polydata[cid] = empty
 
         self._build_frustums(frame_batch, mapping_result)
 
-        self._simple_markers.visible = False
-        self._last_t = None
-
         if self._final_index.class_ids:
-            all_xyz = [self._final_index.xyz_by_class[c] for c in self._final_index.class_ids if c in self._final_index.xyz_by_class]
+            all_xyz = [
+                self._final_index.xyz_by_class[c]
+                for c in self._final_index.class_ids
+                if c in self._final_index.xyz_by_class
+            ]
             if all_xyz:
                 combined = np.concatenate(all_xyz, axis=0)
                 if combined.shape[0] > 0:
@@ -253,6 +296,8 @@ class QtPointCloudViewer(QWidget):
         self._notify_status("scene_loaded")
 
     def _build_frustums(self, frame_batch: object, mapping_result: object) -> None:
+        if self._plotter is None:
+            return
         mapping_indices = np.asarray(mapping_result.frame_indices, dtype=np.int32).reshape(-1)
         intrinsics = np.asarray(mapping_result.intrinsics, dtype=np.float64)
         depth_h, depth_w = mapping_result.depth_maps[0].shape
@@ -268,21 +313,41 @@ class QtPointCloudViewer(QWidget):
                 continue
             pose_w_c = np.asarray(mapping_result.poses_w_c[mi], dtype=np.float64)
             pts = _build_frustum_lines(pose_w_c, fov_y, aspect)
-            line = scene.visuals.Line(
-                pos=pts, color=(0.5, 0.5, 0.5, 0.6), width=1,
-                connect="segments", parent=self._view.scene,
+            pd = _make_line_segments_polydata(pts)
+            actor = self._plotter.add_mesh(
+                pd, color=(0.5, 0.5, 0.5), line_width=1, opacity=0.6,
+                name=f"frustum_{frame_idx}",
             )
-            self._frustum_visuals[frame_idx] = line
+            self._frustum_actors[frame_idx] = actor
 
     def _clear_scene_data(self) -> None:
-        for m in self._class_markers.values():
-            m.parent = None
-        self._class_markers.clear()
-        self._live_markers.set_data(pos=_EMPTY_XYZ[:, :3] if _EMPTY_XYZ.shape[1] >= 3 else np.zeros((0, 3), dtype=np.float32))
-        self._live_markers.visible = False
-        for v in self._frustum_visuals.values():
-            v.parent = None
-        self._frustum_visuals.clear()
+        if self._plotter is not None:
+            for actor in self._class_actors.values():
+                try:
+                    self._plotter.remove_actor(actor)
+                except Exception:
+                    pass
+            for actor in self._frustum_actors.values():
+                try:
+                    self._plotter.remove_actor(actor)
+                except Exception:
+                    pass
+            if self._live_actor is not None:
+                try:
+                    self._plotter.remove_actor(self._live_actor)
+                except Exception:
+                    pass
+            if self._simple_actor is not None:
+                try:
+                    self._plotter.remove_actor(self._simple_actor)
+                except Exception:
+                    pass
+        self._class_actors.clear()
+        self._class_polydata.clear()
+        self._frustum_actors.clear()
+        self._live_actor = None
+        self._live_polydata = None
+        self._simple_actor = None
         self._final_index = None
         self._live_cache = None
         self._frame_batch = None
@@ -293,12 +358,18 @@ class QtPointCloudViewer(QWidget):
         self._last_semantic = None
         self._last_enabled = None
         self._last_confidence = None
+        self._last_point_size = None
 
     def _auto_fit_camera(self, positions: np.ndarray) -> None:
+        if self._plotter is None:
+            return
         center = positions.mean(axis=0)
         extent = float(np.linalg.norm(positions.max(axis=0) - positions.min(axis=0)))
-        self._view.camera.center = tuple(center.tolist())
-        self._view.camera.distance = extent * 1.5
+        self._plotter.camera.focal_point = tuple(center.tolist())
+        cam_pos = center + np.array([0.0, 0.0, extent * 1.5], dtype=np.float64)
+        self._plotter.camera.position = tuple(cam_pos.tolist())
+        self._plotter.camera.up = (0.0, 1.0, 0.0)
+        self._plotter.reset_camera()
 
     # --- State application ---
 
@@ -313,6 +384,8 @@ class QtPointCloudViewer(QWidget):
         frustums_visible: bool = True,
     ) -> None:
         if self._final_index is None or self._live_cache is None:
+            return
+        if self._plotter is None:
             return
 
         fi = self._final_index
@@ -334,9 +407,31 @@ class QtPointCloudViewer(QWidget):
             if self._last_point_size != point_size:
                 self._update_point_sizes(point_size)
             self._update_frustum_visibility(frustums_visible, t)
+            self._plotter.render()
             return
 
-        # Live cloud
+        self._update_live_cloud(t, enabled_classes, semantic_colors, min_conf, point_size)
+        self._update_class_clouds(t, accumulate, enabled_classes, semantic_colors, min_conf, point_size)
+        self._update_frustum_visibility(frustums_visible, t)
+        self._update_image_panel(t)
+
+        self._last_t = t
+        self._last_accumulate = accumulate
+        self._last_semantic = semantic_colors
+        self._last_enabled = enabled_classes
+        self._last_confidence = min_conf
+        self._last_point_size = point_size
+
+        self._plotter.render()
+
+    def _update_live_cloud(
+        self,
+        t: int,
+        enabled_classes: frozenset[int],
+        semantic_colors: bool,
+        min_conf: float,
+        point_size: float,
+    ) -> None:
         try:
             xyz_u, rgb_u, lab_u, conf_u = self._live_cache.get_unmasked(t)
         except Exception:
@@ -345,43 +440,65 @@ class QtPointCloudViewer(QWidget):
             lab_u = np.zeros((0,), dtype=np.int32)
             conf_u = np.zeros((0,), dtype=np.float32)
 
-        if xyz_u.shape[0] > 0:
-            max_id = max(self._max_label_id, int(lab_u.max()) if lab_u.size else 0)
-            lut = build_enabled_label_lut(max_id, set(enabled_classes))
-            m = mask_points_by_enabled_lut(lab_u, lut)
-            if min_conf > 0.0 and conf_u.size:
-                m &= conf_u >= min_conf
-            xyz_live = xyz_u[m]
-            if semantic_colors:
-                cols_live = np.full((xyz_live.shape[0], 3), 128, dtype=np.uint8)
-                for cid, color in self._class_colors.items():
-                    cols_live[lab_u[m] == cid] = color
-            else:
-                cols_live = rgb_u[m]
-            if xyz_live.shape[0] > 0:
-                self._live_markers.set_data(
-                    pos=np.ascontiguousarray(xyz_live, dtype=np.float32),
-                    face_color=_to_rgba(cols_live), edge_width=0,
-                    size=point_size,
-                )
-                self._live_markers.visible = True
-            else:
-                self._live_markers.visible = False
-        else:
-            self._live_markers.visible = False
+        if xyz_u.shape[0] == 0:
+            if self._live_actor is not None:
+                self._live_actor.SetVisibility(False)
+            return
 
-        # Final cloud per class
-        for cid, markers in self._class_markers.items():
+        max_id = max(self._max_label_id, int(lab_u.max()) if lab_u.size else 0)
+        lut = build_enabled_label_lut(max_id, set(enabled_classes))
+        m = mask_points_by_enabled_lut(lab_u, lut)
+        if min_conf > 0.0 and conf_u.size:
+            m &= conf_u >= min_conf
+        xyz_live = xyz_u[m]
+
+        if xyz_live.shape[0] == 0:
+            if self._live_actor is not None:
+                self._live_actor.SetVisibility(False)
+            return
+
+        if semantic_colors:
+            cols_live = np.full((xyz_live.shape[0], 3), 128, dtype=np.uint8)
+            for cid, color in self._class_colors.items():
+                cols_live[lab_u[m] == cid] = color
+        else:
+            cols_live = rgb_u[m]
+
+        pd = _make_point_polydata(xyz_live, cols_live)
+        if self._live_actor is None:
+            self._live_actor = self._plotter.add_mesh(
+                pd, scalars="colors", rgb=True, point_size=point_size,
+                style="points", name="live_cloud",
+            )
+            self._live_polydata = pd
+        else:
+            self._live_actor.GetMapper().SetInputData(pd)
+            self._live_polydata = pd
+            self._live_actor.GetProperty().SetPointSize(point_size)
+            self._live_actor.SetVisibility(True)
+
+    def _update_class_clouds(
+        self,
+        t: int,
+        accumulate: bool,
+        enabled_classes: frozenset[int],
+        semantic_colors: bool,
+        min_conf: float,
+        point_size: float,
+    ) -> None:
+        fi = self._final_index
+        assert fi is not None
+        for cid, actor in self._class_actors.items():
             if cid not in enabled_classes:
-                markers.visible = False
+                actor.SetVisibility(False)
                 continue
             xyz_c = fi.xyz_by_class.get(cid)
             if xyz_c is None or xyz_c.shape[0] == 0:
-                markers.visible = False
+                actor.SetVisibility(False)
                 continue
             n = int(fi.prefix_end_by_class[cid][t]) if accumulate else 0
             if n <= 0:
-                markers.visible = False
+                actor.SetVisibility(False)
                 continue
             src = fi.semrgb_by_class[cid] if semantic_colors else fi.rgb_by_class[cid]
             pts = xyz_c[:n]
@@ -393,26 +510,21 @@ class QtPointCloudViewer(QWidget):
                     pts = pts[keep]
                     cols = cols[keep]
             if pts.shape[0] == 0:
-                markers.visible = False
+                actor.SetVisibility(False)
                 continue
-            markers.set_data(
-                pos=np.ascontiguousarray(pts, dtype=np.float32),
-                face_color=_to_rgba(cols), edge_width=0,
-                size=point_size,
-            )
-            markers.visible = True
-
-        self._update_frustum_visibility(frustums_visible, t)
-        self._update_image_panel(t)
-
-        self._last_t = t
-        self._last_accumulate = accumulate
-        self._last_semantic = semantic_colors
-        self._last_enabled = enabled_classes
-        self._last_confidence = min_conf
-        self._last_point_size = point_size
+            pd = _make_point_polydata(pts, cols)
+            actor.GetMapper().SetInputData(pd)
+            actor.GetProperty().SetPointSize(point_size)
+            actor.SetVisibility(True)
+            self._class_polydata[cid] = pd
 
     def _update_point_sizes(self, point_size: float) -> None:
+        for actor in self._class_actors.values():
+            actor.GetProperty().SetPointSize(point_size)
+        if self._live_actor is not None:
+            self._live_actor.GetProperty().SetPointSize(point_size)
+        if self._simple_actor is not None:
+            self._simple_actor.GetProperty().SetPointSize(point_size)
         self._last_point_size = point_size
 
     def _update_frustum_visibility(self, visible: bool, t: int) -> None:
@@ -421,12 +533,19 @@ class QtPointCloudViewer(QWidget):
         if fi is not None and len(fi.frame_order) > 0:
             tt = int(np.clip(t, 0, len(fi.frame_order) - 1))
             current_frame = int(fi.frame_order[tt])
-        for fid, line in self._frustum_visuals.items():
-            line.visible = visible
-            if visible and fid == current_frame:
-                line.set_data(color=(1.0, 0.8, 0.25, 0.9), width=2)
-            elif visible:
-                line.set_data(color=(0.5, 0.5, 0.5, 0.6), width=1)
+        for fid, actor in self._frustum_actors.items():
+            actor.SetVisibility(bool(visible))
+            if not visible:
+                continue
+            prop = actor.GetProperty()
+            if fid == current_frame:
+                prop.SetColor(1.0, 0.8, 0.25)
+                prop.SetOpacity(0.9)
+                prop.SetLineWidth(2.0)
+            else:
+                prop.SetColor(0.5, 0.5, 0.5)
+                prop.SetOpacity(0.6)
+                prop.SetLineWidth(1.0)
 
     # --- Image panel ---
 
@@ -590,7 +709,11 @@ class QtPointCloudViewer(QWidget):
 
     @Slot()
     def _on_close(self) -> None:
-        pass
+        if self._plotter is not None:
+            try:
+                self._plotter.close()
+            except Exception:
+                pass
 
     def _notify_status(self, event: str, **kwargs: object) -> None:
         if self._status_callback is not None:
