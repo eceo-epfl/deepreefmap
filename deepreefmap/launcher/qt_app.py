@@ -39,6 +39,161 @@ from PySide6.QtWidgets import (
 logger = logging.getLogger(__name__)
 
 
+class ProgressModel:
+    """Weighted, ordered phase model that drives the unified total progress bar.
+
+    Each phase contributes a fixed fraction of the total. Phases are reported
+    forward-only: when a later phase begins, all earlier phases are promoted
+    to 100% so the total bar never moves backwards within a run.
+    """
+
+    def __init__(self, phases: list[tuple[str, float]]) -> None:
+        self._phases = phases
+        self._idx_by_key = {k: i for i, (k, _) in enumerate(phases)}
+        self._total_weight = sum(w for _, w in phases) or 1.0
+        self._percents: dict[str, float] = {k: 0.0 for k, _ in phases}
+        self._max_idx = -1
+
+    def update(self, key: str, cur: int, tot: int) -> int:
+        """Record progress for `key`. Returns the new total percent (0-100)."""
+        idx = self._idx_by_key.get(key)
+        if idx is not None:
+            if idx > self._max_idx:
+                # Promote the previously-active phase (if any) and every
+                # phase we skipped past — they're all done. `max(0, ...)`
+                # handles the initial state where _max_idx == -1.
+                for i in range(max(0, self._max_idx), idx):
+                    self._percents[self._phases[i][0]] = 100.0
+                self._max_idx = idx
+            if tot > 0:
+                frac = max(0.0, min(1.0, float(cur) / float(tot)))
+                new_pct = 100.0 * frac
+                if new_pct > self._percents[key]:
+                    self._percents[key] = new_pct
+        return self.total_percent()
+
+    def total_percent(self) -> int:
+        s = sum(self._percents[k] / 100.0 * w for k, w in self._phases)
+        return int(round(s / self._total_weight * 100))
+
+    def reset(self) -> None:
+        for k in self._percents:
+            self._percents[k] = 0.0
+        self._max_idx = -1
+
+
+# Note on ortho_* weights: build_ortho_outputs is dominated by sklearn's
+# PCA.fit_transform on the full point cloud. On large reefs (10M+ points
+# — the 3.5GB-dataset case) that single step can be ~60% of total wall
+# time, which is why ortho_pca carries the biggest individual weight.
+_RECON_PHASES: list[tuple[str, float]] = [
+    ("startup", 1.0),
+    ("preprocess", 18.0),
+    ("mapping", 25.0),
+    ("outputs", 2.0),
+    ("cloud_concat", 2.0),
+    ("cloud_replace", 10.0),
+    ("cloud_voxel", 1.0),
+    ("ortho_pca", 12.0),
+    ("ortho_sort", 4.0),
+    ("ortho_aggregate", 4.0),
+    ("ortho_cover", 2.0),
+    ("viewer_index_cloud", 1.0),
+    ("viewer_index_classes", 4.0),
+    ("viewer_actors", 1.0),
+    ("viewer_frustums", 3.0),
+    ("viewer_camera", 1.0),
+    ("viewer_upload", 6.0),
+    ("viewer_finalise", 1.0),
+    ("ortho_save", 2.0),
+]
+
+# cloud_concat / cloud_replace / cloud_voxel are the silent post-frame steps
+# inside build_semantic_reference_cloud (concatenate, replacement-radius
+# lexsort, optional voxel reduce). On a 3.5GB dataset cloud_replace alone is
+# multi-second wall time — hence the chunky weight. The ortho_* phases come
+# from the live ortho preview built at the end of _apply_loaded_run.
+_LOAD_PHASES: list[tuple[str, float]] = [
+    ("manifest", 1.0),
+    ("mapping_load", 6.0),
+    ("frames_load", 18.0),
+    ("cloud_build", 15.0),
+    ("cloud_concat", 3.0),
+    ("cloud_replace", 12.0),
+    ("cloud_voxel", 2.0),
+    ("ortho_pca", 8.0),
+    ("ortho_sort", 2.0),
+    ("ortho_aggregate", 1.0),
+    ("ortho_cover", 1.0),
+    ("viewer_index_cloud", 2.0),
+    ("viewer_index_classes", 5.0),
+    ("viewer_actors", 1.0),
+    ("viewer_frustums", 4.0),
+    ("viewer_camera", 1.0),
+    ("viewer_upload", 17.0),
+    ("viewer_finalise", 1.0),
+]
+
+# Maps setup_progress messages from qt_viewer to phase keys.
+_SETUP_MESSAGE_TO_PHASE: dict[str, str] = {
+    "Indexing point cloud": "viewer_index_cloud",
+    "Indexing cloud": "viewer_index_cloud",
+    "Indexing classes": "viewer_index_classes",
+    "Preparing class actors": "viewer_actors",
+    "Building camera frustums": "viewer_frustums",
+    "Fitting camera": "viewer_camera",
+    "Uploading class points": "viewer_upload",
+    "Finalising viewer": "viewer_finalise",
+}
+
+# Maps view-run loader stage strings to phase keys. The `cloud_*` variants
+# are emitted by run_loader's stage_cb after the per-frame loop reports
+# N/N, so the bars don't freeze during concatenation / replacement /
+# voxelization.
+_LOAD_STAGE_TO_PHASE: dict[str, str] = {
+    "manifest": "manifest",
+    "classes": "manifest",
+    "mapping": "mapping_load",
+    "frames": "frames_load",
+    "cloud": "cloud_build",
+    "cloud_concatenating": "cloud_concat",
+    "cloud_replacing": "cloud_replace",
+    # The replacement-radius lexsort is the dominant cost of cloud_replace
+    # on multi-million-point clouds; route its sub-steps to the same phase
+    # so the total bar reflects them under cloud_replace's weight.
+    "cloud_replacing_keys": "cloud_replace",
+    "cloud_replacing_sort": "cloud_replace",
+    "cloud_replacing_select": "cloud_replace",
+    "cloud_voxelizing": "cloud_voxel",
+    "geometry": "cloud_build",
+}
+
+# Maps the per-stage `set_stage(stage, status, message)` text to a finer
+# phase key. Used so the "outputs" stage can drive distinct ortho_* phases
+# from the messages the orchestrator emits while building the ortho grid
+# and writing the final files.
+_STAGE_MESSAGE_TO_PHASE: dict[str, str] = {
+    "Concatenating point arrays": "cloud_concat",
+    "Applying replacement radius": "cloud_replace",
+    "Replacement radius: computing voxel keys": "cloud_replace",
+    "Replacement radius: sorting points": "cloud_replace",
+    "Replacement radius: selecting representatives": "cloud_replace",
+    "Reducing by voxel size": "cloud_voxel",
+    "Computing PCA projection": "ortho_pca",
+    "Sorting points into cells": "ortho_sort",
+    "Aggregating ortho grid": "ortho_aggregate",
+    "Computing benthic cover": "ortho_cover",
+    "Saving semantic cloud": "ortho_save",
+    "Saving TSDF cloud": "ortho_save",
+    "Saving ortho image": "ortho_save",
+    "Saving cover report": "ortho_save",
+    "Writing run manifest": "ortho_save",
+    "Saving outputs": "ortho_save",
+    "Building geometry cloud": "outputs",
+    "Generating outputs": "outputs",
+}
+
+
 _DEFAULT_GH_REPO = "eceo-epfl/deepreefmap"
 
 
@@ -369,6 +524,21 @@ class DeepReefMapWindow(QMainWindow):
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
         self._progress_bar.setVisible(False)
+        self._progress_bar.setToolTip("Current step progress")
+
+        # Second bar showing total weighted progress across all phases of
+        # a reconstruction or cached-run load. Driven by the active
+        # ProgressModel.
+        self._total_progress_bar = QProgressBar()
+        self._total_progress_bar.setRange(0, 100)
+        self._total_progress_bar.setValue(0)
+        self._total_progress_bar.setVisible(False)
+        self._total_progress_bar.setFormat("Total %p%")
+        self._total_progress_bar.setToolTip("Total progress across all phases")
+
+        self._recon_model = ProgressModel(_RECON_PHASES)
+        self._load_model = ProgressModel(_LOAD_PHASES)
+        self._active_progress_model: ProgressModel | None = None
 
         layout.addWidget(_separator())
 
@@ -678,8 +848,10 @@ class DeepReefMapWindow(QMainWindow):
 
         self._status_label.setStyleSheet("color: #ccc;")
         h.addWidget(self._status_label, 3)
-        self._progress_bar.setMaximumWidth(180)
+        self._progress_bar.setMaximumWidth(160)
         h.addWidget(self._progress_bar)
+        self._total_progress_bar.setMaximumWidth(160)
+        h.addWidget(self._total_progress_bar)
         h.addWidget(self._load_cancel_btn)
 
         return bar
@@ -690,10 +862,72 @@ class DeepReefMapWindow(QMainWindow):
         # arrives. The thread is a daemon and will exit with the process.
         self._load_cancelled = True
         self._load_cancel_btn.setVisible(False)
+        self._reset_progress_bars()
+        self._status_label.setText("Load cancelled.")
+
+    # --- Unified progress plumbing ---
+
+    def _begin_progress(self, model: ProgressModel) -> None:
+        """Switch the active progress model and show both bars from zero."""
+        model.reset()
+        self._active_progress_model = model
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(True)
+        self._total_progress_bar.setRange(0, 100)
+        self._total_progress_bar.setValue(0)
+        self._total_progress_bar.setVisible(True)
+
+    def _reset_progress_bars(self) -> None:
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
         self._progress_bar.setVisible(False)
-        self._status_label.setText("Load cancelled.")
+        self._total_progress_bar.setRange(0, 100)
+        self._total_progress_bar.setValue(0)
+        self._total_progress_bar.setVisible(False)
+        self._active_progress_model = None
+
+    def _apply_progress(
+        self,
+        phase_key: str,
+        label: str,
+        current: int = 0,
+        total: int = 0,
+        flush: bool = False,
+    ) -> None:
+        """Update the per-step bar/label and the unified total bar.
+
+        - `total > 1`: per-step bar is determinate; status shows `cur/tot`.
+        - `total == 1`: per-step bar shows the phase as complete.
+        - `total <= 0`: per-step bar is indeterminate.
+        Total bar always reflects the active model's weighted progress.
+        """
+        if total > 1:
+            if self._progress_bar.minimum() != 0 or self._progress_bar.maximum() != total:
+                self._progress_bar.setRange(0, total)
+            self._progress_bar.setValue(current)
+            self._status_label.setText(f"{label}… {current}/{total}")
+        elif total == 1:
+            self._progress_bar.setRange(0, 1)
+            self._progress_bar.setValue(1)
+            self._status_label.setText(f"{label}…")
+        else:
+            self._progress_bar.setRange(0, 0)
+            self._status_label.setText(f"{label}…")
+        self._progress_bar.setVisible(True)
+
+        if self._active_progress_model is not None:
+            pct = self._active_progress_model.update(
+                phase_key,
+                current if total > 0 else 0,
+                total if total > 0 else 1,
+            )
+            self._total_progress_bar.setRange(0, 100)
+            self._total_progress_bar.setValue(pct)
+            self._total_progress_bar.setVisible(True)
+
+        if flush:
+            QApplication.processEvents()
 
 
     def _on_viewer_control_changed(self) -> None:
@@ -1763,9 +1997,8 @@ class DeepReefMapWindow(QMainWindow):
         }
 
         self._set_form_enabled(False)
-        self._status_label.setText("Reconstruction starting...")
-        self._progress_bar.setValue(0)
-        self._progress_bar.setVisible(True)
+        self._begin_progress(self._recon_model)
+        self._status_label.setText("Reconstruction starting…")
 
         self._pipeline_thread = threading.Thread(
             target=self._run_pipeline, args=(kwargs,), daemon=True
@@ -1786,7 +2019,7 @@ class DeepReefMapWindow(QMainWindow):
 
     def _on_pipeline_error(self, msg: str) -> None:
         self._status_label.setText(f"Failed: {msg}")
-        self._progress_bar.setVisible(False)
+        self._reset_progress_bars()
         self._set_form_enabled(True)
 
     def _on_batch_clicked(self) -> None:
@@ -1879,9 +2112,7 @@ class DeepReefMapWindow(QMainWindow):
 
     def _on_batch_done(self, ok: int, total: int, last_error: str) -> None:
         self._progress_bar.setValue(total)
-        self._progress_bar.setVisible(False)
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setValue(0)
+        self._reset_progress_bars()
         if ok == total:
             self._status_label.setText(f"Batch complete: {ok}/{total} job(s) succeeded.")
         elif last_error:
@@ -1945,10 +2176,9 @@ class DeepReefMapWindow(QMainWindow):
     def _auto_load_run(self, run_dir: Path) -> None:
         self._load_cancelled = False
         self._status_label.setText(f"Loading run from {run_dir.name}…")
-        # Indeterminate ("busy") progress bar — setRange(0, 0) makes Qt animate
-        # the chunk back and forth so the user sees the app isn't frozen.
+        self._begin_progress(self._load_model)
+        # Indeterminate per-step bar until the first stage callback arrives.
         self._progress_bar.setRange(0, 0)
-        self._progress_bar.setVisible(True)
         self._load_cancel_btn.setVisible(True)
         threading.Thread(target=self._load_run_worker, args=(run_dir,), daemon=True).start()
 
@@ -1971,6 +2201,12 @@ class DeepReefMapWindow(QMainWindow):
         "mapping": "Loading mapping outputs",
         "frames": "Loading frames",
         "cloud": "Building semantic cloud",
+        "cloud_concatenating": "Concatenating point arrays",
+        "cloud_replacing": "Applying replacement radius",
+        "cloud_replacing_keys": "Replacement radius: computing voxel keys",
+        "cloud_replacing_sort": "Replacement radius: sorting points",
+        "cloud_replacing_select": "Replacement radius: selecting representatives",
+        "cloud_voxelizing": "Reducing by voxel size",
         "geometry": "Loading geometry cloud",
     }
 
@@ -1978,16 +2214,8 @@ class DeepReefMapWindow(QMainWindow):
         if self._load_cancelled:
             return
         label = self._STAGE_LABELS.get(stage, stage)
-        if tot > 1:
-            self._status_label.setText(f"{label}… {cur}/{tot}")
-            if self._progress_bar.minimum() != 0 or self._progress_bar.maximum() != tot:
-                self._progress_bar.setRange(0, tot)
-            self._progress_bar.setValue(cur)
-        else:
-            self._status_label.setText(f"{label}…")
-            # Bracket the indeterminate animation around fast stages so the
-            # user sees the bar pulsing rather than freezing.
-            self._progress_bar.setRange(0, 0)
+        phase_key = _LOAD_STAGE_TO_PHASE.get(stage, stage)
+        self._apply_progress(phase_key, label, current=cur, total=tot)
 
     def _apply_loaded_run(self, result: object, run_dir_str: str, error: str) -> None:
         from deepreefmap.pipeline.run_loader import GEOMETRY_ONLY_MODE
@@ -1995,24 +2223,19 @@ class DeepReefMapWindow(QMainWindow):
         self._load_cancel_btn.setVisible(False)
 
         if self._load_cancelled:
-            # User aborted while the worker was still reading from disk.
-            self._progress_bar.setRange(0, 100)
-            self._progress_bar.setValue(0)
-            self._progress_bar.setVisible(False)
+            self._reset_progress_bars()
             return
 
         run_dir = Path(run_dir_str)
         if error or result is None:
             self._status_label.setText(f"Error loading run: {error}")
+            self._reset_progress_bars()
             return
 
         # The post-cloud work below all runs on the GUI thread (PyVista actor
-        # creation must) so the user can see a chunky "Setting up viewer…"
-        # status while it happens. Indeterminate bar shows activity.
-        self._status_label.setText("Setting up viewer…")
-        self._progress_bar.setRange(0, 0)
-        self._progress_bar.setVisible(True)
-        QApplication.processEvents()
+        # creation must); the viewer emits setup_progress events that drive
+        # both the per-step and the total bar via _apply_progress.
+        self._apply_progress("viewer_index_cloud", "Setting up viewer", 0, 0, flush=True)
 
         if result.mode == GEOMETRY_ONLY_MODE:
             self._viewer.show_point_cloud(result.geometry_xyz, result.geometry_rgb)
@@ -2028,10 +2251,37 @@ class DeepReefMapWindow(QMainWindow):
             elif cloud is not None:
                 self._viewer.show_point_cloud(cloud.xyz, cloud.rgb)
 
-        # Done — restore the bar to its hidden default.
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setValue(0)
-        self._progress_bar.setVisible(False)
+        # Build the live ortho preview BEFORE finalising — otherwise the bars
+        # hide and the user stares at a frozen UI during the PCA/aggregate
+        # work. Drive both bars through the same setup_progress event keys
+        # by routing the build_ortho_outputs callback through _apply_progress.
+        if (
+            result.mode != GEOMETRY_ONLY_MODE
+            and result.reference_cloud is not None
+            and len(result.reference_cloud) > 1
+        ):
+            try:
+                from deepreefmap.postproc.ortho_outputs import build_ortho_outputs
+
+                def _ortho_load_progress(message: str) -> None:
+                    phase = _STAGE_MESSAGE_TO_PHASE.get(message, "ortho_pca")
+                    self._apply_progress(phase, message, 0, 0, flush=True)
+
+                outputs = build_ortho_outputs(
+                    result.reference_cloud,
+                    result.classes_config,
+                    progress=_ortho_load_progress,
+                )
+                self._set_ortho_sources(
+                    result.reference_cloud, outputs.grid, result.classes_config
+                )
+                self._cover_label.setText(self._format_cover_html(outputs.cover))
+            except Exception:
+                logger.exception("Failed to build ortho preview for cached run")
+            self._results_group.setVisible(True)
+
+        self._apply_progress("viewer_finalise", "Finalising viewer", 1, 1)
+        self._reset_progress_bars()
 
         self._active_run_dir = run_dir
         self._active_run_manifest = result.manifest
@@ -2051,59 +2301,43 @@ class DeepReefMapWindow(QMainWindow):
             )
             self._results_output_dir = run_dir
 
-        # If we have a semantic reference cloud, build the live ortho preview
-        # so the user can re-crop on a cached run.
-        if (
-            result.mode != GEOMETRY_ONLY_MODE
-            and result.reference_cloud is not None
-            and len(result.reference_cloud) > 1
-        ):
-            try:
-                from deepreefmap.postproc.ortho_outputs import build_ortho_outputs
-
-                outputs = build_ortho_outputs(
-                    result.reference_cloud, result.classes_config
-                )
-                self._set_ortho_sources(
-                    result.reference_cloud, outputs.grid, result.classes_config
-                )
-                self._cover_label.setText(self._format_cover_html(outputs.cover))
-            except Exception:
-                logger.exception("Failed to build ortho preview for cached run")
-            self._results_group.setVisible(True)
-
 
     def _on_viewer_status(self, event: str, **kwargs: object) -> None:
+        _STAGE_LABELS = {
+            "startup": "Startup",
+            "preprocess": "Preprocessing",
+            "mapping": "Mapping",
+            "outputs": "Building outputs",
+        }
         if event == "start_run":
-            self._status_label.setText("Starting reconstruction...")
-            self._progress_bar.setValue(0)
-            self._progress_bar.setVisible(True)
+            self._apply_progress("startup", "Starting reconstruction", 0, 0)
         elif event == "set_stage":
-            stage = kwargs.get("stage", "")
-            status = kwargs.get("status", "")
-            message = kwargs.get("message", "")
-            label = {"startup": "Startup", "preprocess": "Preprocessing", "mapping": "Mapping", "outputs": "Building outputs"}.get(stage, stage)
+            stage = str(kwargs.get("stage", ""))
+            status = str(kwargs.get("status", ""))
+            message = str(kwargs.get("message", "") or "")
+            # Finer phase routing when the orchestrator's set_stage message
+            # names a known sub-step (e.g. "Computing PCA projection" inside
+            # "outputs"); otherwise fall back to the top-level stage key.
+            phase_key = _STAGE_MESSAGE_TO_PHASE.get(message, stage)
+            stage_label = _STAGE_LABELS.get(stage, stage)
+            label = message or stage_label
             if status == "completed":
-                self._status_label.setText(f"{label} complete" + (f" — {message}" if message else ""))
+                self._apply_progress(phase_key, f"{stage_label} complete", 1, 1)
             else:
-                self._status_label.setText(f"{label}..." + (f" {message}" if message else ""))
+                self._apply_progress(phase_key, label, 0, 0)
         elif event == "update_progress":
-            current = kwargs.get("current", 0)
-            total = kwargs.get("total")
-            stage = kwargs.get("stage", "")
+            current = int(kwargs.get("current", 0) or 0)
+            total = int(kwargs.get("total", 0) or 0)
+            stage = str(kwargs.get("stage", ""))
+            label = _STAGE_LABELS.get(stage, stage) or "Working"
             if total:
-                pct = int(100 * int(current) / int(total))
-                self._progress_bar.setValue(pct)
-                self._progress_bar.setVisible(True)
-                self._status_label.setText(f"{'Preprocessing' if stage == 'preprocess' else 'Mapping'}: {current}/{total} frames")
+                self._apply_progress(stage, label, current, total)
         elif event == "data_ready":
-            self._status_label.setText("Reconstruction complete. Loading viewer...")
-            self._progress_bar.setValue(100)
             if self._viewer.has_scene_data:
                 self._build_legend()
                 self._show_viewer_controls()
                 self._on_viewer_control_changed()
-                self._status_label.setText("Reconstruction complete.")
+            self._apply_progress("viewer_finalise", "Reconstruction complete", 1, 1)
             ortho_cloud = kwargs.get("ortho_cloud")
             cc = kwargs.get("classes_config") or self._classes_config
             if ortho_cloud is not None and len(ortho_cloud) > 1:
@@ -2119,21 +2353,14 @@ class DeepReefMapWindow(QMainWindow):
             message = str(kwargs.get("message", "Setting up viewer"))
             current = int(kwargs.get("current", 0) or 0)
             total = int(kwargs.get("total", 0) or 0)
-            if total > 1:
-                if self._progress_bar.minimum() != 0 or self._progress_bar.maximum() != total:
-                    self._progress_bar.setRange(0, total)
-                self._progress_bar.setValue(current)
-                self._status_label.setText(f"{message}… {current}/{total}")
-            else:
-                self._progress_bar.setRange(0, 0)
-                self._status_label.setText(f"{message}…")
-            self._progress_bar.setVisible(True)
-            # Flush so the user sees the new label while we're still on the
-            # GUI thread doing index build / GPU upload.
-            QApplication.processEvents()
+            phase_key = _SETUP_MESSAGE_TO_PHASE.get(message, "viewer_index_cloud")
+            # flush=True because viewer-setup happens on the GUI thread: without
+            # an explicit processEvents the user sees the bars freeze.
+            self._apply_progress(phase_key, message, current, total, flush=True)
         elif event == "mark_outputs":
             output_dir = kwargs.get("output_dir", "")
             self._status_label.setText(f"Outputs saved to {output_dir}")
+            self._reset_progress_bars()
             self._set_form_enabled(True)
             if output_dir:
                 self._show_results(str(output_dir))
@@ -2149,7 +2376,7 @@ class DeepReefMapWindow(QMainWindow):
         elif event == "fail_run":
             error = kwargs.get("error_message", "unknown error")
             self._status_label.setText(f"Failed: {error}")
-            self._progress_bar.setVisible(False)
+            self._reset_progress_bars()
             self._set_form_enabled(True)
 
 

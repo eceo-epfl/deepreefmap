@@ -371,26 +371,33 @@ class QtPointCloudViewer(QWidget):
 
     def _clear_scene_data(self) -> None:
         if self._plotter is not None:
+            # Batch removals with `render=False` and do a single render at the
+            # end. Per-actor rendering was the cause of the multi-second freeze
+            # on "New reconstruction" with hundreds of frustum actors.
+            def _remove(actor: object) -> None:
+                try:
+                    self._plotter.remove_actor(actor, render=False)
+                except TypeError:
+                    # Older pyvista versions don't accept `render`.
+                    try:
+                        self._plotter.remove_actor(actor)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
             for actor in self._class_actors.values():
-                try:
-                    self._plotter.remove_actor(actor)
-                except Exception:
-                    pass
+                _remove(actor)
             for actor in self._frustum_actors.values():
-                try:
-                    self._plotter.remove_actor(actor)
-                except Exception:
-                    pass
+                _remove(actor)
             if self._live_actor is not None:
-                try:
-                    self._plotter.remove_actor(self._live_actor)
-                except Exception:
-                    pass
+                _remove(self._live_actor)
             if self._simple_actor is not None:
-                try:
-                    self._plotter.remove_actor(self._simple_actor)
-                except Exception:
-                    pass
+                _remove(self._simple_actor)
+            try:
+                self._plotter.render()
+            except Exception:
+                pass
         self._class_actors.clear()
         self._class_polydata.clear()
         self._frustum_actors.clear()

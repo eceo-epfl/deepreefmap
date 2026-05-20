@@ -346,6 +346,23 @@ def run_reconstruction(
             return
 
         logger.info("Building filtered semantic reference cloud...")
+
+        _CLOUD_STAGE_LABELS = {
+            "concatenating": "Concatenating point arrays",
+            "replacing": "Applying replacement radius",
+            "replacing_keys": "Replacement radius: computing voxel keys",
+            "replacing_sort": "Replacement radius: sorting points",
+            "replacing_select": "Replacement radius: selecting representatives",
+            "voxelizing": "Reducing by voxel size",
+        }
+
+        def _cloud_stage(name: str) -> None:
+            if viewer is not None:
+                viewer.set_stage(
+                    "outputs", "running",
+                    _CLOUD_STAGE_LABELS.get(name, f"Cloud {name}"),
+                )
+
         reference_cloud = build_semantic_reference_cloud(
             frame_batch,
             mapping_result_for_cloud,
@@ -357,6 +374,7 @@ def run_reconstruction(
                 replacement_radius_estimation_frames=replacement_radius_estimation_frames,
                 replacement_radius_override=replacement_radius_override,
             ),
+            stage_cb=_cloud_stage,
         )
 
         cloud_for_metrics = reference_cloud
@@ -399,7 +417,14 @@ def run_reconstruction(
             if transect_length is not None and transect_crop_width is not None
             else None
         )
-        ortho_outputs = build_ortho_outputs(cloud_for_metrics, classes_config, bins=grid_bins, crop=crop)
+        def _ortho_progress(message: str) -> None:
+            if viewer is not None:
+                viewer.set_stage("outputs", "running", message)
+
+        ortho_outputs = build_ortho_outputs(
+            cloud_for_metrics, classes_config, bins=grid_bins, crop=crop,
+            progress=_ortho_progress,
+        )
         grid = ortho_outputs.grid
 
         if viewer is not None:
@@ -412,16 +437,24 @@ def run_reconstruction(
                 ortho_cloud=cloud_for_metrics,
                 ortho_grid=grid,
             )
-            viewer.set_stage("outputs", "running", "Saving outputs")
+            viewer.set_stage("outputs", "running", "Saving semantic cloud")
 
         save_semantic_cloud(output_dir / "semantic_reference_cloud.ply", reference_cloud)
         if enable_tsdf and tsdf_xyz is not None and tsdf_rgb is not None and semantic_tsdf is not None:
+            if viewer is not None:
+                viewer.set_stage("outputs", "running", "Saving TSDF cloud")
             save_geometry_cloud(output_dir / "tsdf_cloud.ply", tsdf_xyz, tsdf_rgb)
             save_semantic_cloud(output_dir / "semantic_tsdf_cloud.ply", semantic_tsdf)
+        if viewer is not None:
+            viewer.set_stage("outputs", "running", "Saving ortho image")
         cv2.imwrite(str(output_dir / "ortho.png"), cv2.cvtColor(grid.rgb, cv2.COLOR_RGB2BGR))
         save_ortho_grid(output_dir / "ortho.npz", grid)
+        if viewer is not None:
+            viewer.set_stage("outputs", "running", "Saving cover report")
         save_cover_report(output_dir / "benthic_cover.json", ortho_outputs.cover)
 
+        if viewer is not None:
+            viewer.set_stage("outputs", "running", "Writing run manifest")
         save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
             output_dir=output_dir,
             frame_batch=frame_batch,

@@ -199,8 +199,20 @@ def build_semantic_reference_cloud(
     config: PointFilterConfig | None = None,
     *,
     progress_cb: Callable[[int, int], None] | None = None,
+    stage_cb: Callable[[str], None] | None = None,
     max_workers: int = 6,
 ) -> SemanticPointCloud:
+    """`stage_cb`, if given, is called with the name of each post-loop sub-step
+    (`concatenating`, `replacing`, `voxelizing`) so the caller can drive UI for
+    the work that happens after `progress_cb` reports `total/total`.
+    """
+    def _emit_stage(name: str) -> None:
+        if stage_cb is not None:
+            try:
+                stage_cb(name)
+            except Exception:
+                pass
+
     cfg = config or PointFilterConfig()
     ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
     frame_lookup = {frame.frame_index: frame for frame in frame_batch.frames}
@@ -285,6 +297,10 @@ def build_semantic_reference_cloud(
     if not xyz_parts:
         return SemanticPointCloud.empty()
 
+    # For multi-million-point clouds these six concatenates plus the
+    # replacement-radius lexsort that follows are the silent gap the user
+    # sees after the per-frame loop hits N/N — surface them via stage_cb.
+    _emit_stage("concatenating")
     cloud = SemanticPointCloud(
         xyz=np.concatenate(xyz_parts, axis=0),
         rgb=np.concatenate(rgb_parts, axis=0),
@@ -295,10 +311,15 @@ def build_semantic_reference_cloud(
     )
 
     if active_radius is not None:
-        cloud = nearest_camera_replace_semantic_cloud(cloud, active_radius)
+        _emit_stage("replacing")
+        cloud = nearest_camera_replace_semantic_cloud(
+            cloud, active_radius,
+            progress=lambda sub: _emit_stage(f"replacing_{sub}"),
+        )
 
     if cfg.voxel_size is None or cfg.voxel_size <= 0:
         return cloud
+    _emit_stage("voxelizing")
     return voxel_reduce_semantic_cloud(cloud, cfg.voxel_size)
 
 
@@ -346,14 +367,35 @@ def voxel_reduce_semantic_cloud(cloud: SemanticPointCloud, voxel_size: float) ->
     )
 
 
-def nearest_camera_replace_semantic_cloud(cloud: SemanticPointCloud, radius: float) -> SemanticPointCloud:
+def nearest_camera_replace_semantic_cloud(
+    cloud: SemanticPointCloud,
+    radius: float,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> SemanticPointCloud:
+    """Drop all but the nearest-to-camera point in each voxel of side `radius`.
+
+    `progress` (if given) is called with each sub-step name (`keys`, `sort`,
+    `select`) so callers can drive UI for the sort, which is the dominant cost
+    on multi-million-point clouds.
+    """
+    def _emit(name: str) -> None:
+        if progress is not None:
+            try:
+                progress(name)
+            except Exception:
+                pass
+
     if len(cloud) == 0 or radius <= 0 or not np.isfinite(radius):
         return cloud
     if cloud.distance_to_camera is None:
         return cloud
+    _emit("keys")
     keys = np.floor(cloud.xyz / float(radius)).astype(np.int64)
     distance = np.asarray(cloud.distance_to_camera, dtype=np.float32).reshape(-1)
+    _emit("sort")
     order = np.lexsort((np.arange(len(cloud), dtype=np.int64), distance, keys[:, 2], keys[:, 1], keys[:, 0]))
+    _emit("select")
     keys_sorted = keys[order]
     selected = order[np.concatenate([[True], np.any(np.diff(keys_sorted, axis=0) != 0, axis=1)])]
     return SemanticPointCloud(

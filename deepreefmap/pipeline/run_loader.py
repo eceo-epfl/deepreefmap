@@ -103,6 +103,7 @@ def load_cached_run(
         classes_config,
         point_filter_config,
         progress_cb=lambda done, total: _step("cloud", done, total),
+        stage_cb=lambda name: _step(f"cloud_{name}", 0, 0),
     )
 
     return LoadedRun(
