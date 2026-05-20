@@ -11,7 +11,7 @@ classes:
   - {id: 10, name: "algae covered substrate", color: [125, 163, 125], roles: []}
   - {id: 11, name: "other animal", color: [0, 255, 255], roles: []}
   - {id: 12, name: "unknown hard substrate", color: [125, 125, 125], roles: []}
-  - {id: 13, name: "background", color: [29, 162, 216], roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 13, name: "background", color: [29, 162, 216], roles: ["ignore_in_point_cloud", "ignore_in_cover", "background"]}
   - {id: 14, name: "dark", color: [31, 31, 31], roles: ["ignore_in_cover"]}
   - {id: 15, name: "transect line", color: [0, 255, 0], roles: ["transect_line"]}
   - {id: 16, name: "massive/meandering bleached", color: [255, 248, 228], roles: []}

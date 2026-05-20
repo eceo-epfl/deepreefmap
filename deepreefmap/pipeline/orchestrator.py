@@ -24,6 +24,7 @@ from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_ref
 from deepreefmap.pointcloud.tsdf import integrate_tsdf
 from deepreefmap.pointcloud.tsdf_align import align_tsdf_to_reference
 from deepreefmap.postproc.ortho_outputs import TransectCropParams, build_ortho_outputs
+from deepreefmap.postproc.quality import analyse_preprocess_quality
 from deepreefmap.postproc.reports import save_cover_report, save_run_manifest
 from deepreefmap.segmentation.registry import create_segmentation_model
 from deepreefmap.telemetry.gopro import extract_gravity_vectors_for_video_selection
@@ -220,6 +221,11 @@ def run_reconstruction(
             )
         if viewer is not None:
             viewer.set_stage("preprocess", "completed", f"Prepared {frame_count} sampled frames")
+
+        for warning in analyse_preprocess_quality(frame_batch, classes_config):
+            logger.warning(warning)
+            if viewer is not None:
+                viewer.set_stage("preprocess", "warning", warning)
 
         logger.info("Prepared %d sampled frames in %.1fs", frame_count, time.monotonic() - t_start)
 

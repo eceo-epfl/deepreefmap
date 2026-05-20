@@ -10,6 +10,7 @@ def test_load_coralscapes_classes_roles():
 
     assert classes_config.single_id_for_role("transect_line") == 15
     assert classes_config.single_id_for_role("transect_tools") == 8
+    assert classes_config.single_id_for_role("background") == 13
     assert classes_config.ids_for_role("ignore_in_point_cloud") == {7, 8, 9, 13}
     assert classes_config.ids_for_role("ignore_in_cover") == {7, 8, 9, 13, 14}
     assert classes_config.name_for_id(5) == "sand"

@@ -515,6 +515,20 @@ class DeepReefMapWindow(QMainWindow):
         self._submit_hint.setStyleSheet("color: #c84; font-style: italic;")
         layout.addWidget(self._submit_hint)
 
+        # Sticky banner for non-fatal quality warnings emitted during a run
+        # (preprocess detected mostly-background frames, missing transect line,
+        # etc.). Cleared at the start of each new run.
+        self._warnings_label = QLabel("")
+        self._warnings_label.setWordWrap(True)
+        self._warnings_label.setTextFormat(Qt.TextFormat.RichText)
+        self._warnings_label.setStyleSheet(
+            "background-color: #4a3a14; color: #ffd98a;"
+            " border: 1px solid #8a6b1a; padding: 6px; border-radius: 3px;"
+        )
+        self._warnings_label.setVisible(False)
+        self._run_warnings: list[str] = []
+        layout.addWidget(self._warnings_label)
+
         # Status label and progress bar are owned by the top toolbar but
         # constructed here so they exist before _recompute_submit_state runs.
         self._status_label = QLabel("Ready. Fill the form above and click Start.")
@@ -1942,6 +1956,7 @@ class DeepReefMapWindow(QMainWindow):
         self._legend_group.setVisible(False)
         self._viewer_controls_group.setVisible(False)
         self._hide_run_meta_banner()
+        self._clear_run_warnings()
         self._active_run_dir = None
         self._active_run_manifest = None
         self._set_ortho_sources(None, None, None)
@@ -2302,6 +2317,21 @@ class DeepReefMapWindow(QMainWindow):
             self._results_output_dir = run_dir
 
 
+    def _add_run_warning(self, message: str) -> None:
+        if message in self._run_warnings:
+            return
+        self._run_warnings.append(message)
+        html = "<b>Quality warnings:</b><br>" + "<br>".join(
+            f"• {w}" for w in self._run_warnings
+        )
+        self._warnings_label.setText(html)
+        self._warnings_label.setVisible(True)
+
+    def _clear_run_warnings(self) -> None:
+        self._run_warnings = []
+        self._warnings_label.setText("")
+        self._warnings_label.setVisible(False)
+
     def _on_viewer_status(self, event: str, **kwargs: object) -> None:
         _STAGE_LABELS = {
             "startup": "Startup",
@@ -2310,6 +2340,7 @@ class DeepReefMapWindow(QMainWindow):
             "outputs": "Building outputs",
         }
         if event == "start_run":
+            self._clear_run_warnings()
             self._apply_progress("startup", "Starting reconstruction", 0, 0)
         elif event == "set_stage":
             stage = str(kwargs.get("stage", ""))
@@ -2323,6 +2354,9 @@ class DeepReefMapWindow(QMainWindow):
             label = message or stage_label
             if status == "completed":
                 self._apply_progress(phase_key, f"{stage_label} complete", 1, 1)
+            elif status == "warning":
+                if message:
+                    self._add_run_warning(str(message))
             else:
                 self._apply_progress(phase_key, label, 0, 0)
         elif event == "update_progress":
