@@ -94,6 +94,7 @@ class DeepReefMapWindow(QMainWindow):
     _sig_hf_auth_done = Signal(object, str)
     _sig_download_progress = Signal(str, int)
     _sig_run_loaded = Signal(object, str, str)
+    _sig_load_progress = Signal(str, int, int)
 
     def __init__(self, classes_config: object, classes_path: Path) -> None:
         super().__init__()
@@ -111,6 +112,7 @@ class DeepReefMapWindow(QMainWindow):
         self._sig_hf_auth_done.connect(self._on_hf_auth_done)
         self._sig_download_progress.connect(self._on_download_progress)
         self._sig_run_loaded.connect(self._apply_loaded_run)
+        self._sig_load_progress.connect(self._on_load_progress)
 
         self.setWindowTitle("DeepReefMap")
         self.resize(1400, 900)
@@ -357,6 +359,11 @@ class DeepReefMapWindow(QMainWindow):
         self._results_group = QGroupBox("Results")
         self._results_group.setVisible(False)
         res_layout = QVBoxLayout(self._results_group)
+        self._metadata_label = QLabel("")
+        self._metadata_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        self._metadata_label.setWordWrap(True)
+        self._metadata_label.setTextFormat(Qt.TextFormat.RichText)
+        res_layout.addWidget(self._metadata_label)
         self._ortho_label = QLabel()
         self._ortho_label.setAlignment(Qt.AlignCenter)
         res_layout.addWidget(self._ortho_label)
@@ -610,6 +617,18 @@ class DeepReefMapWindow(QMainWindow):
     def _show_results(self, output_dir: str) -> None:
         out = Path(output_dir)
         self._results_output_dir = out
+
+        manifest_path = out / "run_manifest.json"
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text())
+                self._metadata_label.setText(
+                    self._format_run_metadata(manifest, out, include_disk_size=True)
+                )
+            except Exception:
+                self._metadata_label.setText("")
+        else:
+            self._metadata_label.setText("")
 
         ortho_path = out / "ortho.png"
         if ortho_path.exists():
@@ -1008,13 +1027,14 @@ class DeepReefMapWindow(QMainWindow):
 
     def _refresh_past_runs_combo(self) -> None:
         root = Path(self._out_root_input.text()).expanduser()
-        entries: list[tuple[Path, str, float]] = []
+        entries: list[tuple[Path, str, float, dict]] = []
         if root.exists() and root.is_dir():
             for child in root.iterdir():
                 manifest = child / "run_manifest.json"
                 if not (child.is_dir() and manifest.exists()):
                     continue
                 display = child.name
+                data: dict = {}
                 try:
                     data = json.loads(manifest.read_text())
                     name = data.get("name")
@@ -1022,7 +1042,7 @@ class DeepReefMapWindow(QMainWindow):
                         display = f"{name}  ({child.name})"
                 except Exception:
                     pass
-                entries.append((child, display, manifest.stat().st_mtime))
+                entries.append((child, display, manifest.stat().st_mtime, data))
         entries.sort(key=lambda e: e[2], reverse=True)
 
         # Block signals to avoid triggering _on_past_run_selected during repopulation.
@@ -1030,8 +1050,11 @@ class DeepReefMapWindow(QMainWindow):
         try:
             self._past_runs_combo.clear()
             self._past_runs_combo.addItem("— Select a past run —", userData=None)
-            for path, display, _mtime in entries:
+            for path, display, _mtime, data in entries:
                 self._past_runs_combo.addItem(display, userData=str(path))
+                idx = self._past_runs_combo.count() - 1
+                tooltip = self._format_run_metadata(data, path, include_disk_size=False)
+                self._past_runs_combo.setItemData(idx, tooltip, Qt.ItemDataRole.ToolTipRole)
             if self._active_run_dir is not None:
                 for i in range(1, self._past_runs_combo.count()):
                     if self._past_runs_combo.itemData(i) == str(self._active_run_dir):
@@ -1039,6 +1062,43 @@ class DeepReefMapWindow(QMainWindow):
                         break
         finally:
             self._past_runs_combo.blockSignals(False)
+
+    @staticmethod
+    def _format_run_metadata(manifest: dict, run_dir: Path, *, include_disk_size: bool) -> str:
+        lines: list[str] = []
+        name = (manifest.get("name") or "").strip() or run_dir.name
+        lines.append(f"<b>{name}</b>  <i>({run_dir.name})</i>")
+        mode = manifest.get("mode")
+        if mode:
+            lines.append(f"Mode: {mode}")
+        seg = manifest.get("segmentation_model")
+        if seg:
+            lines.append(f"Segmentation: {seg}")
+        mapping = manifest.get("mapping_backend")
+        if mapping:
+            lines.append(f"Mapping: {mapping}")
+        profile = manifest.get("camera_profile")
+        if profile:
+            lines.append(f"Camera profile: {profile}")
+        frames = manifest.get("frames_processed")
+        if frames is not None:
+            lines.append(f"Frames: {frames}")
+        sem_pts = manifest.get("semantic_reference_points")
+        if sem_pts:
+            lines.append(f"Semantic points: {int(sem_pts):,}")
+        metric_pts = manifest.get("metric_points")
+        if metric_pts:
+            lines.append(f"Metric points: {int(metric_pts):,}")
+        if include_disk_size:
+            try:
+                total = sum(p.stat().st_size for p in run_dir.rglob("*") if p.is_file())
+                if total >= 1e9:
+                    lines.append(f"Disk: {total / 1e9:.2f} GB")
+                else:
+                    lines.append(f"Disk: {total / 1e6:.1f} MB")
+            except Exception:
+                pass
+        return "<br>".join(lines)
 
     def _on_past_run_selected(self, index: int) -> None:
         if index <= 0:
@@ -1239,11 +1299,38 @@ class DeepReefMapWindow(QMainWindow):
         try:
             from deepreefmap.pipeline.run_loader import load_cached_run
 
-            result = load_cached_run(run_dir)
+            def _cb(stage: str, cur: int, tot: int) -> None:
+                self._sig_load_progress.emit(stage, cur, tot)
+
+            result = load_cached_run(run_dir, progress_cb=_cb)
             self._sig_run_loaded.emit(result, str(run_dir), "")
         except Exception as exc:
             logger.exception("Failed to load cached run")
             self._sig_run_loaded.emit(None, str(run_dir), str(exc)[:300])
+
+    _STAGE_LABELS = {
+        "manifest": "Reading manifest",
+        "classes": "Loading classes",
+        "mapping": "Loading mapping outputs",
+        "frames": "Loading frames",
+        "cloud": "Building semantic cloud",
+        "geometry": "Loading geometry cloud",
+    }
+
+    def _on_load_progress(self, stage: str, cur: int, tot: int) -> None:
+        if self._load_cancelled:
+            return
+        label = self._STAGE_LABELS.get(stage, stage)
+        if tot > 1:
+            self._status_label.setText(f"{label}… {cur}/{tot}")
+            if self._progress_bar.minimum() != 0 or self._progress_bar.maximum() != tot:
+                self._progress_bar.setRange(0, tot)
+            self._progress_bar.setValue(cur)
+        else:
+            self._status_label.setText(f"{label}…")
+            # Bracket the indeterminate animation around fast stages so the
+            # user sees the bar pulsing rather than freezing.
+            self._progress_bar.setRange(0, 0)
 
     def _apply_loaded_run(self, result: object, run_dir_str: str, error: str) -> None:
         from deepreefmap.pipeline.run_loader import GEOMETRY_ONLY_MODE
@@ -1286,6 +1373,14 @@ class DeepReefMapWindow(QMainWindow):
         ortho_path = run_dir / "ortho.png"
         if ortho_path.exists():
             self._show_results(str(run_dir))
+        else:
+            # No ortho (e.g. geometry-only run) — still surface the metadata
+            # block by showing the Results group with just the details.
+            self._metadata_label.setText(
+                self._format_run_metadata(result.manifest, run_dir, include_disk_size=True)
+            )
+            self._results_output_dir = run_dir
+            self._results_group.setVisible(True)
 
 
     def _on_viewer_status(self, event: str, **kwargs: object) -> None:

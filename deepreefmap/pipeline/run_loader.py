@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
@@ -36,20 +37,38 @@ def load_cached_run(
     run_dir: Path,
     *,
     point_filter_config: PointFilterConfig | None = None,
+    progress_cb: Callable[[str, int, int], None] | None = None,
 ) -> LoadedRun:
     """Load a completed reconstruction folder into the objects expected by Viser."""
 
+    def _step(stage: str, cur: int, tot: int) -> None:
+        if progress_cb is not None:
+            progress_cb(stage, cur, tot)
+
     run_dir = Path(run_dir)
+    _step("manifest", 0, 1)
     manifest = _load_manifest(run_dir)
+    _step("manifest", 1, 1)
+
+    _step("classes", 0, 1)
     classes_config = load_classes(_resolve_classes_path(run_dir, manifest))
+    _step("classes", 1, 1)
+
+    _step("mapping", 0, 1)
     mapping_result = resume_mod.load_mapping_result(run_dir)
     if mapping_result is None:
         raise RuntimeError("Run folder is missing a readable mapping_outputs.npz artifact.")
+    _step("mapping", 1, 1)
 
     sidecar = resume_mod.read_sidecar(run_dir, resume_mod.STAGE_PREPROCESS)
     if sidecar is None:
         sidecar = _preprocess_sidecar_from_manifest(manifest)
-    frame_batch = resume_mod.load_prepared_frames(run_dir, sidecar, mapping_result.intrinsics)
+    frame_batch = resume_mod.load_prepared_frames(
+        run_dir,
+        sidecar,
+        mapping_result.intrinsics,
+        progress_cb=lambda done, total: _step("frames", done, total),
+    )
     if frame_batch is None:
         raise RuntimeError(
             "Run folder is missing cached frames, labels, masks, or preprocess metadata required for viewing."
@@ -63,7 +82,9 @@ def load_cached_run(
             raise RuntimeError(
                 f"Geometry-only run is missing geometry_cloud.ply: {geometry_path}"
             )
+        _step("geometry", 0, 1)
         geometry_xyz, geometry_rgb = load_geometry_cloud(geometry_path)
+        _step("geometry", 1, 1)
         return LoadedRun(
             run_dir=run_dir,
             manifest=manifest,
@@ -76,12 +97,14 @@ def load_cached_run(
             geometry_rgb=geometry_rgb,
         )
 
+    _step("cloud", 0, 1)
     reference_cloud = build_semantic_reference_cloud(
         frame_batch,
         mapping_result,
         classes_config,
         point_filter_config,
     )
+    _step("cloud", 1, 1)
 
     return LoadedRun(
         run_dir=run_dir,

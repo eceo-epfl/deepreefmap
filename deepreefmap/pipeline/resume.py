@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +107,9 @@ def load_prepared_frames(
     output_dir: Path,
     sidecar: dict,
     intrinsics: np.ndarray,
+    *,
+    progress_cb: Callable[[int, int], None] | None = None,
+    max_workers: int = 6,
 ) -> FrameBatch | None:
     frames_dir = output_dir / "frames"
     labels_dir = output_dir / "labels"
@@ -113,8 +118,8 @@ def load_prepared_frames(
     clip_counts = sidecar.get("clip_counts")
     if not indices or clip_counts is None:
         return None
-    prepared: list[PreparedFrame] = []
-    for idx in indices:
+
+    def _load_one(idx: int) -> PreparedFrame | None:
         stem = f"{int(idx):08d}"
         image_path = frames_dir / f"{stem}.png"
         labels_path = labels_dir / f"{stem}.npy"
@@ -134,7 +139,7 @@ def load_prepared_frames(
             return None
         if mask is None:
             return None
-        prepared.append(PreparedFrame(
+        return PreparedFrame(
             frame_index=int(idx),
             image_rgb=rgb,
             labels=labels,
@@ -142,10 +147,28 @@ def load_prepared_frames(
             image_path=image_path,
             labels_path=labels_path,
             mask_path=mask_path,
-        ))
-    h, w = prepared[0].image_rgb.shape[:2]
+        )
+
+    n = len(indices)
+    prepared: list[PreparedFrame | None] = [None] * n
+    completed = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        fut_to_pos = {ex.submit(_load_one, idx): pos for pos, idx in enumerate(indices)}
+        for fut in as_completed(fut_to_pos):
+            result = fut.result()
+            if result is None:
+                return None
+            prepared[fut_to_pos[fut]] = result
+            completed += 1
+            if progress_cb is not None:
+                progress_cb(completed, n)
+
+    final = [p for p in prepared if p is not None]
+    if len(final) != n:
+        return None
+    h, w = final[0].image_rgb.shape[:2]
     return FrameBatch(
-        frames=tuple(prepared),
+        frames=tuple(final),
         intrinsics=intrinsics,
         image_size=(w, h),
         clip_counts=tuple(int(c) for c in clip_counts),
