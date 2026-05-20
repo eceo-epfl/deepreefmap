@@ -41,6 +41,8 @@ dependencies = [
   "pycolmap>=4.0.4,<5.0",
   "PySide6>=6.7,<7",
   "vispy>=0.14,<1",
+  "pyvista>=0.44",
+  "pyvistaqt>=0.11",
   "tqdm>=4.67.3",
 ]
 
