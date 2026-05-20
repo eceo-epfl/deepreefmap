@@ -8,6 +8,7 @@ import torch
 from huggingface_hub import hf_hub_download
 
 from deepreefmap.camera.intrinsics import scale_intrinsics
+from deepreefmap.device import resolve_device
 from deepreefmap.mapping.base import FrameEstimate, MappingBackend
 from deepreefmap.mapping.scsfmlearner.models import DispResNet, PoseResNet, pose_vec_to_matrix
 
@@ -28,7 +29,7 @@ class SCSfMLearnerBackend(MappingBackend):
         self.default_window_size = 3
         self._checkpoint_path = checkpoint_path
         self._target_size = (int(target_width), int(target_height))
-        self._device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self._device = torch.device(device) if device else resolve_device()
         if self._target_size[0] <= 0 or self._target_size[1] <= 0:
             raise ValueError("target_width and target_height must be positive")
 

@@ -10,6 +10,14 @@ import numpy as np
 ScaleType = Literal["metric", "relative", "unknown"]
 
 
+class ReconstructionCancelled(Exception):
+    """Raised when the user cancels a running reconstruction.
+
+    Lives here rather than beside the orchestrator so mapping backends can raise
+    it without importing the pipeline that drives them.
+    """
+
+
 @dataclass(frozen=True)
 class PreparedFrame:
     frame_index: int
@@ -92,6 +100,8 @@ class SemanticPointCloud:
 
     @classmethod
     def empty(cls) -> "SemanticPointCloud":
+        # Cloud labels are int32 by policy; frame labels (PreparedFrame) are
+        # uint8 on disk and in RAM, widened by every cloud-side consumer.
         return cls(
             xyz=np.zeros((0, 3), dtype=np.float32),
             rgb=np.zeros((0, 3), dtype=np.uint8),

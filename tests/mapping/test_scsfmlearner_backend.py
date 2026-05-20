@@ -1,0 +1,92 @@
+from unittest.mock import patch
+
+import numpy as np
+import torch
+
+from deepreefmap.mapping.scsfmlearner_backend import SCSfMLearnerBackend
+
+
+class _FakeDispNet:
+    def __init__(self) -> None:
+        self.last_shape: tuple[int, int, int, int] | None = None
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        self.last_shape = tuple(x.shape)
+        return torch.ones((1, 1, x.shape[2], x.shape[3]), dtype=torch.float32, device=x.device)
+
+
+def test_initialize_scales_intrinsics_to_target_resolution() -> None:
+    backend = SCSfMLearnerBackend(
+        checkpoint_path="dummy.pt",
+        target_width=512,
+        target_height=256,
+        device="cpu",
+    )
+    with patch.object(SCSfMLearnerBackend, "_load_models", lambda self: None):
+        k = np.array([[100.0, 0.0, 50.0], [0.0, 80.0, 40.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+        backend.initialize((200, 100), k)
+    np.testing.assert_allclose(
+        backend._k,
+        np.array([[256.0, 0.0, 128.0], [0.0, 204.8, 102.4], [0.0, 0.0, 1.0]], dtype=np.float32),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+
+
+def test_process_frame_resizes_to_target_resolution() -> None:
+    backend = SCSfMLearnerBackend(
+        checkpoint_path="dummy.pt",
+        target_width=512,
+        target_height=256,
+        device="cpu",
+    )
+    with patch.object(SCSfMLearnerBackend, "_load_models", lambda self: None):
+        backend.initialize((640, 480), np.eye(3, dtype=np.float32))
+    disp_net = _FakeDispNet()
+    backend._disp_net = disp_net
+    backend._pose_net = None
+    image = np.zeros((120, 240, 3), dtype=np.uint8)
+    estimate = backend.process_frame(0, image)
+    assert estimate.depth.shape == (256, 512)
+    assert disp_net.last_shape == (1, 3, 256, 512)
+
+
+def test_process_sequence_reports_per_frame_progress() -> None:
+    backend = SCSfMLearnerBackend(
+        checkpoint_path="dummy.pt",
+        target_width=64,
+        target_height=64,
+        device="cpu",
+    )
+    with patch.object(SCSfMLearnerBackend, "_load_models", lambda self: None):
+        backend.initialize((64, 64), np.eye(3, dtype=np.float32))
+    backend._disp_net = _FakeDispNet()
+    backend._pose_net = None
+    images = [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(3)]
+
+    seen: list[tuple[int, int]] = []
+    backend.process_sequence(
+        [0, 1, 2],
+        images,
+        progress_callback=lambda cur, tot, msg: seen.append((cur, tot)),
+    )
+    assert seen == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_resolve_checkpoint_path_uses_default_hf_download_when_unset() -> None:
+    backend = SCSfMLearnerBackend(checkpoint_path=None, device="cpu")
+    with patch("deepreefmap.mapping.scsfmlearner_backend.hf_hub_download", return_value="/tmp/scsfmlearner.pt") as mock_download:
+        resolved = backend._resolve_checkpoint_path()
+    assert str(resolved) == "/tmp/scsfmlearner.pt"
+    mock_download.assert_called_once_with(
+        repo_id="EPFL-ECEO/deepreefmap-sfm-net",
+        filename="scsfmlearner.pt",
+    )
+
+
+def test_resolve_checkpoint_path_prefers_explicit_checkpoint_path() -> None:
+    backend = SCSfMLearnerBackend(checkpoint_path="/custom/model.pt", device="cpu")
+    with patch("deepreefmap.mapping.scsfmlearner_backend.hf_hub_download") as mock_download:
+        resolved = backend._resolve_checkpoint_path()
+    assert str(resolved) == "/custom/model.pt"
+    mock_download.assert_not_called()
