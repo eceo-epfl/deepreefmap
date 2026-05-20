@@ -106,7 +106,7 @@ def test_fetch_versions_parses_github_response():
     t = threading.Thread(target=server.handle_request, daemon=True)
     t.start()
 
-    import deepreefmap.launcher.qt_app as mod
+    import deepreefmap.launcher.qt_app_version as mod
     orig = mod._gh_releases_url
     mod._gh_releases_url = lambda: f"http://127.0.0.1:{port}/releases"
     try:
@@ -162,7 +162,7 @@ def test_fetch_releases_keeps_assets_from_github_response():
     t = threading.Thread(target=server.handle_request, daemon=True)
     t.start()
 
-    import deepreefmap.launcher.qt_app as mod
+    import deepreefmap.launcher.qt_app_version as mod
     orig = mod._gh_releases_url
     mod._gh_releases_url = lambda: f"http://127.0.0.1:{port}/releases"
     try:
