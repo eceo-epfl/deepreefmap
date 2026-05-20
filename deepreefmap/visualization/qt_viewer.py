@@ -268,8 +268,10 @@ class QtPointCloudViewer(QWidget):
         self._mapping_result = mapping_result
 
         frame_order = [int(f.frame_index) for f in frame_batch.frames]
+        self._emit_setup("Indexing point cloud", 0, 0)
         self._final_index = build_final_cloud_index(
             reference_cloud, frame_order, self._class_colors,
+            progress=self._emit_setup,
         )
         self._live_cache = LiveFrameCloudCache(
             frame_batch, mapping_result, self._final_index.frame_order,
@@ -279,7 +281,10 @@ class QtPointCloudViewer(QWidget):
             max(self._final_index.class_ids, default=0),
         )
 
-        for cid in self._final_index.class_ids:
+        n_classes = len(self._final_index.class_ids)
+        for i, cid in enumerate(self._final_index.class_ids):
+            if i == 0 or (i & 0x3) == 0 or i == n_classes - 1:
+                self._emit_setup("Preparing class actors", i, n_classes)
             empty = pv.PolyData(np.zeros((1, 3), dtype=np.float32))
             empty["colors"] = np.zeros((1, 3), dtype=np.uint8)
             actor = plotter.add_mesh(
@@ -289,10 +294,12 @@ class QtPointCloudViewer(QWidget):
             actor.SetVisibility(False)
             self._class_actors[cid] = actor
             self._class_polydata[cid] = empty
+        self._emit_setup("Preparing class actors", n_classes, n_classes)
 
         self._build_frustums(frame_batch, mapping_result)
 
         if self._final_index.class_ids:
+            self._emit_setup("Fitting camera", 0, 0)
             all_xyz = [
                 self._final_index.xyz_by_class[c]
                 for c in self._final_index.class_ids
@@ -306,6 +313,17 @@ class QtPointCloudViewer(QWidget):
         self._reveal_canvas()
         self._notify_status("scene_loaded")
 
+    def _emit_setup(self, message: str, current: int, total: int) -> None:
+        """Forward a one-off setup-progress event to the GUI status callback.
+
+        Used for stages that run on the GUI thread (cloud indexing, actor
+        creation, frustum build, initial GPU upload) where the user otherwise
+        sees a frozen "Setting up viewer…" label.
+        """
+        self._notify_status(
+            "setup_progress", message=message, current=int(current), total=int(total)
+        )
+
     def _build_frustums(self, frame_batch: object, mapping_result: object) -> None:
         if self._plotter is None:
             return
@@ -318,7 +336,14 @@ class QtPointCloudViewer(QWidget):
 
         mi_lookup = {int(fid): i for i, fid in enumerate(mapping_indices.tolist())}
 
-        for frame_idx in (int(f.frame_index) for f in frame_batch.frames):
+        frame_ids = [int(f.frame_index) for f in frame_batch.frames]
+        total = len(frame_ids)
+        # Throttle progress emits so we don't spam processEvents for hundreds
+        # of frames — every ~16 frames is plenty to keep the bar moving.
+        emit_every = max(1, total // 32)
+        for i, frame_idx in enumerate(frame_ids):
+            if i % emit_every == 0 or i == total - 1:
+                self._emit_setup("Building camera frustums", i, total)
             mi = mi_lookup.get(frame_idx)
             if mi is None:
                 continue
@@ -330,6 +355,8 @@ class QtPointCloudViewer(QWidget):
                 name=f"frustum_{frame_idx}",
             )
             self._frustum_actors[frame_idx] = actor
+        if total:
+            self._emit_setup("Building camera frustums", total, total)
 
     def _clear_scene_data(self) -> None:
         if self._plotter is not None:
@@ -421,10 +448,19 @@ class QtPointCloudViewer(QWidget):
             self._plotter.render()
             return
 
+        # First paint after scene load: surface per-class GPU-upload progress
+        # so the user sees the "Setting up viewer" stage advance instead of
+        # freezing while every class' polydata is pushed to VTK.
+        first_paint = self._last_t is None
         self._update_live_cloud(t, enabled_classes, semantic_colors, min_conf, point_size)
-        self._update_class_clouds(t, accumulate, enabled_classes, semantic_colors, min_conf, point_size)
+        self._update_class_clouds(
+            t, accumulate, enabled_classes, semantic_colors, min_conf, point_size,
+            report_progress=first_paint,
+        )
         self._update_frustum_visibility(frustums_visible, t)
         self._update_image_panel(t)
+        if first_paint:
+            self._emit_setup("Finalising viewer", 1, 1)
 
         self._last_t = t
         self._last_accumulate = accumulate
@@ -496,10 +532,14 @@ class QtPointCloudViewer(QWidget):
         semantic_colors: bool,
         min_conf: float,
         point_size: float,
+        report_progress: bool = False,
     ) -> None:
         fi = self._final_index
         assert fi is not None
-        for cid, actor in self._class_actors.items():
+        total_actors = len(self._class_actors) if report_progress else 0
+        for idx, (cid, actor) in enumerate(self._class_actors.items()):
+            if report_progress:
+                self._emit_setup("Uploading class points", idx, total_actors)
             if cid not in enabled_classes:
                 actor.SetVisibility(False)
                 continue
@@ -528,6 +568,8 @@ class QtPointCloudViewer(QWidget):
             actor.GetProperty().SetPointSize(point_size)
             actor.SetVisibility(True)
             self._class_polydata[cid] = pd
+        if report_progress and total_actors:
+            self._emit_setup("Uploading class points", total_actors, total_actors)
 
     def _update_point_sizes(self, point_size: float) -> None:
         for actor in self._class_actors.values():

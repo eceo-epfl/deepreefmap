@@ -7,8 +7,8 @@ import signal
 import sys
 import threading
 from pathlib import Path
-from PySide6.QtCore import QSettings, QStandardPaths, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QPixmap, QSurfaceFormat
+from PySide6.QtCore import QSettings, QSize, QStandardPaths, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QPixmap, QSurfaceFormat
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -29,6 +29,9 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QSplitter,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
@@ -182,19 +185,18 @@ class DeepReefMapWindow(QMainWindow):
         self._past_runs_combo = QComboBox()
         self._past_runs_combo.setMinimumContentsLength(20)
         self._past_runs_combo.currentIndexChanged.connect(self._on_past_run_selected)
-        # Native dark theme on Linux/KDE doesn't always render an obvious hover
-        # state on combo dropdown items — be explicit so the user can see what
-        # they're about to click.
-        self._past_runs_combo.setStyleSheet(
-            "QComboBox QAbstractItemView::item {"
-            "  padding: 5px 8px; min-height: 24px;"
-            "}"
-            "QComboBox QAbstractItemView::item:hover {"
-            "  background-color: #3a5f8a; color: white;"
-            "}"
-            "QComboBox QAbstractItemView::item:selected {"
-            "  background-color: #4a7fb0; color: white;"
-            "}"
+        # Custom delegate paints each dropdown item as a card with name +
+        # facts + input video, so the user can preview metadata before clicking.
+        self._past_runs_combo.setItemDelegate(_PastRunCardDelegate(self._past_runs_combo))
+        view = self._past_runs_combo.view()
+        view.setSpacing(0)
+        # Popup minimum width is computed from font metrics so it scales with
+        # system DPI / font size (Windows scaling, Linux Hi-DPI, etc.).
+        em = max(1, view.fontMetrics().height())
+        view.setMinimumWidth(em * 36)
+        # Auto-resize horizontally if needed so long fact strings have room.
+        self._past_runs_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContents
         )
 
         self._new_run_btn = QPushButton("New reconstruction")
@@ -694,7 +696,7 @@ class DeepReefMapWindow(QMainWindow):
         self._hf_auth_user = auth_user
         self._last_model_states = list(model_states)
         if auth_user:
-            self._hf_auth_label.setText(f"Logged in as <b>{auth_user}</b>")
+            self._hf_auth_label.setText(f"Logged in to Hugging Face as <b>{auth_user}</b>")
             self._hf_auth_label.setToolTip(
                 f"Signed in to Hugging Face as {auth_user}. Click Log out to remove the saved token."
             )
@@ -1083,6 +1085,11 @@ class DeepReefMapWindow(QMainWindow):
                 idx = self._past_runs_combo.count() - 1
                 tooltip = self._format_run_metadata(data, path, include_disk_size=False)
                 self._past_runs_combo.setItemData(idx, tooltip, Qt.ItemDataRole.ToolTipRole)
+                self._past_runs_combo.setItemData(
+                    idx,
+                    self._build_past_run_card_meta(data, path),
+                    _PAST_RUN_META_ROLE,
+                )
             if self._active_run_dir is not None:
                 for i in range(1, self._past_runs_combo.count()):
                     if self._past_runs_combo.itemData(i) == str(self._active_run_dir):
@@ -1118,11 +1125,55 @@ class DeepReefMapWindow(QMainWindow):
         metric_pts = manifest.get("metric_points")
         if metric_pts:
             lines.append(f"Metric points: {int(metric_pts):,}")
+        videos = manifest.get("input_videos") or []
+        if videos:
+            lines.append(f"Input: {', '.join(Path(v).name for v in videos)}")
         if include_disk_size:
             disk = _format_disk_size(run_dir)
             if disk:
                 lines.append(f"Disk: {disk}")
         return "<br>".join(lines)
+
+    @staticmethod
+    def _build_past_run_card_meta(manifest: dict, run_dir: Path) -> dict:
+        """Build a flat dict the dropdown delegate uses to paint each card."""
+        name = (manifest.get("name") or "").strip() or run_dir.name
+        facts: list[str] = []
+        mode = manifest.get("mode")
+        if mode:
+            facts.append(mode)
+        frames = manifest.get("frames_processed")
+        if frames is not None:
+            facts.append(f"{frames}f")
+        seg = manifest.get("segmentation_model")
+        if seg and seg != "__skip__":
+            facts.append(str(seg))
+        mapping = manifest.get("mapping_backend")
+        if mapping:
+            facts.append(str(mapping))
+        sem_pts = manifest.get("semantic_reference_points")
+        if sem_pts:
+            n = int(sem_pts)
+            if n >= 1_000_000:
+                facts.append(f"{n / 1_000_000:.1f}M pts")
+            elif n >= 1_000:
+                facts.append(f"{n / 1_000:.0f}k pts")
+            else:
+                facts.append(f"{n} pts")
+        videos = manifest.get("input_videos") or []
+        video_line = ""
+        if videos:
+            names = [Path(v).name for v in videos]
+            if len(names) == 1:
+                video_line = f"📹 {names[0]}"
+            else:
+                video_line = f"📹 {names[0]} (+ {len(names) - 1} more)"
+        return {
+            "title": name,
+            "slug": "" if name == run_dir.name else f"({run_dir.name})",
+            "facts": "  ·  ".join(facts),
+            "video": video_line,
+        }
 
     @staticmethod
     def _format_run_metadata_compact(manifest: dict, run_dir: Path, *, include_disk_size: bool) -> str:
@@ -1141,9 +1192,10 @@ class DeepReefMapWindow(QMainWindow):
             ("Camera", "camera_profile", str),
             ("Semantic pts", "semantic_reference_points", lambda v: f"{int(v):,}"),
             ("Metric pts", "metric_points", lambda v: f"{int(v):,}"),
+            ("Input", "input_videos", lambda v: ", ".join(Path(p).name for p in v) if v else ""),
         ):
             v = manifest.get(key)
-            if v is not None and v != "":
+            if v is not None and v != "" and v != []:
                 facts.append(
                     f'<span style="color:#8aa0b8">{label}:</span>&nbsp;'
                     f'<span style="color:#d8e2ec">{fmt(v)}</span>'
@@ -1415,21 +1467,27 @@ class DeepReefMapWindow(QMainWindow):
     def _apply_loaded_run(self, result: object, run_dir_str: str, error: str) -> None:
         from deepreefmap.pipeline.run_loader import GEOMETRY_ONLY_MODE
 
-        # Restore the progress bar to determinate-but-hidden so subsequent
-        # reconstruction runs aren't stuck in indeterminate mode.
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setValue(0)
-        self._progress_bar.setVisible(False)
         self._load_cancel_btn.setVisible(False)
 
         if self._load_cancelled:
             # User aborted while the worker was still reading from disk.
+            self._progress_bar.setRange(0, 100)
+            self._progress_bar.setValue(0)
+            self._progress_bar.setVisible(False)
             return
 
         run_dir = Path(run_dir_str)
         if error or result is None:
             self._status_label.setText(f"Error loading run: {error}")
             return
+
+        # The post-cloud work below all runs on the GUI thread (PyVista actor
+        # creation must) so the user can see a chunky "Setting up viewer…"
+        # status while it happens. Indeterminate bar shows activity.
+        self._status_label.setText("Setting up viewer…")
+        self._progress_bar.setRange(0, 0)
+        self._progress_bar.setVisible(True)
+        QApplication.processEvents()
 
         if result.mode == GEOMETRY_ONLY_MODE:
             self._viewer.show_point_cloud(result.geometry_xyz, result.geometry_rgb)
@@ -1444,6 +1502,11 @@ class DeepReefMapWindow(QMainWindow):
                 self._on_viewer_control_changed()
             elif cloud is not None:
                 self._viewer.show_point_cloud(cloud.xyz, cloud.rgb)
+
+        # Done — restore the bar to its hidden default.
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(False)
 
         self._active_run_dir = run_dir
         self._active_run_manifest = result.manifest
@@ -1496,6 +1559,22 @@ class DeepReefMapWindow(QMainWindow):
                 self._show_viewer_controls()
                 self._on_viewer_control_changed()
                 self._status_label.setText("Reconstruction complete.")
+        elif event == "setup_progress":
+            message = str(kwargs.get("message", "Setting up viewer"))
+            current = int(kwargs.get("current", 0) or 0)
+            total = int(kwargs.get("total", 0) or 0)
+            if total > 1:
+                if self._progress_bar.minimum() != 0 or self._progress_bar.maximum() != total:
+                    self._progress_bar.setRange(0, total)
+                self._progress_bar.setValue(current)
+                self._status_label.setText(f"{message}… {current}/{total}")
+            else:
+                self._progress_bar.setRange(0, 0)
+                self._status_label.setText(f"{message}…")
+            self._progress_bar.setVisible(True)
+            # Flush so the user sees the new label while we're still on the
+            # GUI thread doing index build / GPU upload.
+            QApplication.processEvents()
         elif event == "mark_outputs":
             output_dir = kwargs.get("output_dir", "")
             self._status_label.setText(f"Outputs saved to {output_dir}")
@@ -1571,6 +1650,180 @@ class DeepReefMapWindow(QMainWindow):
         except Exception as exc:
             text = f"Update failed: {exc!r}"
         self._sig_update_result.emit(text)
+
+
+_PAST_RUN_META_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+class _PastRunCardDelegate(QStyledItemDelegate):
+    """Paints each past-run dropdown item as a multi-line card with metadata.
+
+    All sizes are computed from QFontMetrics so the card scales correctly with
+    system DPI / font size on both Linux and Windows. Facts wrap to multiple
+    lines if the popup is narrower than the text, so nothing is silently lost.
+    """
+
+    PAD_X_EMS = 0.8
+    PAD_Y_EMS = 0.35
+    GAP_EMS = 0.15
+
+    @staticmethod
+    def _title_font(base: QFont) -> QFont:
+        f = QFont(base)
+        f.setBold(True)
+        return f
+
+    @staticmethod
+    def _slug_font(base: QFont) -> QFont:
+        f = QFont(base)
+        pt = base.pointSize() if base.pointSize() > 0 else 10
+        f.setPointSize(max(8, pt - 1))
+        return f
+
+    @staticmethod
+    def _facts_font(base: QFont) -> QFont:
+        return QFont(base)
+
+    @staticmethod
+    def _video_font(base: QFont) -> QFont:
+        f = QFont(base)
+        pt = base.pointSize() if base.pointSize() > 0 else 10
+        f.setPointSize(max(8, pt - 1))
+        f.setItalic(True)
+        return f
+
+    def _layout(self, option: QStyleOptionViewItem, meta: dict, avail_w: int) -> dict:
+        base = option.font
+        title_fm = option.fontMetrics  # used for em sizing
+        em = max(1, title_fm.height())
+        pad_x = int(self.PAD_X_EMS * em)
+        pad_y = int(self.PAD_Y_EMS * em)
+        gap = int(self.GAP_EMS * em)
+
+        from PySide6.QtGui import QFontMetrics
+
+        title_h = QFontMetrics(self._title_font(base)).height()
+        slug_h = QFontMetrics(self._slug_font(base)).height() if meta.get("slug") else 0
+        head_h = max(title_h, slug_h)
+
+        facts_text = meta.get("facts") or ""
+        facts_h = 0
+        if facts_text:
+            facts_fm = QFontMetrics(self._facts_font(base))
+            inner_w = max(40, avail_w - pad_x * 2)
+            facts_rect = facts_fm.boundingRect(
+                0, 0, inner_w, 10_000,
+                Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap,
+                facts_text,
+            )
+            facts_h = facts_rect.height()
+
+        video_text = meta.get("video") or ""
+        video_h = 0
+        if video_text:
+            video_h = QFontMetrics(self._video_font(base)).height()
+
+        total_h = pad_y * 2 + head_h
+        if facts_h:
+            total_h += gap + facts_h
+        if video_h:
+            total_h += gap + video_h
+
+        return {
+            "pad_x": pad_x, "pad_y": pad_y, "gap": gap,
+            "head_h": head_h, "title_h": title_h, "slug_h": slug_h,
+            "facts_h": facts_h, "video_h": video_h, "total_h": total_h,
+        }
+
+    def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
+        meta = index.data(_PAST_RUN_META_ROLE)
+        em = max(1, option.fontMetrics.height())
+        # Preferred width: ~32 chars of body text plus padding. The view can
+        # be wider; the layout will fill it. EM-based so it scales with DPI.
+        preferred_w = int(em * 24)
+        if meta is None:
+            # Placeholder row stays one line tall.
+            return QSize(preferred_w, em + int(self.PAD_Y_EMS * em) * 2)
+
+        # Use the actual viewport width when available; fall back to preferred.
+        avail_w = option.rect.width() if option.rect.width() > 0 else preferred_w
+        layout = self._layout(option, meta, avail_w)
+        return QSize(preferred_w, layout["total_h"])
+
+    def paint(self, painter, option: QStyleOptionViewItem, index) -> None:
+        meta = index.data(_PAST_RUN_META_ROLE)
+        if meta is None:
+            super().paint(painter, option, index)
+            return
+
+        painter.save()
+
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        if selected:
+            painter.fillRect(option.rect, QColor("#4a7fb0"))
+        elif hovered:
+            painter.fillRect(option.rect, QColor("#3a5f8a"))
+        else:
+            painter.fillRect(option.rect, QColor("#2a2a2a"))
+
+        layout = self._layout(option, meta, option.rect.width())
+        pad_x = layout["pad_x"]
+        pad_y = layout["pad_y"]
+        gap = layout["gap"]
+        r = option.rect.adjusted(pad_x, pad_y, -pad_x, -pad_y)
+
+        base = option.font
+
+        # Title.
+        title_font = self._title_font(base)
+        painter.setFont(title_font)
+        painter.setPen(QColor("white" if (hovered or selected) else "#e8eef5"))
+        title = meta.get("title", "")
+        title_fm = painter.fontMetrics()
+        title_w = title_fm.horizontalAdvance(title)
+        baseline = r.top() + title_fm.ascent()
+        painter.drawText(r.left(), baseline, title)
+
+        # Slug, drawn on the same baseline as the title (or hidden if no room).
+        slug = meta.get("slug", "")
+        if slug:
+            slug_font = self._slug_font(base)
+            painter.setFont(slug_font)
+            painter.setPen(QColor("#c5d0db" if (hovered or selected) else "#8aa0b8"))
+            slug_fm = painter.fontMetrics()
+            slug_x = r.left() + title_w + int(layout["title_h"] * 0.4)
+            slug_max_w = r.right() - slug_x
+            if slug_max_w > 0:
+                elided_slug = slug_fm.elidedText(slug, Qt.TextElideMode.ElideRight, slug_max_w)
+                painter.drawText(slug_x, baseline, elided_slug)
+
+        # Facts (word-wrapped block).
+        cursor_y = r.top() + layout["head_h"]
+        facts_text = meta.get("facts", "")
+        if facts_text:
+            cursor_y += gap
+            painter.setFont(self._facts_font(base))
+            painter.setPen(QColor("#dfe6ee" if (hovered or selected) else "#c0cad6"))
+            facts_rect = type(r)(r.left(), cursor_y, r.width(), layout["facts_h"])
+            painter.drawText(
+                facts_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap,
+                facts_text,
+            )
+            cursor_y += layout["facts_h"]
+
+        # Input video (single elided line).
+        video = meta.get("video", "")
+        if video:
+            cursor_y += gap
+            painter.setFont(self._video_font(base))
+            painter.setPen(QColor("#b5c2d0" if (hovered or selected) else "#7a8a99"))
+            video_fm = painter.fontMetrics()
+            elided = video_fm.elidedText(video, Qt.TextElideMode.ElideMiddle, r.width())
+            painter.drawText(r.left(), cursor_y + video_fm.ascent(), elided)
+
+        painter.restore()
 
 
 def _format_disk_size(run_dir: Path) -> str | None:

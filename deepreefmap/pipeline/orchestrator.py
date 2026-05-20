@@ -329,6 +329,7 @@ def run_reconstruction(
                 output_files=output_files,
                 mode="geometry_only",
                 run_name=run_name,
+                input_videos=video_paths,
             ))
             if viewer is not None:
                 viewer.set_data(
@@ -437,6 +438,7 @@ def run_reconstruction(
             output_files=output_files,
             mode="semantic",
             run_name=run_name,
+            input_videos=video_paths,
         ))
         if viewer is not None:
             viewer.mark_outputs_ready(str(output_dir), output_files)
@@ -854,10 +856,12 @@ def _build_manifest(
     output_files: list[str],
     mode: str,
     run_name: str | None = None,
+    input_videos: list[str] | None = None,
 ) -> dict[str, object]:
     return {
         "schema_version": 2,
         "name": run_name,
+        "input_videos": list(input_videos) if input_videos else [],
         "mode": mode,
         "frames_processed": frames_processed,
         "segmentation_model": segmentation_name,
