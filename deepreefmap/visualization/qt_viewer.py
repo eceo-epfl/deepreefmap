@@ -134,20 +134,21 @@ class QtPointCloudViewer(QWidget):
         self._image_label.setMinimumHeight(120)
         self._image_label.setStyleSheet("background-color: #1a1a1a;")
 
-        splitter = QSplitter(Qt.Vertical)
-        canvas_container = QWidget()
-        cl = QVBoxLayout(canvas_container)
+        self._main_splitter = QSplitter(Qt.Vertical)
+        self._canvas_container = QWidget()
+        cl = QVBoxLayout(self._canvas_container)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.addWidget(self._canvas.native)
-        splitter.addWidget(canvas_container)
-        splitter.addWidget(self._image_label)
-        splitter.setSizes([700, 200])
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
+        self._main_splitter.addWidget(self._canvas_container)
+        self._main_splitter.addWidget(self._image_label)
+        self._main_splitter.setStretchFactor(0, 3)
+        self._main_splitter.setStretchFactor(1, 1)
+        self._canvas_revealed = False
+        self._canvas_container.setVisible(False)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(splitter)
+        layout.addWidget(self._main_splitter)
 
         self._sig_start_run.connect(self._on_start_run)
         self._sig_set_stage.connect(self._on_set_stage)
@@ -161,6 +162,18 @@ class QtPointCloudViewer(QWidget):
 
     def set_status_callback(self, cb: Callable[..., None]) -> None:
         self._status_callback = cb
+
+    def _reveal_canvas(self) -> None:
+        if self._canvas_revealed:
+            return
+        self._canvas_revealed = True
+        self._canvas_container.setVisible(True)
+        total = max(self._main_splitter.height(), 1)
+        self._main_splitter.setSizes([int(total * 0.75), int(total * 0.25)])
+
+    def _hide_canvas(self) -> None:
+        self._canvas_revealed = False
+        self._canvas_container.setVisible(False)
 
     @property
     def has_scene_data(self) -> bool:
@@ -191,6 +204,7 @@ class QtPointCloudViewer(QWidget):
         )
         self._simple_markers.visible = True
         self._auto_fit_camera(positions)
+        self._reveal_canvas()
 
     # --- Scene data ---
 
@@ -235,6 +249,7 @@ class QtPointCloudViewer(QWidget):
                 if combined.shape[0] > 0:
                     self._auto_fit_camera(combined)
 
+        self._reveal_canvas()
         self._notify_status("scene_loaded")
 
     def _build_frustums(self, frame_batch: object, mapping_result: object) -> None:
@@ -539,6 +554,7 @@ class QtPointCloudViewer(QWidget):
     @Slot(str, str)
     def _on_start_run(self, run_label: str, output_dir: str) -> None:
         self._output_dir = Path(output_dir)
+        self._hide_canvas()
         self._notify_status("start_run", run_label=run_label, output_dir=output_dir)
 
     @Slot(str, str, object)
