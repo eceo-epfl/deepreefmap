@@ -303,6 +303,21 @@ def run_reconstruction(
             )
             mapping_result_for_cloud = _mapping_without_world_points(mapping_result)
 
+        if viewer is not None and not skip_segmentation:
+            viewer.set_stage("outputs", "running", "Building preview point cloud")
+            preview_xyz, preview_rgb = _build_geometry_cloud(
+                frame_batch=frame_batch,
+                mapping_result=mapping_result_for_cloud,
+                voxel_size=0.01,
+            )
+            if preview_xyz.shape[0] > 0:
+                viewer.set_data(
+                    frame_batch=frame_batch,
+                    mapping_result=mapping_result,
+                    geometry_xyz=preview_xyz,
+                    geometry_rgb=preview_rgb,
+                )
+
         if skip_segmentation:
             logger.info("Skip segmentation: building geometry-only point cloud...")
             if viewer is not None:
