@@ -139,11 +139,23 @@ class DeepReefMapWindow(QMainWindow):
         splitter.setChildrenCollapsible(True)
         splitter.setHandleWidth(6)
 
+        # Banner below the toolbar that pops up the instant a past run is
+        # clicked, with the manifest metadata. Hidden until populated.
+        self._run_meta_banner = QLabel("")
+        self._run_meta_banner.setWordWrap(True)
+        self._run_meta_banner.setTextFormat(Qt.TextFormat.RichText)
+        self._run_meta_banner.setStyleSheet(
+            "background-color: #1f2a36; color: #d8e2ec;"
+            " padding: 8px 12px; border-bottom: 1px solid #2f3f50;"
+        )
+        self._run_meta_banner.setVisible(False)
+
         central = QWidget()
         central_layout = QVBoxLayout(central)
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.setSpacing(0)
         central_layout.addWidget(top_bar)
+        central_layout.addWidget(self._run_meta_banner)
         central_layout.addWidget(splitter, 1)
         self.setCentralWidget(central)
 
@@ -168,6 +180,20 @@ class DeepReefMapWindow(QMainWindow):
         self._past_runs_combo = QComboBox()
         self._past_runs_combo.setMinimumContentsLength(20)
         self._past_runs_combo.currentIndexChanged.connect(self._on_past_run_selected)
+        # Native dark theme on Linux/KDE doesn't always render an obvious hover
+        # state on combo dropdown items — be explicit so the user can see what
+        # they're about to click.
+        self._past_runs_combo.setStyleSheet(
+            "QComboBox QAbstractItemView::item {"
+            "  padding: 5px 8px; min-height: 24px;"
+            "}"
+            "QComboBox QAbstractItemView::item:hover {"
+            "  background-color: #3a5f8a; color: white;"
+            "}"
+            "QComboBox QAbstractItemView::item:selected {"
+            "  background-color: #4a7fb0; color: white;"
+            "}"
+        )
 
         self._new_run_btn = QPushButton("New reconstruction")
         self._new_run_btn.setToolTip("Clear the viewer and start a fresh run")
@@ -1102,11 +1128,32 @@ class DeepReefMapWindow(QMainWindow):
 
     def _on_past_run_selected(self, index: int) -> None:
         if index <= 0:
+            self._hide_run_meta_banner()
             return
         run_dir = self._past_runs_combo.itemData(index)
         if not run_dir:
             return
-        self._auto_load_run(Path(run_dir))
+        path = Path(run_dir)
+        # Show the metadata banner *immediately* from the manifest, before the
+        # potentially-slow load kicks off, so the user gets instant feedback.
+        manifest_path = path / "run_manifest.json"
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text())
+                self._show_run_meta_banner(manifest, path, include_disk_size=False)
+            except Exception:
+                self._hide_run_meta_banner()
+        self._auto_load_run(path)
+
+    def _show_run_meta_banner(self, manifest: dict, run_dir: Path, *, include_disk_size: bool) -> None:
+        self._run_meta_banner.setText(
+            self._format_run_metadata(manifest, run_dir, include_disk_size=include_disk_size)
+        )
+        self._run_meta_banner.setVisible(True)
+
+    def _hide_run_meta_banner(self) -> None:
+        self._run_meta_banner.setVisible(False)
+        self._run_meta_banner.setText("")
 
     def _open_selected_past_run(self) -> None:
         index = self._past_runs_combo.currentIndex()
@@ -1170,6 +1217,7 @@ class DeepReefMapWindow(QMainWindow):
         self._results_group.setVisible(False)
         self._legend_group.setVisible(False)
         self._viewer_controls_group.setVisible(False)
+        self._hide_run_meta_banner()
         self._active_run_dir = None
         self._active_run_manifest = None
         from datetime import datetime
@@ -1369,6 +1417,8 @@ class DeepReefMapWindow(QMainWindow):
         self._active_run_manifest = result.manifest
         display = result.manifest.get("name") or run_dir.name
         self._status_label.setText(f"Loaded run '{display}' from {run_dir}")
+        # Refresh the banner now that the full load is done, including disk size.
+        self._show_run_meta_banner(result.manifest, run_dir, include_disk_size=True)
 
         ortho_path = run_dir / "ortho.png"
         if ortho_path.exists():
