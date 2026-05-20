@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -40,7 +40,7 @@ from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
 logger = logging.getLogger(__name__)
 
 
-_GH_REPO = "EPFL-ECEO/deepreefmap"
+_GH_REPO = os.environ.get("DEEPREEFMAP_GH_REPO", "EPFL-ECEO/deepreefmap")
 _GH_API_RELEASES = f"https://api.github.com/repos/{_GH_REPO}/releases"
 
 
@@ -55,7 +55,7 @@ def _pyapp_binary_path() -> str | None:
 
 def _fetch_release_versions(timeout: float = 8.0) -> list[str] | None:
     mock = os.environ.get("DEEPREEFMAP_MOCK_VERSIONS")
-    if mock:
+    if mock is not None:
         return [v.strip() for v in mock.split(",") if v.strip()]
     try:
         req = urllib.request.Request(_GH_API_RELEASES, headers={"Accept": "application/vnd.github+json"})
@@ -82,6 +82,12 @@ def _current_version() -> str:
 
 
 class DeepReefMapWindow(QMainWindow):
+    _sig_update_check_done = Signal(str, object, object)
+    _sig_update_result = Signal(str)
+    _sig_model_status_done = Signal(object, object)
+    _sig_pipeline_error = Signal(str)
+    _sig_status_text = Signal(str)
+
     def __init__(self, classes_config: object, classes_path: Path) -> None:
         super().__init__()
         self._classes_config = classes_config
@@ -89,6 +95,12 @@ class DeepReefMapWindow(QMainWindow):
         self._pipeline_thread: threading.Thread | None = None
         self._playback_timer = QTimer(self)
         self._playback_timer.timeout.connect(self._on_playback_tick)
+
+        self._sig_update_check_done.connect(self._apply_update_check)
+        self._sig_update_result.connect(lambda t: self._update_label.setText(t))
+        self._sig_model_status_done.connect(self._apply_model_status)
+        self._sig_pipeline_error.connect(self._on_pipeline_error)
+        self._sig_status_text.connect(lambda t: self._status_label.setText(t))
 
         self.setWindowTitle("DeepReefMap")
         self.resize(1400, 900)
@@ -291,8 +303,6 @@ class DeepReefMapWindow(QMainWindow):
 
         layout.addWidget(_separator())
         models_group = QGroupBox("Models")
-        models_group.setCheckable(True)
-        models_group.setChecked(False)
         self._models_layout = QVBoxLayout(models_group)
         self._hf_auth_label = QLabel("HF auth: checking...")
         self._hf_auth_label.setWordWrap(True)
@@ -428,7 +438,7 @@ class DeepReefMapWindow(QMainWindow):
 
         auth_user = check_hf_auth()
         model_states = [(m, is_model_cached(m)) for m in ALL_MODELS]
-        QTimer.singleShot(0, lambda: self._apply_model_status(auth_user, model_states))
+        self._sig_model_status_done.emit(auth_user, model_states)
 
     def _apply_model_status(self, auth_user: str | None, model_states: list) -> None:
         if auth_user:
@@ -474,11 +484,11 @@ class DeepReefMapWindow(QMainWindow):
         def _do_download() -> None:
             try:
                 prefetch_model(info)
-                QTimer.singleShot(0, lambda: self._status_label.setText(f"Model {model_name} downloaded."))
+                self._sig_status_text.emit(f"Model {model_name} downloaded.")
                 threading.Thread(target=self._refresh_model_status, daemon=True).start()
             except Exception as exc:
                 msg = str(exc)[:200]
-                QTimer.singleShot(0, lambda: self._status_label.setText(f"Download failed: {msg}"))
+                self._sig_status_text.emit(f"Download failed: {msg}")
 
         threading.Thread(target=_do_download, daemon=True).start()
 
@@ -554,7 +564,7 @@ class DeepReefMapWindow(QMainWindow):
             msg = str(exc)
             if len(msg) > 300:
                 msg = msg[:300] + "..."
-            QTimer.singleShot(0, lambda: self._on_pipeline_error(msg))
+            self._sig_pipeline_error.emit(msg)
 
     def _on_pipeline_error(self, msg: str) -> None:
         self._status_label.setText(f"Failed: {msg}")
@@ -680,7 +690,7 @@ class DeepReefMapWindow(QMainWindow):
         current = _current_version()
         versions = _fetch_release_versions()
         pyapp_bin = _pyapp_binary_path()
-        QTimer.singleShot(0, lambda: self._apply_update_check(current, versions, pyapp_bin))
+        self._sig_update_check_done.emit(current, versions, pyapp_bin)
 
     def _apply_update_check(self, current: str, versions: list[str] | None, pyapp_bin: str | None) -> None:
         if versions is None:
@@ -715,8 +725,7 @@ class DeepReefMapWindow(QMainWindow):
 
     def _run_update(self, pyapp_bin: str) -> None:
         if os.environ.get("DEEPREEFMAP_MOCK_PYAPP"):
-            text = "Mock update: simulated success. Close and reopen to apply."
-            QTimer.singleShot(0, lambda: self._update_label.setText(text))
+            self._sig_update_result.emit("Mock update: simulated success. Close and reopen to apply.")
             return
         try:
             result = subprocess.run([pyapp_bin, "self", "update"], capture_output=True, text=True, check=False)
@@ -727,7 +736,7 @@ class DeepReefMapWindow(QMainWindow):
                 text = f"Update failed: {tail}"
         except Exception as exc:
             text = f"Update failed: {exc!r}"
-        QTimer.singleShot(0, lambda: self._update_label.setText(text))
+        self._sig_update_result.emit(text)
 
 
 def _separator() -> QWidget:

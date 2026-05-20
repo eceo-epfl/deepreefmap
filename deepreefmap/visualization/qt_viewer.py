@@ -9,10 +9,12 @@ import numpy as np
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QLabel, QSplitter, QVBoxLayout, QWidget
-from vispy import scene
+import vispy
+vispy.use(gl="gl2")
+from vispy import scene  # noqa: E402
 
-from deepreefmap.visualization.final_cloud_index import FinalCloudIndex, build_final_cloud_index
-from deepreefmap.visualization.live_frame_cloud import (
+from deepreefmap.visualization.final_cloud_index import FinalCloudIndex, build_final_cloud_index  # noqa: E402
+from deepreefmap.visualization.live_frame_cloud import (  # noqa: E402
     LiveFrameCloudCache,
     build_enabled_label_lut,
     mask_points_by_enabled_lut,
