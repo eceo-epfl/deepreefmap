@@ -44,7 +44,7 @@ from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
 logger = logging.getLogger(__name__)
 
 
-_GH_REPO = os.environ.get("DEEPREEFMAP_GH_REPO", "EPFL-ECEO/deepreefmap")
+_GH_REPO = os.environ.get("DEEPREEFMAP_GH_REPO", "eceo-epfl/deepreefmap")
 _GH_API_RELEASES = f"https://api.github.com/repos/{_GH_REPO}/releases"
 
 
@@ -326,11 +326,20 @@ class DeepReefMapWindow(QMainWindow):
         self._hf_auth_label = QLabel("Checking Hugging Face login...")
         self._hf_auth_label.setWordWrap(True)
         auth_row.addWidget(self._hf_auth_label, 1)
+
+        self._hf_auth_icon = QLabel()
+        self._hf_auth_icon.setFixedWidth(14)
+        self._hf_auth_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        auth_row.addWidget(self._hf_auth_icon)
+        auth_row.addSpacing(6)
+
         self._hf_auth_btn = QPushButton("Log in...")
-        self._hf_auth_btn.setFixedWidth(90)
+        self._hf_auth_btn.setFixedWidth(110)
         self._hf_auth_btn.clicked.connect(self._on_hf_auth_button)
         auth_row.addWidget(self._hf_auth_btn)
         self._models_layout.addLayout(auth_row)
+
+        self._models_layout.addWidget(_separator())
 
         self._models_grid_host = QWidget()
         self._models_grid = QGridLayout(self._models_grid_host)
@@ -496,14 +505,35 @@ class DeepReefMapWindow(QMainWindow):
         self._hf_auth_user = auth_user
         self._last_model_states = list(model_states)
         if auth_user:
-            self._hf_auth_label.setText(
-                f'<span style="color:#4a4">●</span> Logged in as <b>{auth_user}</b>'
+            self._hf_auth_label.setText(f"Logged in as <b>{auth_user}</b>")
+            self._hf_auth_label.setToolTip(
+                f"Signed in to Hugging Face as {auth_user}. Click Log out to remove the saved token."
             )
+            self._hf_auth_icon.setText('<span style="color:#4a4; font-weight:bold">●</span>')
+            self._hf_auth_icon.setToolTip("Signed in to Hugging Face")
             self._hf_auth_btn.setText("Log out")
             self._hf_auth_btn.setEnabled(True)
         else:
-            self._hf_auth_label.setText(
-                '<span style="color:#a84">○</span> Not logged in to Hugging Face'
+            required = self._required_model_names()
+            gated_required = [
+                info.name for info, _cached in model_states
+                if info.gated and info.name in required
+            ]
+            label = "Not logged in to Hugging Face"
+            if gated_required:
+                label += (
+                    f'  <span style="color:#e8a04a">— needed for '
+                    f'{", ".join(gated_required)}</span>'
+                )
+            self._hf_auth_label.setText(label)
+            self._hf_auth_label.setToolTip(
+                "Some gated models need a Hugging Face account. "
+                "Click Log in… to paste an access token from huggingface.co/settings/tokens."
+            )
+            self._hf_auth_icon.setText('<span style="color:#e8a04a; font-weight:bold">!</span>')
+            self._hf_auth_icon.setToolTip(
+                "Hugging Face login required to download gated models — "
+                "click Log in… to paste an access token."
             )
             self._hf_auth_btn.setText("Log in...")
             self._hf_auth_btn.setEnabled(True)
@@ -596,7 +626,10 @@ class DeepReefMapWindow(QMainWindow):
             icon.setToolTip("cached")
         elif info.gated and not auth_user:
             icon.setText('<span style="color:#e8a04a; font-weight:bold">!</span>')
-            icon.setToolTip("login required")
+            icon.setToolTip(
+                "Hugging Face login required — this is a gated model. "
+                "Click Log in… above to paste an access token."
+            )
         else:
             icon.setText('<span style="color:#888">○</span>')
             icon.setToolTip("not downloaded")
