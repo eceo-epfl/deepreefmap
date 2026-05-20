@@ -9,9 +9,18 @@ import numpy as np
 if TYPE_CHECKING:
     import pyvista as pv
     from pyvistaqt import QtInteractor
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import QEvent, Qt, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtWidgets import QLabel, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QFrame,
+    QGridLayout,
+    QLabel,
+    QScrollArea,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
 
 from deepreefmap.visualization.final_cloud_index import FinalCloudIndex, build_final_cloud_index
 from deepreefmap.visualization.live_frame_cloud import (
@@ -116,6 +125,101 @@ def _make_line_segments_polydata(points: np.ndarray) -> pv.PolyData:
     return pd
 
 
+class LegendOverlay(QWidget):
+    """Floating semi-transparent legend pinned to the top-right of the 3D canvas.
+
+    Populated by `rebuild()` with one row per class (color swatch + checkbox).
+    `reposition()` anchors the overlay to its parent's top-right corner and
+    clamps the height to 60% of the parent so a long class list scrolls
+    inside the overlay rather than overflowing the canvas.
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setStyleSheet(
+            """
+            LegendOverlay {
+                background-color: rgba(20, 20, 20, 200);
+                border: 1px solid rgba(255, 255, 255, 40);
+                border-radius: 6px;
+            }
+            LegendOverlay QCheckBox { color: #e8e8e8; font-size: 11px; spacing: 4px; }
+            LegendOverlay QCheckBox::indicator { width: 12px; height: 12px; }
+            LegendOverlay QScrollArea { background: transparent; border: none; }
+            LegendOverlay QWidget#legend_inner { background: transparent; }
+            """
+        )
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 6, 8, 6)
+        outer.setSpacing(0)
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._inner = QWidget()
+        self._inner.setObjectName("legend_inner")
+        self._grid = QGridLayout(self._inner)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(6)
+        self._grid.setVerticalSpacing(2)
+        self._grid.setColumnStretch(1, 1)
+        self._scroll.setWidget(self._inner)
+        outer.addWidget(self._scroll)
+        self.hide()
+
+    def clear(self) -> None:
+        while self._grid.count():
+            item = self._grid.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def rebuild(
+        self,
+        class_ids: list[int],
+        class_names: dict[int, str],
+        class_colors: dict[int, tuple[int, int, int]],
+        on_toggle: Callable[[], None],
+    ) -> dict[int, QCheckBox]:
+        """Populate one row per class; return id → checkbox map."""
+        self.clear()
+        toggles: dict[int, QCheckBox] = {}
+        for row, cid in enumerate(class_ids):
+            name = class_names.get(cid, str(cid))
+            r, g, b = class_colors.get(cid, (128, 128, 128))
+            swatch = QLabel()
+            swatch.setFixedSize(12, 12)
+            swatch.setStyleSheet(
+                f"background-color: rgb({r},{g},{b}); "
+                "border: 1px solid rgba(255,255,255,80);"
+            )
+            cb = QCheckBox(name)
+            cb.setChecked(True)
+            cb.toggled.connect(on_toggle)
+            self._grid.addWidget(swatch, row, 0)
+            self._grid.addWidget(cb, row, 1)
+            toggles[cid] = cb
+        return toggles
+
+    def reposition(self) -> None:
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        self.setMaximumHeight(max(80, int(parent.height() * 0.6)))
+        self.setMaximumWidth(min(240, max(120, parent.width() - 16)))
+        self.adjustSize()
+        margin = 8
+        self.move(parent.width() - self.width() - margin, margin)
+        self.raise_()
+
+    def showEvent(self, event):  # type: ignore[override]
+        super().showEvent(event)
+        self.reposition()
+
+
 class QtPointCloudViewer(QWidget):
     _sig_start_run = Signal(str, str)
     _sig_set_stage = Signal(str, str, object)
@@ -155,6 +259,11 @@ class QtPointCloudViewer(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._main_splitter)
+
+        # Floating legend pinned to the canvas's top-right corner. Hidden until
+        # _build_legend in the launcher populates it after a run loads.
+        self.legend_overlay = LegendOverlay(self._canvas_container)
+        self._canvas_container.installEventFilter(self)
 
         self._plotter: QtInteractor | None = None
 
@@ -204,6 +313,11 @@ class QtPointCloudViewer(QWidget):
         # every actor through the new filter.
         self._last_t = None
 
+    def eventFilter(self, obj, event):  # type: ignore[override]
+        if obj is self._canvas_container and event.type() == QEvent.Type.Resize:
+            self.legend_overlay.reposition()
+        return super().eventFilter(obj, event)
+
     def _ensure_plotter(self):
         if self._plotter is not None:
             return self._plotter
@@ -216,6 +330,8 @@ class QtPointCloudViewer(QWidget):
         except Exception:
             logger.debug("Eye dome lighting unavailable", exc_info=True)
         self._canvas_layout.addWidget(self._plotter)
+        # Keep the legend on top after the plotter is added below it.
+        self.legend_overlay.raise_()
         return self._plotter
 
     def _reveal_canvas(self) -> None:

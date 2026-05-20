@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QStackedWidget,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -85,6 +86,30 @@ class FormPanelMixin:
         layout = QVBoxLayout(panel)
         layout.setAlignment(Qt.AlignTop)
 
+        # Three-tab sidebar: Run (mode-specific content), Viewer (playback +
+        # filter controls), Tools (utilities + update check). Tab indices are
+        # cached so _set_app_mode can auto-switch to Run on mode changes.
+        self._TAB_RUN = 0
+        self._TAB_VIEWER = 1
+        self._TAB_TOOLS = 2
+        self._sidebar_tabs = QTabWidget()
+        self._run_tab = QWidget()
+        run_layout = QVBoxLayout(self._run_tab)
+        run_layout.setContentsMargins(4, 6, 4, 4)
+        run_layout.setAlignment(Qt.AlignTop)
+        self._viewer_tab = QWidget()
+        viewer_layout = QVBoxLayout(self._viewer_tab)
+        viewer_layout.setContentsMargins(4, 6, 4, 4)
+        viewer_layout.setAlignment(Qt.AlignTop)
+        self._tools_tab = QWidget()
+        tools_layout = QVBoxLayout(self._tools_tab)
+        tools_layout.setContentsMargins(4, 6, 4, 4)
+        tools_layout.setAlignment(Qt.AlignTop)
+        self._sidebar_tabs.addTab(self._run_tab, "Run")
+        self._sidebar_tabs.addTab(self._viewer_tab, "Viewer")
+        self._sidebar_tabs.addTab(self._tools_tab, "Tools")
+        layout.addWidget(self._sidebar_tabs)
+
         # Three mode-specific pages stacked together. _set_app_mode swaps
         # between them so the user only sees controls relevant to the current
         # state (setting up a run / running / reviewing results).
@@ -104,7 +129,7 @@ class FormPanelMixin:
         self._mode_stack.addWidget(self._setup_page)
         self._mode_stack.addWidget(self._running_page)
         self._mode_stack.addWidget(self._viewing_page)
-        layout.addWidget(self._mode_stack)
+        run_layout.addWidget(self._mode_stack)
 
         # These widgets are owned by the top toolbar but constructed here so
         # initialization code (_refresh_past_runs_combo, etc.) can reference
@@ -357,9 +382,6 @@ class FormPanelMixin:
         self._load_model = ProgressModel(_LOAD_PHASES)
         self._active_progress_model: ProgressModel | None = None
 
-        layout.addWidget(_separator())
-
-
         self._viewer_controls_group = QGroupBox("Viewer controls")
         self._viewer_controls_group.setVisible(False)
         vc_layout = QVBoxLayout(self._viewer_controls_group)
@@ -412,15 +434,20 @@ class FormPanelMixin:
         play_row.addWidget(self._play_fps_spin)
         vc_layout.addLayout(play_row)
 
-        layout.addWidget(self._viewer_controls_group)
+        # Viewer tab: controls visible once a run is loaded, plus a stub label
+        # for the empty-state.
+        viewer_layout.addWidget(self._viewer_controls_group)
+        self._viewer_tab_stub = QLabel(
+            "<i style='color:#888'>No data loaded yet. "
+            "Start a reconstruction or load a past run.</i>"
+        )
+        self._viewer_tab_stub.setWordWrap(True)
+        viewer_layout.addWidget(self._viewer_tab_stub)
+        viewer_layout.addStretch()
 
-
-        self._legend_group = QGroupBox("Semantic legend")
-        self._legend_group.setVisible(False)
-        self._legend_layout = QVBoxLayout(self._legend_group)
+        # The legend lives as a floating overlay on the 3D canvas; this dict
+        # is populated by _build_legend and queried by _enabled_class_set.
         self._legend_toggles: dict[int, QCheckBox] = {}
-        layout.addWidget(self._legend_group)
-
 
         self._results_group = QGroupBox("Results")
         self._results_group.setVisible(False)
@@ -537,18 +564,14 @@ class FormPanelMixin:
         res_layout.addLayout(exports_grid)
         viewing_layout.addWidget(self._results_group)
 
-        layout.addWidget(_separator())
-
-        layout.addWidget(QLabel("<b>Tools</b>"))
+        tools_layout.addWidget(QLabel("<b>Tools</b>"))
         test_btn = QPushButton("Render test cloud")
         test_btn.clicked.connect(self._render_test_cloud)
-        layout.addWidget(test_btn)
+        tools_layout.addWidget(test_btn)
         load_btn = QPushButton("Load cached run...")
         load_btn.clicked.connect(self._load_cached_run)
-        layout.addWidget(load_btn)
+        tools_layout.addWidget(load_btn)
 
-
-        layout.addWidget(_separator())
         models_group = QGroupBox("Models")
         self._models_layout = QVBoxLayout(models_group)
 
@@ -637,10 +660,10 @@ class FormPanelMixin:
         threading.Thread(target=self._refresh_model_status, daemon=True).start()
 
 
-        layout.addWidget(_separator())
+        tools_layout.addWidget(_separator())
         self._update_label = QLabel(f"Version: <b>{_current_version()}</b>. Checking for updates...")
         self._update_label.setWordWrap(True)
-        layout.addWidget(self._update_label)
+        tools_layout.addWidget(self._update_label)
         update_row = QHBoxLayout()
         self._update_version_combo = QComboBox()
         self._update_version_combo.setVisible(False)
@@ -649,12 +672,12 @@ class FormPanelMixin:
         self._update_btn.setVisible(False)
         self._update_btn.clicked.connect(self._on_update)
         update_row.addWidget(self._update_btn)
-        layout.addLayout(update_row)
+        tools_layout.addLayout(update_row)
         self._available_releases: list[dict] = []
 
         threading.Thread(target=self._check_for_update, daemon=True).start()
 
-        layout.addStretch()
+        tools_layout.addStretch()
 
         # Start in SETUP — no run loaded yet. The mode flips to RUNNING in
         # _begin_pipeline_run and to VIEWING when a past run is selected or a

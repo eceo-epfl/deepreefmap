@@ -4,12 +4,6 @@ import json
 import logging
 from pathlib import Path
 
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QHBoxLayout,
-    QLabel,
-    QWidget,
-)
 
 from deepreefmap.launcher.log_view import close_run_log_file
 from deepreefmap.launcher.qt_app_progress import (
@@ -24,11 +18,12 @@ class ViewerControlsMixin:
     """DeepReefMapWindow methods for app mode, playback, legend, and viewer status routing."""
 
     def _set_app_mode(self, mode: str) -> None:
-        """Switch the sidebar's primary panel to SETUP / RUNNING / VIEWING.
+        """Switch the Run tab's content to SETUP / RUNNING / VIEWING.
 
-        The mode determines which page of the QStackedWidget is visible. The
-        always-visible sections below the stack (viewer controls, legend,
-        tools, update info) are untouched.
+        The mode determines which page of the QStackedWidget is visible inside
+        the Run tab. Every mode transition also jumps the sidebar to the Run
+        tab so the user sees the relevant content immediately; they can still
+        click into Viewer/Tools afterwards.
         """
         if mode == "SETUP":
             self._mode_stack.setCurrentWidget(self._setup_page)
@@ -39,6 +34,11 @@ class ViewerControlsMixin:
         else:
             raise ValueError(f"Unknown app mode: {mode!r}")
         self._app_mode = mode
+        # Guarded because the very first _set_app_mode("SETUP") call happens
+        # inside _build_form_panel before the tab widget is constructed (only
+        # in unusual ordering); the production path constructs tabs first.
+        if hasattr(self, "_sidebar_tabs"):
+            self._sidebar_tabs.setCurrentIndex(self._TAB_RUN)
 
     def _refresh_run_warnings_view(self) -> None:
         """Keep the running-page warning mirror in sync with the viewing one."""
@@ -96,35 +96,19 @@ class ViewerControlsMixin:
         self._frame_slider.setRange(0, max(0, n - 1))
         self._frame_slider.setValue(n - 1)
         self._viewer_controls_group.setVisible(True)
-
+        self._viewer_tab_stub.setVisible(False)
 
     def _build_legend(self) -> None:
-        while self._legend_layout.count():
-            item = self._legend_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-        self._legend_toggles.clear()
-
         cc = self._classes_config
-        for cid in sorted(cc.id_to_name.keys()):
-            name = cc.id_to_name[cid]
-            color = cc.id_to_color.get(cid, (128, 128, 128))
-            row = QHBoxLayout()
-            swatch = QLabel()
-            swatch.setFixedSize(16, 16)
-            swatch.setStyleSheet(f"background-color: rgb({color[0]},{color[1]},{color[2]}); border: 1px solid #666;")
-            row.addWidget(swatch)
-            cb = QCheckBox(name)
-            cb.setChecked(True)
-            cb.toggled.connect(self._on_viewer_control_changed)
-            row.addWidget(cb, 1)
-            self._legend_toggles[cid] = cb
-            container = QWidget()
-            container.setLayout(row)
-            self._legend_layout.addWidget(container)
-
-        self._legend_group.setVisible(True)
+        class_ids = sorted(cc.id_to_name.keys())
+        self._legend_toggles = self._viewer.legend_overlay.rebuild(
+            class_ids,
+            cc.id_to_name,
+            cc.id_to_color,
+            self._on_viewer_control_changed,
+        )
+        self._viewer.legend_overlay.setVisible(True)
+        self._viewer.legend_overlay.reposition()
     def _on_viewer_status(self, event: str, **kwargs: object) -> None:
         _STAGE_LABELS = {
             "startup": "Startup",

@@ -447,8 +447,9 @@ class PastRunsMixin:
     def _on_new_reconstruction(self) -> None:
         self._viewer._clear_scene_data()
         self._results_group.setVisible(False)
-        self._legend_group.setVisible(False)
+        self._viewer.legend_overlay.setVisible(False)
         self._viewer_controls_group.setVisible(False)
+        self._viewer_tab_stub.setVisible(True)
         self._hide_run_meta_banner()
         self._clear_run_warnings()
         self._active_run_dir = None
