@@ -1,6 +1,40 @@
 import numpy as np
 
-from deepreefmap.config.classes import ClassConfig
+from deepreefmap.config.classes import COVER_LEVELS, ClassConfig
+
+
+def aggregate_cover(
+    cover: dict[str, object],
+    classes_config: ClassConfig,
+    level: str,
+) -> dict[str, dict[str, float]]:
+    """Roll a per-class cover dict up to a group level (fine/intermediate/coarse).
+
+    Returns {group_name: {"count": float, "fraction": float}}, with fractions
+    re-normalized over the same denominator the input was computed against so
+    coarse/intermediate sums match the fine total.
+    """
+    if level not in COVER_LEVELS:
+        raise ValueError(f"Unknown cover level: {level!r}")
+    classes_block = cover.get("classes") if isinstance(cover, dict) else None
+    if not classes_block:
+        return {}
+    denom = float(cover.get("denominator", 0.0)) if isinstance(cover, dict) else 0.0
+    grouped: dict[str, float] = {}
+    for class_id_str, entry in classes_block.items():
+        try:
+            class_id = int(class_id_str)
+        except (TypeError, ValueError):
+            continue
+        count = float(entry.get("count", 0.0))
+        group = classes_config.group_name_for_id(class_id, level)
+        grouped[group] = grouped.get(group, 0.0) + count
+    if denom <= 0:
+        return {name: {"count": cnt, "fraction": 0.0} for name, cnt in grouped.items()}
+    return {
+        name: {"count": cnt, "fraction": cnt / denom}
+        for name, cnt in grouped.items()
+    }
 
 
 def compute_benthic_cover(

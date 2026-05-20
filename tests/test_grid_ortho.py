@@ -10,7 +10,7 @@ from deepreefmap.pointcloud.transect_crop import (
     crop_grid_around_transect,
     point_mask_with_transect_geometry,
 )
-from deepreefmap.postproc.benthic_cover import compute_benthic_cover
+from deepreefmap.postproc.benthic_cover import aggregate_cover, compute_benthic_cover
 
 
 def test_aggregate_cloud_uses_mode_class_per_cell():
@@ -75,6 +75,37 @@ def test_benthic_cover_uses_classes_ignores_and_counts():
     assert cover["denominator"] == 5
     assert cover["classes"]["1"]["name"] == "sand"
     assert cover["classes"]["1"]["fraction"] == 1.0
+
+
+def test_aggregate_cover_rolls_classes_into_groups():
+    # Two fine classes share a coarse group; aggregation should sum their counts
+    # and fractions while keeping a per-class breakdown at the fine level.
+    classes_config = ClassConfig(
+        classes=(
+            SemanticClass(1, "branching alive", (1, 1, 1), frozenset(), "branching alive", "coral alive"),
+            SemanticClass(2, "acropora alive", (2, 2, 2), frozenset(), "coral alive", "coral alive"),
+            SemanticClass(3, "sand", (3, 3, 3), frozenset(), "sand", "sand"),
+        ),
+        path=Path("test"),
+    )
+    cover = {
+        "classes": {
+            "1": {"name": "branching alive", "count": 30.0, "fraction": 0.3},
+            "2": {"name": "acropora alive", "count": 50.0, "fraction": 0.5},
+            "3": {"name": "sand", "count": 20.0, "fraction": 0.2},
+        },
+        "denominator": 100.0,
+    }
+
+    coarse = aggregate_cover(cover, classes_config, "coarse")
+    assert coarse["coral alive"]["count"] == 80.0
+    assert coarse["coral alive"]["fraction"] == 0.8
+    assert coarse["sand"]["fraction"] == 0.2
+
+    intermediate = aggregate_cover(cover, classes_config, "intermediate")
+    # Branching keeps its own bucket; acropora rolled up to "coral alive".
+    assert intermediate["branching alive"]["fraction"] == 0.3
+    assert intermediate["coral alive"]["fraction"] == 0.5
 
 
 def test_crop_grid_around_transect_sets_pixel_size():

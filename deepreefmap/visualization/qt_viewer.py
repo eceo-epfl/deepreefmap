@@ -633,6 +633,28 @@ class QtPointCloudViewer(QWidget):
 
     # --- Image panel ---
 
+    def current_frame_stack(self) -> "np.ndarray | None":
+        """Return the RGB/seg/depth composite shown in the image panel.
+
+        Used by the GUI to export the current frame as a PNG. Returns the
+        same uint8 RGB stack the panel last rendered, or None if the viewer
+        has no frame data yet.
+        """
+        if self._last_t is None:
+            return None
+        if self._frame_batch is None or self._mapping_result is None:
+            return None
+        if self._final_index is None:
+            return None
+        t = int(self._last_t)
+        cached = self._frame_panel_cache.get(t)
+        if cached is not None:
+            return cached
+        stacked = self._compose_frame_panel(t)
+        if stacked is not None:
+            self._frame_panel_cache[t] = stacked
+        return stacked
+
     def _update_image_panel(self, t: int) -> None:
         if self._frame_batch is None or self._mapping_result is None:
             return

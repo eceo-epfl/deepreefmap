@@ -1,4 +1,6 @@
 from pathlib import Path
+from typing import Callable
+import csv
 import json
 import logging
 
@@ -6,17 +8,76 @@ import cv2
 import numpy as np
 from tqdm.auto import tqdm
 
-from deepreefmap.config.classes import load_classes
+from deepreefmap.config.classes import ClassConfig, load_classes
 from deepreefmap.pointcloud.transect_crop import (
     build_transect_crop_geometry,
     build_transect_crop_selection,
 )
+from deepreefmap.postproc.benthic_cover import aggregate_cover
 
 logger = logging.getLogger(__name__)
 
 
 def save_cover_report(path: Path, cover: dict[str, object]) -> None:
     path.write_text(json.dumps(cover, indent=2))
+
+
+def save_cover_csv(path: Path, cover: dict[str, object]) -> None:
+    """Write the fine-grained cover dict produced by compute_benthic_cover."""
+    classes_block = cover.get("classes") if isinstance(cover, dict) else None
+    rows: list[tuple[int, str, float, float]] = []
+    if classes_block:
+        for class_id_str, entry in classes_block.items():
+            try:
+                cid = int(class_id_str)
+            except (TypeError, ValueError):
+                continue
+            rows.append(
+                (
+                    cid,
+                    str(entry.get("name", f"class_{cid}")),
+                    float(entry.get("fraction", 0.0)),
+                    float(entry.get("count", 0.0)),
+                )
+            )
+    rows.sort(key=lambda r: r[2], reverse=True)
+    with path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["class_id", "name", "fraction", "count"])
+        for cid, name, frac, count in rows:
+            writer.writerow([cid, name, f"{frac:.6f}", f"{count:.4f}"])
+
+
+def save_cover_csv_levels(
+    out_dir: Path,
+    cover: dict[str, object],
+    classes_config: ClassConfig,
+    prefix: str = "benthic_cover",
+) -> dict[str, Path]:
+    """Write fine / intermediate / coarse CSVs of the cover dict to `out_dir`.
+
+    Returns the {level: path} map for the files actually written.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: dict[str, Path] = {}
+    fine_path = out_dir / f"{prefix}_fine.csv"
+    save_cover_csv(fine_path, cover)
+    written["fine"] = fine_path
+    for level in ("intermediate", "coarse"):
+        grouped = aggregate_cover(cover, classes_config, level)
+        rows = sorted(
+            ((name, payload["fraction"], payload["count"]) for name, payload in grouped.items()),
+            key=lambda r: r[1],
+            reverse=True,
+        )
+        path = out_dir / f"{prefix}_{level}.csv"
+        with path.open("w", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["name", "fraction", "count"])
+            for name, frac, count in rows:
+                writer.writerow([name, f"{frac:.6f}", f"{count:.4f}"])
+        written[level] = path
+    return written
 
 
 def save_run_manifest(path: Path, manifest: dict[str, object]) -> None:
@@ -27,6 +88,7 @@ def render_offline_video_placeholder(
     run_dir: Path,
     transect_length_m: float | None = None,
     crop_width_m: float | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> None:
     """Render a DRM-style 4-panel QC video from manifest artifacts.
 
@@ -102,8 +164,15 @@ def render_offline_video_placeholder(
     n_frames = len(frame_paths[: len(depths)])
     logger.info("Rendering QC video → %s (%d frames)", out_path, n_frames)
     iterable = list(enumerate(frame_paths[: len(depths)]))
-    progress = tqdm(iterable, desc="render-video", unit="frame", total=n_frames)
+    # When a progress_callback is provided (GUI usage) we skip the tqdm bar to
+    # avoid double progress reporting and let the caller drive its own widget.
+    if progress_callback is None:
+        progress: object = tqdm(iterable, desc="render-video", unit="frame", total=n_frames)
+    else:
+        progress = iterable
     for idx, frame_path in progress:
+        if progress_callback is not None:
+            progress_callback(idx, n_frames)
         bgr = cv2.imread(str(frame_path))
         if bgr is None:
             continue
@@ -134,7 +203,10 @@ def render_offline_video_placeholder(
         top = np.concatenate([bgr, seg_panel], axis=1)
         bottom = np.concatenate([depth_panel, ortho_panel], axis=1)
         writer.write(np.concatenate([top, bottom], axis=0))
-    progress.close()
+    if progress_callback is None:
+        progress.close()
+    else:
+        progress_callback(n_frames, n_frames)
     writer.release()
     logger.info("Render-video complete: %s", out_path)
 

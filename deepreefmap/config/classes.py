@@ -18,6 +18,11 @@ class SemanticClass:
     name: str
     color: tuple[int, int, int]
     roles: frozenset[str]
+    group_intermediate: str = ""
+    group_coarse: str = ""
+
+
+COVER_LEVELS = ("fine", "intermediate", "coarse")
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,14 @@ class ClassConfig:
     def id_to_color(self) -> dict[int, tuple[int, int, int]]:
         return {cls.id: cls.color for cls in self.classes}
 
+    @property
+    def id_to_group_intermediate(self) -> dict[int, str]:
+        return {cls.id: cls.group_intermediate for cls in self.classes}
+
+    @property
+    def id_to_group_coarse(self) -> dict[int, str]:
+        return {cls.id: cls.group_coarse for cls in self.classes}
+
     def ids_for_role(self, role: str) -> set[int]:
         return {cls.id for cls in self.classes if role in cls.roles}
 
@@ -53,6 +66,27 @@ class ClassConfig:
 
     def color_for_id(self, class_id: int, fallback: tuple[int, int, int] = (128, 128, 128)) -> tuple[int, int, int]:
         return self.id_to_color.get(int(class_id), fallback)
+
+    def group_name_for_id(self, class_id: int, level: str) -> str:
+        # `fine` is the class name itself; `intermediate`/`coarse` come from yaml.
+        # Empty group means the class isn't grouped at this level — fall back to
+        # the class name so each class becomes its own bucket.
+        cid = int(class_id)
+        if level == "fine":
+            return self.name_for_id(cid)
+        if level == "intermediate":
+            return self.id_to_group_intermediate.get(cid) or self.name_for_id(cid)
+        if level == "coarse":
+            return self.id_to_group_coarse.get(cid) or self.name_for_id(cid)
+        raise ValueError(f"Unknown cover level: {level!r}")
+
+    def group_color_for_name(self, group_name: str, level: str) -> tuple[int, int, int]:
+        # Pick the first class color whose group name matches at this level.
+        # Used so the sunburst inner ring can color coarse parents.
+        for cls in self.classes:
+            if self.group_name_for_id(cls.id, level) == group_name:
+                return cls.color
+        return (128, 128, 128)
 
 
 def load_classes(path: Path | str = DEFAULT_CLASSES_PATH) -> ClassConfig:
@@ -82,6 +116,8 @@ def load_classes(path: Path | str = DEFAULT_CLASSES_PATH) -> ClassConfig:
         if not isinstance(roles, list) or not all(isinstance(role, str) for role in roles):
             raise ValueError(f"Class {name} has invalid roles: {roles!r}")
         color = _coerce_color(item.get("color"), class_id, name)
+        group_intermediate = _coerce_group(item.get("group_intermediate"), name, "group_intermediate")
+        group_coarse = _coerce_group(item.get("group_coarse"), name, "group_coarse")
         seen_ids.add(class_id)
         seen_names.add(name)
         classes.append(
@@ -90,6 +126,8 @@ def load_classes(path: Path | str = DEFAULT_CLASSES_PATH) -> ClassConfig:
                 name=name,
                 color=color,
                 roles=frozenset(roles),
+                group_intermediate=group_intermediate,
+                group_coarse=group_coarse,
             )
         )
 
@@ -110,6 +148,16 @@ def _coerce_int(value: Any, field_name: str) -> int:
         return int(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Classes field '{field_name}' must be an integer, got {value!r}") from exc
+
+
+def _coerce_group(value: Any, class_name: str, field: str) -> str:
+    # When the yaml omits a group field we fall back to the class name so that
+    # the aggregation still sums correctly (each class becomes its own bucket).
+    if value is None or value == "":
+        return class_name
+    if not isinstance(value, str):
+        raise ValueError(f"Class {class_name} has non-string {field}: {value!r}")
+    return value.strip() or class_name
 
 
 def _coerce_color(value: Any, class_id: int, class_name: str) -> tuple[int, int, int]:

@@ -12,7 +12,10 @@ def test_load_coralscapes_classes_roles():
     assert classes_config.single_id_for_role("transect_tools") == 8
     assert classes_config.single_id_for_role("background") == 13
     assert classes_config.ids_for_role("ignore_in_point_cloud") == {7, 8, 9, 13}
-    assert classes_config.ids_for_role("ignore_in_cover") == {7, 8, 9, 13, 14}
+    # Transect line is ignored in cover (it's a tool placed by the diver, not
+    # substrate). The legacy GUI's coarse/intermediate/fine CSVs never include
+    # transect line, so we match that behavior here.
+    assert classes_config.ids_for_role("ignore_in_cover") == {7, 8, 9, 13, 14, 15}
     assert classes_config.name_for_id(5) == "sand"
     assert classes_config.color_for_id(5) == (194, 178, 128)
 
