@@ -96,7 +96,7 @@ class ViewerControlsMixin:
         self._frame_slider.setRange(0, max(0, n - 1))
         self._frame_slider.setValue(n - 1)
         self._viewer_controls_group.setVisible(True)
-        self._viewer_tab_stub.setVisible(False)
+        self._sidebar_tabs.setTabEnabled(self._TAB_VIEWER, True)
 
     def _build_legend(self) -> None:
         cc = self._classes_config

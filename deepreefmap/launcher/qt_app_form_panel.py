@@ -93,6 +93,12 @@ class FormPanelMixin:
         self._TAB_VIEWER = 1
         self._TAB_TOOLS = 2
         self._sidebar_tabs = QTabWidget()
+        # Tabs expand to share the panel width equally so labels of different
+        # length (Run / Viewer / Tools) end up the same visible width.
+        self._sidebar_tabs.tabBar().setExpanding(True)
+        self._sidebar_tabs.setStyleSheet(
+            "QTabBar::tab { min-width: 80px; padding: 6px 12px; }"
+        )
         self._run_tab = QWidget()
         run_layout = QVBoxLayout(self._run_tab)
         run_layout.setContentsMargins(4, 6, 4, 4)
@@ -108,6 +114,9 @@ class FormPanelMixin:
         self._sidebar_tabs.addTab(self._run_tab, "Run")
         self._sidebar_tabs.addTab(self._viewer_tab, "Viewer")
         self._sidebar_tabs.addTab(self._tools_tab, "Tools")
+        # Viewer tab has nothing to show until a run loads — disable it so the
+        # tab is greyed out and unclickable until _show_viewer_controls runs.
+        self._sidebar_tabs.setTabEnabled(self._TAB_VIEWER, False)
         layout.addWidget(self._sidebar_tabs)
 
         # Three mode-specific pages stacked together. _set_app_mode swaps
@@ -434,15 +443,10 @@ class FormPanelMixin:
         play_row.addWidget(self._play_fps_spin)
         vc_layout.addLayout(play_row)
 
-        # Viewer tab: controls visible once a run is loaded, plus a stub label
-        # for the empty-state.
+        # Viewer tab: controls visible once a run is loaded. The tab itself is
+        # disabled until then (greyed out and unclickable), so no empty-state
+        # placeholder is needed inside.
         viewer_layout.addWidget(self._viewer_controls_group)
-        self._viewer_tab_stub = QLabel(
-            "<i style='color:#888'>No data loaded yet. "
-            "Start a reconstruction or load a past run.</i>"
-        )
-        self._viewer_tab_stub.setWordWrap(True)
-        viewer_layout.addWidget(self._viewer_tab_stub)
         viewer_layout.addStretch()
 
         # The legend lives as a floating overlay on the 3D canvas; this dict
