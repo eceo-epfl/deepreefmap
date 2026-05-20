@@ -97,14 +97,13 @@ def load_cached_run(
             geometry_rgb=geometry_rgb,
         )
 
-    _step("cloud", 0, 1)
     reference_cloud = build_semantic_reference_cloud(
         frame_batch,
         mapping_result,
         classes_config,
         point_filter_config,
+        progress_cb=lambda done, total: _step("cloud", done, total),
     )
-    _step("cloud", 1, 1)
 
     return LoadedRun(
         run_dir=run_dir,

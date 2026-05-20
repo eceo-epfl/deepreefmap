@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 import cv2
@@ -195,23 +197,20 @@ def build_semantic_reference_cloud(
     mapping: MappingSequenceResult,
     classes_config: ClassConfig,
     config: PointFilterConfig | None = None,
+    *,
+    progress_cb: Callable[[int, int], None] | None = None,
+    max_workers: int = 6,
 ) -> SemanticPointCloud:
     cfg = config or PointFilterConfig()
     ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
     frame_lookup = {frame.frame_index: frame for frame in frame_batch.frames}
     active_radius = _resolve_replacement_radius(cfg, mapping.depth_maps)
+    ignore_set = list(ignore_labels) if ignore_labels else []
 
-    xyz_parts: list[np.ndarray] = []
-    rgb_parts: list[np.ndarray] = []
-    label_parts: list[np.ndarray] = []
-    frame_parts: list[np.ndarray] = []
-    conf_parts: list[np.ndarray] = []
-    dist_parts: list[np.ndarray] = []
-
-    for result_i, frame_index in enumerate(mapping.frame_indices.tolist()):
+    def _per_frame(result_i: int, frame_index: int):
         frame = frame_lookup.get(int(frame_index))
         if frame is None:
-            continue
+            return None
         depth = mapping.depth_maps[result_i].astype(np.float32)
         h, w = depth.shape
         labels = _resize_nearest(frame.labels, (w, h)).astype(np.int32)
@@ -230,8 +229,8 @@ def build_semantic_reference_cloud(
         valid &= depth >= cfg.min_depth
         valid &= depth <= cfg.max_depth
         valid &= keep_mask
-        if ignore_labels:
-            valid &= ~np.isin(labels, list(ignore_labels))
+        if ignore_set:
+            valid &= ~np.isin(labels, ignore_set)
         if cfg.depth_edge_threshold is not None:
             valid &= depth_edgeness(depth) <= cfg.depth_edge_threshold
         if confidence is not None:
@@ -243,7 +242,7 @@ def build_semantic_reference_cloud(
             valid &= confidence >= max(float(threshold), cfg.min_confidence)
         flat_valid = valid.reshape(-1)
         if not flat_valid.any():
-            continue
+            return None
         xyz_f = xyz[flat_valid]
         rgb_f = rgb.reshape(-1, 3)[flat_valid].astype(np.uint8)
         lab_f = labels.reshape(-1)[flat_valid].astype(np.int32)
@@ -252,14 +251,36 @@ def build_semantic_reference_cloud(
             conf_f = confidence.reshape(-1)[flat_valid].astype(np.float32)
         else:
             conf_f = np.ones(int(flat_valid.sum()), dtype=np.float32)
-
         n = int(xyz_f.shape[0])
-        xyz_parts.append(xyz_f)
-        rgb_parts.append(rgb_f)
-        label_parts.append(lab_f)
-        frame_parts.append(np.full(n, int(frame_index), dtype=np.int32))
-        conf_parts.append(conf_f)
-        dist_parts.append(dist_f)
+        frame_f = np.full(n, int(frame_index), dtype=np.int32)
+        return xyz_f, rgb_f, lab_f, frame_f, conf_f, dist_f
+
+    xyz_parts: list[np.ndarray] = []
+    rgb_parts: list[np.ndarray] = []
+    label_parts: list[np.ndarray] = []
+    frame_parts: list[np.ndarray] = []
+    conf_parts: list[np.ndarray] = []
+    dist_parts: list[np.ndarray] = []
+
+    work = list(enumerate(mapping.frame_indices.tolist()))
+    total = len(work)
+    completed = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = [ex.submit(_per_frame, ri, fi) for ri, fi in work]
+        for fut in as_completed(futures):
+            result = fut.result()
+            completed += 1
+            if progress_cb is not None:
+                progress_cb(completed, total)
+            if result is None:
+                continue
+            xyz_f, rgb_f, lab_f, frame_f, conf_f, dist_f = result
+            xyz_parts.append(xyz_f)
+            rgb_parts.append(rgb_f)
+            label_parts.append(lab_f)
+            frame_parts.append(frame_f)
+            conf_parts.append(conf_f)
+            dist_parts.append(dist_f)
 
     if not xyz_parts:
         return SemanticPointCloud.empty()

@@ -146,8 +146,10 @@ class DeepReefMapWindow(QMainWindow):
         self._run_meta_banner.setTextFormat(Qt.TextFormat.RichText)
         self._run_meta_banner.setStyleSheet(
             "background-color: #1f2a36; color: #d8e2ec;"
-            " padding: 8px 12px; border-bottom: 1px solid #2f3f50;"
+            " padding: 4px 12px; border-bottom: 1px solid #2f3f50;"
         )
+        # Compact single-row format means we only need ~2 lines of height.
+        self._run_meta_banner.setMaximumHeight(56)
         self._run_meta_banner.setVisible(False)
 
         central = QWidget()
@@ -1091,6 +1093,7 @@ class DeepReefMapWindow(QMainWindow):
 
     @staticmethod
     def _format_run_metadata(manifest: dict, run_dir: Path, *, include_disk_size: bool) -> str:
+        """Multi-line format used in tooltips and the sidebar Results block."""
         lines: list[str] = []
         name = (manifest.get("name") or "").strip() or run_dir.name
         lines.append(f"<b>{name}</b>  <i>({run_dir.name})</i>")
@@ -1116,15 +1119,44 @@ class DeepReefMapWindow(QMainWindow):
         if metric_pts:
             lines.append(f"Metric points: {int(metric_pts):,}")
         if include_disk_size:
-            try:
-                total = sum(p.stat().st_size for p in run_dir.rglob("*") if p.is_file())
-                if total >= 1e9:
-                    lines.append(f"Disk: {total / 1e9:.2f} GB")
-                else:
-                    lines.append(f"Disk: {total / 1e6:.1f} MB")
-            except Exception:
-                pass
+            disk = _format_disk_size(run_dir)
+            if disk:
+                lines.append(f"Disk: {disk}")
         return "<br>".join(lines)
+
+    @staticmethod
+    def _format_run_metadata_compact(manifest: dict, run_dir: Path, *, include_disk_size: bool) -> str:
+        """Single-line wrapping format used in the inline top banner."""
+        name = (manifest.get("name") or "").strip() or run_dir.name
+        header = (
+            f'<b style="font-size:13px">{name}</b>'
+            f'&nbsp;<span style="color:#7a8a99">({run_dir.name})</span>'
+        )
+        facts: list[str] = []
+        for label, key, fmt in (
+            ("Mode", "mode", str),
+            ("Frames", "frames_processed", str),
+            ("Segmentation", "segmentation_model", str),
+            ("Mapping", "mapping_backend", str),
+            ("Camera", "camera_profile", str),
+            ("Semantic pts", "semantic_reference_points", lambda v: f"{int(v):,}"),
+            ("Metric pts", "metric_points", lambda v: f"{int(v):,}"),
+        ):
+            v = manifest.get(key)
+            if v is not None and v != "":
+                facts.append(
+                    f'<span style="color:#8aa0b8">{label}:</span>&nbsp;'
+                    f'<span style="color:#d8e2ec">{fmt(v)}</span>'
+                )
+        if include_disk_size:
+            disk = _format_disk_size(run_dir)
+            if disk:
+                facts.append(
+                    f'<span style="color:#8aa0b8">Disk:</span>&nbsp;'
+                    f'<span style="color:#d8e2ec">{disk}</span>'
+                )
+        sep = '&nbsp;<span style="color:#4a5f74">·</span>&nbsp;'
+        return f"{header}&nbsp;&nbsp;{sep.join(facts)}"
 
     def _on_past_run_selected(self, index: int) -> None:
         if index <= 0:
@@ -1147,7 +1179,7 @@ class DeepReefMapWindow(QMainWindow):
 
     def _show_run_meta_banner(self, manifest: dict, run_dir: Path, *, include_disk_size: bool) -> None:
         self._run_meta_banner.setText(
-            self._format_run_metadata(manifest, run_dir, include_disk_size=include_disk_size)
+            self._format_run_metadata_compact(manifest, run_dir, include_disk_size=include_disk_size)
         )
         self._run_meta_banner.setVisible(True)
 
@@ -1539,6 +1571,16 @@ class DeepReefMapWindow(QMainWindow):
         except Exception as exc:
             text = f"Update failed: {exc!r}"
         self._sig_update_result.emit(text)
+
+
+def _format_disk_size(run_dir: Path) -> str | None:
+    try:
+        total = sum(p.stat().st_size for p in run_dir.rglob("*") if p.is_file())
+    except Exception:
+        return None
+    if total >= 1e9:
+        return f"{total / 1e9:.2f} GB"
+    return f"{total / 1e6:.1f} MB"
 
 
 def _separator() -> QWidget:
