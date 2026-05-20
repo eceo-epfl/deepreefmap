@@ -3,16 +3,14 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
-    QDialogButtonBox,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,

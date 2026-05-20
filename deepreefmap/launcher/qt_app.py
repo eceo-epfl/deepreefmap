@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
-    QMessageBox,
     QProgressBar,
     QProgressDialog,
     QPushButton,
@@ -934,10 +933,16 @@ class DeepReefMapWindow(QMainWindow):
         self._update_label = QLabel(f"Version: <b>{_current_version()}</b>. Checking for updates...")
         self._update_label.setWordWrap(True)
         layout.addWidget(self._update_label)
-        self._update_btn = QPushButton("Install update")
+        update_row = QHBoxLayout()
+        self._update_version_combo = QComboBox()
+        self._update_version_combo.setVisible(False)
+        update_row.addWidget(self._update_version_combo, 1)
+        self._update_btn = QPushButton("Install")
         self._update_btn.setVisible(False)
         self._update_btn.clicked.connect(self._on_update)
-        layout.addWidget(self._update_btn)
+        update_row.addWidget(self._update_btn)
+        layout.addLayout(update_row)
+        self._available_releases: list[dict] = []
 
         threading.Thread(target=self._check_for_update, daemon=True).start()
 
@@ -2673,57 +2678,66 @@ class DeepReefMapWindow(QMainWindow):
 
     def _check_for_update(self) -> None:
         current = _current_version()
-        versions = _fetch_release_versions()
+        releases = _fetch_releases()
         pyapp_bin = _pyapp_binary_path()
-        self._sig_update_check_done.emit(current, versions, pyapp_bin)
+        self._sig_update_check_done.emit(current, releases, pyapp_bin)
 
-    def _apply_update_check(self, current: str, versions: list[str] | None, pyapp_bin: str | None) -> None:
-        if versions is None:
+    def _apply_update_check(self, current: str, releases: list[dict] | None, pyapp_bin: str | None) -> None:
+        if releases is None:
             self._update_label.setText(f"Version: <b>{current}</b>. Couldn't reach GitHub.")
             return
-        if not versions:
+        if not releases:
             self._update_label.setText(f"Version: <b>{current}</b>. No releases found.")
             return
-        latest = versions[0]
-        if latest == current:
+        self._available_releases = list(releases)
+        latest = _release_version(releases[0])
+        installable = [r for r in releases if _release_version(r) != current]
+        if not installable:
             self._update_label.setText(f"Version: <b>{current}</b> (up to date).")
-        elif pyapp_bin:
+            return
+        if not pyapp_bin:
+            versions_summary = ", ".join(_release_version(r) for r in releases[:5])
             self._update_label.setText(
-                f"Version: <b>{current}</b>. Latest: <b>{latest}</b>. "
-                f"Available: {', '.join(versions[:5])}"
+                f"Version: <b>{current}</b>. Latest: <b>{latest}</b> "
+                f"(not running from installer). Available: {versions_summary}"
             )
-            self._update_btn.setVisible(True)
-            self._update_btn.setText(f"Install {latest}")
-            self._update_target_version = latest
-        else:
-            self._update_label.setText(
-                f"Version: <b>{current}</b>. Latest: <b>{latest}</b> (not running from installer)."
-            )
+            return
+        self._update_label.setText(
+            f"Version: <b>{current}</b>. Latest: <b>{latest}</b>. Pick a version to install:"
+        )
+        self._update_version_combo.clear()
+        for rel in installable:
+            v = _release_version(rel)
+            self._update_version_combo.addItem(v, rel)
+        self._update_version_combo.setVisible(True)
+        self._update_btn.setVisible(True)
 
     def _on_update(self) -> None:
-        import subprocess
+        from deepreefmap.launcher.update_dialog import UpdateProgressDialog
 
         pyapp_bin = _pyapp_binary_path()
         if pyapp_bin is None:
-            logger.warning("Update button clicked but no PyApp binary detected")
+            logger.warning("Install clicked but no PyApp binary detected")
+            return
+        index = self._update_version_combo.currentIndex()
+        if index < 0:
+            return
+        release = self._update_version_combo.itemData(index)
+        version = self._update_version_combo.currentText()
+        if not isinstance(release, dict):
+            logger.warning("Selected release has no metadata")
             return
         self._update_btn.setEnabled(False)
-        if os.environ.get("DEEPREEFMAP_MOCK_PYAPP"):
-            logger.info("would have run pyapp self update")
-            QMessageBox.information(self, "Update", "Update simulated successfully (mock mode).")
-            return
         try:
-            subprocess.Popen([pyapp_bin, "self", "update"])
-        except Exception as exc:
-            logger.exception("Failed to launch pyapp self update")
-            QMessageBox.warning(self, "Update", f"Failed to launch updater: {exc!r}")
+            dialog = UpdateProgressDialog(
+                target_version=version,
+                release=release,
+                binary_path=Path(pyapp_bin),
+                parent=self,
+            )
+            dialog.run()
+        finally:
             self._update_btn.setEnabled(True)
-            return
-        QMessageBox.information(
-            self,
-            "Update",
-            "Update is running in the background. Please relaunch the app once it completes.",
-        )
 
 
 _PAST_RUN_META_ROLE = Qt.ItemDataRole.UserRole + 1
