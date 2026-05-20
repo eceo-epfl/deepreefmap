@@ -519,6 +519,23 @@ class DeepReefMapWindow(QMainWindow):
         self._open_dir_btn = QPushButton("Open output directory")
         self._open_dir_btn.clicked.connect(self._open_output_dir)
         res_layout.addWidget(self._open_dir_btn)
+
+        exports_grid = QGridLayout()
+        exports_grid.setHorizontalSpacing(6)
+        exports_grid.setVerticalSpacing(4)
+        self._export_ortho_npz_btn = QPushButton("Save ortho (NPZ)")
+        self._export_ortho_npz_btn.clicked.connect(self._on_export_ortho_npz)
+        exports_grid.addWidget(self._export_ortho_npz_btn, 0, 0)
+        self._export_ortho_png_btn = QPushButton("Save ortho preview (PNG)")
+        self._export_ortho_png_btn.clicked.connect(self._on_export_ortho_png)
+        exports_grid.addWidget(self._export_ortho_png_btn, 0, 1)
+        self._export_cover_btn = QPushButton("Save benthic cover (CSV)")
+        self._export_cover_btn.clicked.connect(self._on_export_cover_csv)
+        exports_grid.addWidget(self._export_cover_btn, 1, 0)
+        self._export_zip_btn = QPushButton("Zip output directory")
+        self._export_zip_btn.clicked.connect(self._on_export_zip)
+        exports_grid.addWidget(self._export_zip_btn, 1, 1)
+        res_layout.addLayout(exports_grid)
         layout.addWidget(self._results_group)
 
         layout.addWidget(_separator())
@@ -931,6 +948,128 @@ class DeepReefMapWindow(QMainWindow):
         self._results_crop_width.setValue(value / 100.0)
         self._results_crop_width.blockSignals(False)
         self._recompute_ortho_crop()
+
+    def _default_export_dir(self) -> str:
+        if self._results_output_dir is not None:
+            return str(self._results_output_dir)
+        return self._out_root_input.text() or str(Path.home())
+
+    def _on_export_ortho_npz(self) -> None:
+        if self._current_ortho_grid is None:
+            self._status_label.setText("No ortho grid available to export.")
+            return
+        default = str(Path(self._default_export_dir()) / "ortho.npz")
+        path, _ = QFileDialog.getSaveFileName(self, "Save ortho NPZ", default, "NumPy archive (*.npz)")
+        if not path:
+            return
+        try:
+            from deepreefmap.io.exports import save_ortho_grid
+
+            save_ortho_grid(Path(path), self._current_ortho_grid)
+            self._status_label.setText(f"Saved ortho NPZ to {path}")
+        except Exception as exc:
+            self._status_label.setText(f"Export failed: {exc}")
+            logger.exception("Failed to save ortho NPZ")
+
+    def _on_export_ortho_png(self) -> None:
+        if self._current_ortho_grid is None:
+            self._status_label.setText("No ortho preview available to export.")
+            return
+        default = str(Path(self._default_export_dir()) / "ortho_preview.png")
+        path, _ = QFileDialog.getSaveFileName(self, "Save ortho preview PNG", default, "PNG image (*.png)")
+        if not path:
+            return
+        try:
+            import numpy as np
+
+            grid = self._current_ortho_grid
+            rgb = np.asarray(grid.rgb, dtype=np.uint8)
+            seg_rgb = self._labels_to_rgb(grid.labels, self._ortho_classes_config)
+            if rgb.shape[:2] != seg_rgb.shape[:2]:
+                seg_rgb = np.zeros_like(rgb)
+            composite = np.concatenate([rgb, seg_rgb], axis=1)
+            import cv2
+
+            cv2.imwrite(path, cv2.cvtColor(composite, cv2.COLOR_RGB2BGR))
+            self._status_label.setText(f"Saved ortho preview to {path}")
+        except Exception as exc:
+            self._status_label.setText(f"Export failed: {exc}")
+            logger.exception("Failed to save ortho preview PNG")
+
+    def _on_export_cover_csv(self) -> None:
+        cover = self._current_cover_dict()
+        if cover is None:
+            self._status_label.setText("No benthic cover available to export.")
+            return
+        default = str(Path(self._default_export_dir()) / "benthic_cover.csv")
+        path, _ = QFileDialog.getSaveFileName(self, "Save benthic cover CSV", default, "CSV file (*.csv)")
+        if not path:
+            return
+        try:
+            import csv
+
+            classes = cover.get("classes", {}) if isinstance(cover, dict) else {}
+            rows = sorted(
+                ((cid, info) for cid, info in classes.items()),
+                key=lambda x: -float(x[1].get("fraction", 0.0)),
+            )
+            with open(path, "w", newline="") as fh:
+                writer = csv.writer(fh)
+                writer.writerow(["class_id", "name", "fraction", "count"])
+                for cid, info in rows:
+                    writer.writerow([
+                        cid,
+                        info.get("name", ""),
+                        f"{float(info.get('fraction', 0.0)):.6f}",
+                        info.get("count", ""),
+                    ])
+            self._status_label.setText(f"Saved benthic cover CSV to {path}")
+        except Exception as exc:
+            self._status_label.setText(f"Export failed: {exc}")
+            logger.exception("Failed to save cover CSV")
+
+    def _on_export_zip(self) -> None:
+        if self._results_output_dir is None or not Path(self._results_output_dir).exists():
+            self._status_label.setText("No output directory to zip.")
+            return
+        default = str(Path(self._default_export_dir()).parent / f"{Path(self._results_output_dir).name}.zip")
+        path, _ = QFileDialog.getSaveFileName(self, "Save output as zip", default, "Zip archive (*.zip)")
+        if not path:
+            return
+        try:
+            import shutil
+
+            base = path[:-4] if path.endswith(".zip") else path
+            archive_path = shutil.make_archive(
+                base_name=base,
+                format="zip",
+                root_dir=str(self._results_output_dir.parent),
+                base_dir=self._results_output_dir.name,
+            )
+            self._status_label.setText(f"Saved zip archive to {archive_path}")
+        except Exception as exc:
+            self._status_label.setText(f"Export failed: {exc}")
+            logger.exception("Failed to zip output directory")
+
+    def _current_cover_dict(self) -> dict | None:
+        if self._current_ortho_grid is not None and self._ortho_classes_config is not None:
+            try:
+                from deepreefmap.postproc.benthic_cover import compute_benthic_cover
+
+                grid = self._current_ortho_grid
+                return compute_benthic_cover(
+                    grid.labels, classes_config=self._ortho_classes_config, counts=grid.counts
+                )
+            except Exception:
+                logger.debug("Failed to compute live benthic cover", exc_info=True)
+        if self._results_output_dir is not None:
+            cover_path = self._results_output_dir / "benthic_cover.json"
+            if cover_path.exists():
+                try:
+                    return json.loads(cover_path.read_text())
+                except Exception:
+                    return None
+        return None
 
 
     def _refresh_model_status(self) -> None:
