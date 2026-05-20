@@ -5,13 +5,6 @@ import logging
 
 import typer
 
-from deepreefmap.camera.colmap_calibration import calibrate_camera_profile, verify_camera_profile
-from deepreefmap.pipeline.orchestrator import run_reconstruction
-from deepreefmap.postproc.reports import render_offline_video_placeholder
-from deepreefmap.segmentation.registry import list_segmentation_models
-from deepreefmap.mapping.registry import list_mapping_backends
-from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR, available_profile_names
-
 app = typer.Typer(help="DeepReefMap command line interface")
 
 
@@ -36,11 +29,16 @@ def launch_command() -> None:
 
 
 def _available_profiles() -> list[str]:
+    from deepreefmap.camera.intrinsics import available_profile_names
+
     return available_profile_names()
 
 
 @app.command("list-models")
 def list_models() -> None:
+    from deepreefmap.segmentation.registry import list_segmentation_models
+    from deepreefmap.mapping.registry import list_mapping_backends
+
     typer.echo("Segmentation models:")
     for name in list_segmentation_models():
         typer.echo(f"  - {name}")
@@ -133,6 +131,9 @@ def reconstruct(
         help="Skip segmentation entirely. Produces only the 3D reconstruction (geometry cloud + poses + depths).",
     ),
 ) -> None:
+    from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR
+    from deepreefmap.pipeline.orchestrator import run_reconstruction
+
     if camera_profile not in _available_profiles():
         profile_path = CAMERA_PROFILE_DIR / f"{camera_profile}.json"
         available = _available_profiles()
@@ -200,6 +201,8 @@ def calibrate(
     begin: Optional[float] = typer.Option(None, help="Optional begin timestamp (seconds) for calibration window."),
     end: Optional[float] = typer.Option(None, help="Optional end timestamp (seconds) for calibration window."),
 ) -> None:
+    from deepreefmap.camera.colmap_calibration import calibrate_camera_profile
+
     profile_path = calibrate_camera_profile(
         video,
         name,
@@ -218,6 +221,8 @@ def verify_calibration(
         help="Camera profile name (bundled or `./camera_profiles/<name>.json` in CWD).",
     ),
 ) -> None:
+    from deepreefmap.camera.colmap_calibration import verify_camera_profile
+
     report = verify_camera_profile(name)
     typer.echo(json.dumps(report, indent=2))
 
@@ -241,6 +246,8 @@ def render_video(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    from deepreefmap.postproc.reports import render_offline_video_placeholder
+
     render_offline_video_placeholder(
         run_dir,
         transect_length_m=transect_length_m,
