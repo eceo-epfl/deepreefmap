@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtGui import QDesktopServices, QPixmap, QSurfaceFormat
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -761,6 +761,12 @@ def launch(classes_path: Path = DEFAULT_CLASSES_PATH, view_run_dir: Path | None 
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    os.environ.setdefault("QT_OPENGL", "desktop")
+    fmt = QSurfaceFormat()
+    fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
+    fmt.setVersion(3, 3)
+    fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
+    QSurfaceFormat.setDefaultFormat(fmt)
     qt_app = QApplication.instance() or QApplication(sys.argv)
     classes_config = load_classes(classes_path)
     window = DeepReefMapWindow(classes_config, classes_path)
