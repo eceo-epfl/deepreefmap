@@ -477,6 +477,34 @@ class QtPointCloudViewer(QWidget):
         )
         return np.concatenate([rgb, seg_color, depth_color], axis=0)
 
+    def _show_live_preprocess_frame(self, frame_index: int) -> None:
+        stem = f"{frame_index:08d}"
+        frame_path = self._output_dir / "frames" / f"{stem}.png"
+        labels_path = self._output_dir / "labels" / f"{stem}.npy"
+        if not frame_path.exists():
+            return
+        rgb = cv2.imread(str(frame_path))
+        if rgb is None:
+            return
+        rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
+        if labels_path.exists():
+            labels = np.load(str(labels_path))
+            h, w = rgb.shape[:2]
+            seg_color = _colorize_seg(
+                cv2.resize(labels, (w, h), interpolation=cv2.INTER_NEAREST),
+                self._class_colors,
+            )
+            stacked = np.concatenate([rgb, seg_color], axis=0)
+        else:
+            stacked = rgb
+        h, w, _ = stacked.shape
+        qimg = QImage(np.ascontiguousarray(stacked).data, w, h, 3 * w, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(qimg)
+        label_w = self._image_label.width()
+        if label_w > 0:
+            pixmap = pixmap.scaledToWidth(min(w, label_w), Qt.SmoothTransformation)
+        self._image_label.setPixmap(pixmap)
+
     # --- Viewer protocol ---
 
     def start_run(self, run_label: str, output_dir: str) -> None:
@@ -519,6 +547,8 @@ class QtPointCloudViewer(QWidget):
 
     @Slot(str, int, object, object, object)
     def _on_update_progress(self, stage: str, current: int, total: object, message: object, frame_index: object) -> None:
+        if stage == "preprocess" and frame_index is not None and self._output_dir is not None:
+            self._show_live_preprocess_frame(int(frame_index))
         self._notify_status("update_progress", stage=stage, current=current, total=total, message=message)
 
     @Slot(object)

@@ -653,26 +653,35 @@ class DeepReefMapWindow(QMainWindow):
 
     def _on_viewer_status(self, event: str, **kwargs: object) -> None:
         if event == "start_run":
-            self._status_label.setText(f"Running: {kwargs.get('run_label', '')}")
+            self._status_label.setText("Starting reconstruction...")
+            self._progress_bar.setValue(0)
+            self._progress_bar.setVisible(True)
         elif event == "set_stage":
             stage = kwargs.get("stage", "")
             status = kwargs.get("status", "")
             message = kwargs.get("message", "")
-            self._status_label.setText(f"{stage}: {status}" + (f" — {message}" if message else ""))
+            label = {"startup": "Startup", "preprocess": "Preprocessing", "mapping": "Mapping", "outputs": "Building outputs"}.get(stage, stage)
+            if status == "completed":
+                self._status_label.setText(f"{label} complete" + (f" — {message}" if message else ""))
+            else:
+                self._status_label.setText(f"{label}..." + (f" {message}" if message else ""))
         elif event == "update_progress":
             current = kwargs.get("current", 0)
             total = kwargs.get("total")
+            stage = kwargs.get("stage", "")
             if total:
                 pct = int(100 * int(current) / int(total))
                 self._progress_bar.setValue(pct)
                 self._progress_bar.setVisible(True)
+                self._status_label.setText(f"{'Preprocessing' if stage == 'preprocess' else 'Mapping'}: {current}/{total} frames")
         elif event == "data_ready":
-            self._status_label.setText("Reconstruction complete.")
+            self._status_label.setText("Reconstruction complete. Loading viewer...")
             self._progress_bar.setValue(100)
             if self._viewer.has_scene_data:
                 self._build_legend()
                 self._show_viewer_controls()
                 self._on_viewer_control_changed()
+                self._status_label.setText("Reconstruction complete.")
         elif event == "mark_outputs":
             output_dir = kwargs.get("output_dir", "")
             self._status_label.setText(f"Outputs saved to {output_dir}")
