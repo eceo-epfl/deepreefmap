@@ -118,6 +118,156 @@ def test_fetch_versions_parses_github_response():
     assert versions == ["2.0.0", "1.5.0"]
 
 
+def test_fetch_releases_mock_synthesises_assets(monkeypatch):
+    from deepreefmap.launcher.qt_app import _fetch_releases
+
+    monkeypatch.setenv("DEEPREEFMAP_MOCK_VERSIONS", "2.0.0,1.0.1")
+    releases = _fetch_releases()
+    assert releases is not None
+    assert [r["tag_name"] for r in releases] == ["v2.0.0", "v1.0.1"]
+    names = {a["name"] for a in releases[0]["assets"]}
+    assert "deepreefmap-linux-x64" in names
+    assert "deepreefmap-windows-x64.exe" in names
+
+
+def test_fetch_releases_keeps_assets_from_github_response():
+    from deepreefmap.launcher.qt_app import _fetch_releases
+
+    releases = [
+        {
+            "tag_name": "v2.0.0",
+            "draft": False,
+            "assets": [
+                {
+                    "name": "deepreefmap-linux-x64",
+                    "browser_download_url": "https://example.invalid/v2.0.0/deepreefmap-linux-x64",
+                },
+            ],
+        },
+        {"tag_name": "v1.0.0", "draft": True, "assets": []},
+    ]
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(releases).encode())
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    t = threading.Thread(target=server.handle_request, daemon=True)
+    t.start()
+
+    import deepreefmap.launcher.qt_app as mod
+    orig = mod._gh_releases_url
+    mod._gh_releases_url = lambda: f"http://127.0.0.1:{port}/releases"
+    try:
+        result = _fetch_releases(timeout=5.0)
+    finally:
+        mod._gh_releases_url = orig
+        server.server_close()
+
+    assert result is not None and len(result) == 1
+    assert result[0]["tag_name"] == "v2.0.0"
+    assert result[0]["assets"][0]["browser_download_url"].endswith("/deepreefmap-linux-x64")
+
+
+# --- Binary swap helpers ---
+
+
+def test_resolve_asset_name_linux():
+    from deepreefmap.launcher.binary_swap import resolve_asset_name
+
+    assert resolve_asset_name("linux") == "deepreefmap-linux-x64"
+
+
+def test_resolve_asset_name_windows():
+    from deepreefmap.launcher.binary_swap import resolve_asset_name
+
+    assert resolve_asset_name("win32") == "deepreefmap-windows-x64.exe"
+
+
+def test_resolve_asset_name_unsupported_raises():
+    from deepreefmap.launcher.binary_swap import BinarySwapError, resolve_asset_name
+
+    with pytest.raises(BinarySwapError):
+        resolve_asset_name("darwin")
+
+
+def test_find_asset_url_returns_match():
+    from deepreefmap.launcher.binary_swap import find_asset_url
+
+    rel = {
+        "tag_name": "v1.0.0",
+        "assets": [
+            {"name": "deepreefmap-linux-x64", "browser_download_url": "https://x/y"},
+            {"name": "other", "browser_download_url": "https://nope"},
+        ],
+    }
+    assert find_asset_url(rel, "deepreefmap-linux-x64") == "https://x/y"
+
+
+def test_find_asset_url_missing_raises():
+    from deepreefmap.launcher.binary_swap import BinarySwapError, find_asset_url
+
+    with pytest.raises(BinarySwapError):
+        find_asset_url({"tag_name": "v0.5.0", "assets": []}, "deepreefmap-linux-x64")
+
+
+def test_download_to_streams_chunks_and_reports_progress(tmp_path):
+    from deepreefmap.launcher.binary_swap import download_to
+
+    payload = b"x" * (200 * 1024)
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    t = threading.Thread(target=server.handle_request, daemon=True)
+    t.start()
+
+    progress: list[tuple[int, int]] = []
+    dest = tmp_path / "bin"
+    try:
+        download_to(
+            f"http://127.0.0.1:{port}/bin", dest,
+            lambda done, total: progress.append((done, total)),
+            chunk_size=32 * 1024,
+        )
+    finally:
+        server.server_close()
+
+    assert dest.read_bytes() == payload
+    assert progress and progress[-1] == (len(payload), len(payload))
+
+
+def test_replace_binary_atomic_rename(tmp_path):
+    from deepreefmap.launcher.binary_swap import replace_binary
+
+    target = tmp_path / "current"
+    target.write_bytes(b"old")
+    src = tmp_path / "new"
+    src.write_bytes(b"new")
+
+    replace_binary(target, src)
+
+    assert target.read_bytes() == b"new"
+    assert not src.exists()
+
+
 def test_current_version_returns_string():
     from deepreefmap.launcher.qt_app import _current_version
 

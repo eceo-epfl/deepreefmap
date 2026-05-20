@@ -25,17 +25,27 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSlider,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
+
+from deepreefmap.launcher.log_view import (
+    LogView,
+    close_run_log_file,
+    install_qt_log_handler,
+    open_run_log_file,
+)
+from deepreefmap.visualization.sunburst_widget import SunburstWidget
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +245,51 @@ def _fetch_release_versions(timeout: float = 8.0) -> list[str] | None:
         return None
 
 
+def _fetch_releases(timeout: float = 8.0) -> list[dict] | None:
+    """Return raw release records (with `assets`) for binary swap.
+
+    Mock via `DEEPREEFMAP_MOCK_VERSIONS`: synthesises records with one
+    `deepreefmap-linux-x64` asset per version pointing at a placeholder URL.
+    """
+    import urllib.request
+
+    mock = os.environ.get("DEEPREEFMAP_MOCK_VERSIONS")
+    if mock is not None:
+        records = []
+        for v in (s.strip() for s in mock.split(",")):
+            if not v:
+                continue
+            records.append({
+                "tag_name": f"v{v}",
+                "draft": False,
+                "assets": [
+                    {
+                        "name": "deepreefmap-linux-x64",
+                        "browser_download_url": f"https://example.invalid/v{v}/deepreefmap-linux-x64",
+                    },
+                    {
+                        "name": "deepreefmap-windows-x64.exe",
+                        "browser_download_url": f"https://example.invalid/v{v}/deepreefmap-windows-x64.exe",
+                    },
+                ],
+            })
+        return records if records else None
+    try:
+        req = urllib.request.Request(_gh_releases_url(), headers={"Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            releases = json.load(resp)
+        kept = [rel for rel in releases if rel.get("tag_name") and not rel.get("draft")]
+        return kept if kept else None
+    except Exception as exc:
+        logger.warning("Failed to fetch release metadata from GitHub: %s", exc)
+        return None
+
+
+def _release_version(record: dict) -> str:
+    tag = str(record.get("tag_name", ""))
+    return tag[1:] if tag.startswith("v") else tag
+
+
 def _current_version() -> str:
     import importlib.metadata
 
@@ -255,6 +310,8 @@ class DeepReefMapWindow(QMainWindow):
     _sig_load_progress = Signal(str, int, int)
     _sig_batch_progress = Signal(int, int, str)
     _sig_batch_done = Signal(int, int, str)
+    _sig_qc_render_progress = Signal(int, int)
+    _sig_qc_render_done = Signal(bool, str)
 
     def __init__(self, classes_config: object, classes_path: Path) -> None:
         super().__init__()
@@ -337,6 +394,27 @@ class DeepReefMapWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setAlignment(Qt.AlignTop)
 
+        # Three mode-specific pages stacked together. _set_app_mode swaps
+        # between them so the user only sees controls relevant to the current
+        # state (setting up a run / running / reviewing results).
+        self._mode_stack = QStackedWidget()
+        self._setup_page = QWidget()
+        setup_layout = QVBoxLayout(self._setup_page)
+        setup_layout.setAlignment(Qt.AlignTop)
+        setup_layout.setContentsMargins(0, 0, 0, 0)
+        self._running_page = QWidget()
+        running_layout = QVBoxLayout(self._running_page)
+        running_layout.setAlignment(Qt.AlignTop)
+        running_layout.setContentsMargins(0, 0, 0, 0)
+        self._viewing_page = QWidget()
+        viewing_layout = QVBoxLayout(self._viewing_page)
+        viewing_layout.setAlignment(Qt.AlignTop)
+        viewing_layout.setContentsMargins(0, 0, 0, 0)
+        self._mode_stack.addWidget(self._setup_page)
+        self._mode_stack.addWidget(self._running_page)
+        self._mode_stack.addWidget(self._viewing_page)
+        layout.addWidget(self._mode_stack)
+
         # These widgets are owned by the top toolbar but constructed here so
         # initialization code (_refresh_past_runs_combo, etc.) can reference
         # them before the toolbar is laid out.
@@ -369,7 +447,7 @@ class DeepReefMapWindow(QMainWindow):
         self._load_cancel_btn.setVisible(False)
         self._load_cancel_btn.clicked.connect(self._cancel_load)
 
-        layout.addWidget(QLabel("<b>New reconstruction</b>"))
+        setup_layout.addWidget(QLabel("<b>New reconstruction</b>"))
 
         video_row = QHBoxLayout()
         self._video_input = QLineEdit()
@@ -378,32 +456,32 @@ class DeepReefMapWindow(QMainWindow):
         browse_btn.clicked.connect(self._browse_video)
         video_row.addWidget(self._video_input, 1)
         video_row.addWidget(browse_btn)
-        layout.addLayout(video_row)
+        setup_layout.addLayout(video_row)
 
-        layout.addWidget(QLabel("Camera profile"))
+        setup_layout.addWidget(QLabel("Camera profile"))
         self._profile_combo = QComboBox()
         self._profile_combo.addItems(profiles)
-        layout.addWidget(self._profile_combo)
+        setup_layout.addWidget(self._profile_combo)
 
-        layout.addWidget(QLabel("Segmentation"))
+        setup_layout.addWidget(QLabel("Segmentation"))
         self._seg_combo = QComboBox()
         self._seg_combo.addItems(seg_models)
         idx = self._seg_combo.findText("segformer-b2")
         if idx >= 0:
             self._seg_combo.setCurrentIndex(idx)
-        layout.addWidget(self._seg_combo)
+        setup_layout.addWidget(self._seg_combo)
 
-        layout.addWidget(QLabel("Mapping"))
+        setup_layout.addWidget(QLabel("Mapping"))
         self._map_combo = QComboBox()
         self._map_combo.addItems(map_backends)
         idx = self._map_combo.findText("scsfmlearner")
         if idx >= 0:
             self._map_combo.setCurrentIndex(idx)
-        layout.addWidget(self._map_combo)
+        setup_layout.addWidget(self._map_combo)
 
-        layout.addWidget(QLabel("Output root"))
+        setup_layout.addWidget(QLabel("Output root"))
         self._out_root_input = QLineEdit(default_root)
-        layout.addWidget(self._out_root_input)
+        setup_layout.addWidget(self._out_root_input)
         root_btn_row = QHBoxLayout()
         root_btn_row.setContentsMargins(0, 0, 0, 0)
         root_browse_btn = QPushButton("Browse")
@@ -418,25 +496,25 @@ class DeepReefMapWindow(QMainWindow):
         root_default_btn.clicked.connect(self._reset_output_root_to_default)
         root_btn_row.addWidget(root_default_btn)
         root_btn_row.addStretch(1)
-        layout.addLayout(root_btn_row)
+        setup_layout.addLayout(root_btn_row)
 
-        layout.addWidget(QLabel("Run name"))
+        setup_layout.addWidget(QLabel("Run name"))
         from datetime import datetime
 
         self._run_name_input = QLineEdit(datetime.now().strftime("%Y%m%d-%H%M%S"))
         self._run_name_input.setPlaceholderText("Friendly name (e.g. barrier-reef-2026-05-20)")
-        layout.addWidget(self._run_name_input)
+        setup_layout.addWidget(self._run_name_input)
 
         self._effective_dir_label = QLabel("")
         self._effective_dir_label.setStyleSheet("color: #888;")
         self._effective_dir_label.setWordWrap(True)
-        layout.addWidget(self._effective_dir_label)
+        setup_layout.addWidget(self._effective_dir_label)
 
-        layout.addWidget(QLabel("FPS"))
+        setup_layout.addWidget(QLabel("FPS"))
         self._fps_spin = QSpinBox()
         self._fps_spin.setRange(1, 60)
         self._fps_spin.setValue(10)
-        layout.addWidget(self._fps_spin)
+        setup_layout.addWidget(self._fps_spin)
 
         # Begin/end timestamps in seconds. Max range is filled in once a video
         # is picked via Browse and we probe its duration with cv2.
@@ -463,13 +541,13 @@ class DeepReefMapWindow(QMainWindow):
         self._end_spin.setValue(0.0)
         end_col.addWidget(self._end_spin)
         range_row.addLayout(end_col, 1)
-        layout.addLayout(range_row)
+        setup_layout.addLayout(range_row)
 
         self._video_duration_s: float | None = None
 
         self._advanced_toggle = QCheckBox("Advanced settings")
         self._advanced_toggle.toggled.connect(self._on_advanced_toggled)
-        layout.addWidget(self._advanced_toggle)
+        setup_layout.addWidget(self._advanced_toggle)
 
         self._advanced_panel = QWidget()
         adv_layout = QVBoxLayout(self._advanced_panel)
@@ -495,11 +573,11 @@ class DeepReefMapWindow(QMainWindow):
         self._skip_seg_check = QCheckBox("Skip segmentation")
         adv_layout.addWidget(self._skip_seg_check)
         self._advanced_panel.setVisible(False)
-        layout.addWidget(self._advanced_panel)
+        setup_layout.addWidget(self._advanced_panel)
 
         self._submit_btn = QPushButton("Start reconstruction")
         self._submit_btn.clicked.connect(self._on_submit)
-        layout.addWidget(self._submit_btn)
+        setup_layout.addWidget(self._submit_btn)
 
         self._batch_btn = QPushButton("Batch reconstruction…")
         self._batch_btn.setToolTip(
@@ -507,16 +585,18 @@ class DeepReefMapWindow(QMainWindow):
             "Columns: videos, timestamps (begin-end seconds), transect_length, crop_width."
         )
         self._batch_btn.clicked.connect(self._on_batch_clicked)
-        layout.addWidget(self._batch_btn)
+        setup_layout.addWidget(self._batch_btn)
 
         self._submit_hint = QLabel("")
         self._submit_hint.setWordWrap(True)
         self._submit_hint.setStyleSheet("color: #c84; font-style: italic;")
-        layout.addWidget(self._submit_hint)
+        setup_layout.addWidget(self._submit_hint)
 
         # Sticky banner for non-fatal quality warnings emitted during a run
         # (preprocess detected mostly-background frames, missing transect line,
-        # etc.). Cleared at the start of each new run.
+        # etc.). Cleared at the start of each new run. Lives on the viewing
+        # page so it surfaces alongside the results it warns about, plus is
+        # mirrored on the running page so the user sees them as they happen.
         self._warnings_label = QLabel("")
         self._warnings_label.setWordWrap(True)
         self._warnings_label.setTextFormat(Qt.TextFormat.RichText)
@@ -526,7 +606,28 @@ class DeepReefMapWindow(QMainWindow):
         )
         self._warnings_label.setVisible(False)
         self._run_warnings: list[str] = []
-        layout.addWidget(self._warnings_label)
+        viewing_layout.addWidget(self._warnings_label)
+
+        # Running-page content: a sibling warnings label (Qt widgets can only
+        # have one parent, so we use a second label and keep both texts in sync
+        # via _refresh_run_warnings_view) plus the live log panel.
+        self._warnings_label_running = QLabel("")
+        self._warnings_label_running.setWordWrap(True)
+        self._warnings_label_running.setTextFormat(Qt.TextFormat.RichText)
+        self._warnings_label_running.setStyleSheet(self._warnings_label.styleSheet())
+        self._warnings_label_running.setVisible(False)
+        running_layout.addWidget(self._warnings_label_running)
+
+        running_layout.addWidget(QLabel("<b>Live log</b>"))
+        self._log_view = LogView()
+        running_layout.addWidget(self._log_view, 1)
+
+        # The log handler streams every deepreefmap.* log line into the panel.
+        # A per-run FileHandler is opened/closed in _begin_pipeline_run and
+        # cleanup paths.
+        self._qt_log_handler = install_qt_log_handler()
+        self._qt_log_handler.line_signal.connect(self._log_view.append_line)
+        self._run_log_file_handler = None
 
         # Status label and progress bar are owned by the top toolbar but
         # constructed here so they exist before _recompute_submit_state runs.
@@ -677,6 +778,12 @@ class DeepReefMapWindow(QMainWindow):
         self._results_transect_slider.valueChanged.connect(self._on_results_transect_slider_changed)
         self._results_crop_slider.valueChanged.connect(self._on_results_crop_slider_changed)
 
+        # Two-ring sunburst (outer = fine classes, inner = coarse groups)
+        # appears above the HTML cover table so the user gets a visual sense of
+        # composition at a glance. Updates live with the transect crop.
+        self._cover_sunburst = SunburstWidget()
+        res_layout.addWidget(self._cover_sunburst, 1)
+
         self._cover_label = QLabel()
         self._cover_label.setWordWrap(True)
         res_layout.addWidget(self._cover_label)
@@ -718,8 +825,14 @@ class DeepReefMapWindow(QMainWindow):
         self._export_zip_btn = QPushButton("Zip output directory")
         self._export_zip_btn.clicked.connect(self._on_export_zip)
         exports_grid.addWidget(self._export_zip_btn, 1, 1)
+        self._export_qc_video_btn = QPushButton("Render QC video (MP4)")
+        self._export_qc_video_btn.clicked.connect(self._on_export_qc_video)
+        exports_grid.addWidget(self._export_qc_video_btn, 2, 0)
+        self._export_frame_btn = QPushButton("Save current frame (PNG)")
+        self._export_frame_btn.clicked.connect(self._on_export_current_frame)
+        exports_grid.addWidget(self._export_frame_btn, 2, 1)
         res_layout.addLayout(exports_grid)
-        layout.addWidget(self._results_group)
+        viewing_layout.addWidget(self._results_group)
 
         layout.addWidget(_separator())
 
@@ -830,6 +943,11 @@ class DeepReefMapWindow(QMainWindow):
 
         layout.addStretch()
 
+        # Start in SETUP — no run loaded yet. The mode flips to RUNNING in
+        # _begin_pipeline_run and to VIEWING when a past run is selected or a
+        # reconstruction completes.
+        self._set_app_mode("SETUP")
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(panel)
@@ -838,6 +956,30 @@ class DeepReefMapWindow(QMainWindow):
         # much space as they want.
         scroll.setMinimumWidth(0)
         return scroll
+
+    def _set_app_mode(self, mode: str) -> None:
+        """Switch the sidebar's primary panel to SETUP / RUNNING / VIEWING.
+
+        The mode determines which page of the QStackedWidget is visible. The
+        always-visible sections below the stack (viewer controls, legend,
+        tools, update info) are untouched.
+        """
+        if mode == "SETUP":
+            self._mode_stack.setCurrentWidget(self._setup_page)
+        elif mode == "RUNNING":
+            self._mode_stack.setCurrentWidget(self._running_page)
+        elif mode == "VIEWING":
+            self._mode_stack.setCurrentWidget(self._viewing_page)
+        else:
+            raise ValueError(f"Unknown app mode: {mode!r}")
+        self._app_mode = mode
+
+    def _refresh_run_warnings_view(self) -> None:
+        """Keep the running-page warning mirror in sync with the viewing one."""
+        text = self._warnings_label.text()
+        visible = self._warnings_label.isVisible()
+        self._warnings_label_running.setText(text)
+        self._warnings_label_running.setVisible(visible)
 
     def _build_top_bar(self) -> QWidget:
         bar = QWidget()
@@ -1043,10 +1185,12 @@ class DeepReefMapWindow(QMainWindow):
                 with open(cover_path) as f:
                     cover = json.load(f)
                 self._cover_label.setText(self._format_cover_html(cover))
+                self._cover_sunburst.set_cover(cover, self._classes_config)
             except Exception:
                 pass
 
         self._results_group.setVisible(True)
+        self._set_app_mode("VIEWING")
 
     @staticmethod
     def _format_cover_html(cover: dict) -> str:
@@ -1133,6 +1277,7 @@ class DeepReefMapWindow(QMainWindow):
         self._current_ortho_grid = outputs.grid
         self._refresh_ortho_preview(outputs.grid)
         self._cover_label.setText(self._format_cover_html(outputs.cover))
+        self._cover_sunburst.set_cover(outputs.cover, self._classes_config)
         self._apply_viewer_crop_filter(crop)
 
     def _apply_viewer_crop_filter(self, crop: object | None) -> None:
@@ -1248,32 +1393,23 @@ class DeepReefMapWindow(QMainWindow):
         if cover is None:
             self._status_label.setText("No benthic cover available to export.")
             return
-        default = str(Path(self._default_export_dir()) / "benthic_cover.csv")
-        path, _ = QFileDialog.getSaveFileName(self, "Save benthic cover CSV", default, "CSV file (*.csv)")
-        if not path:
+        # The legacy GUI ships three CSVs at different aggregations; mirror that
+        # here by letting the user pick a directory we drop all three into.
+        default_dir = self._default_export_dir()
+        chosen = QFileDialog.getExistingDirectory(
+            self, "Choose a directory for the benthic cover CSVs", default_dir
+        )
+        if not chosen:
             return
         try:
-            import csv
+            from deepreefmap.postproc.reports import save_cover_csv_levels
 
-            classes = cover.get("classes", {}) if isinstance(cover, dict) else {}
-            rows = sorted(
-                ((cid, info) for cid, info in classes.items()),
-                key=lambda x: -float(x[1].get("fraction", 0.0)),
-            )
-            with open(path, "w", newline="") as fh:
-                writer = csv.writer(fh)
-                writer.writerow(["class_id", "name", "fraction", "count"])
-                for cid, info in rows:
-                    writer.writerow([
-                        cid,
-                        info.get("name", ""),
-                        f"{float(info.get('fraction', 0.0)):.6f}",
-                        info.get("count", ""),
-                    ])
-            self._status_label.setText(f"Saved benthic cover CSV to {path}")
+            written = save_cover_csv_levels(Path(chosen), cover, self._classes_config)
+            names = ", ".join(p.name for p in written.values())
+            self._status_label.setText(f"Saved {names} to {chosen}")
         except Exception as exc:
             self._status_label.setText(f"Export failed: {exc}")
-            logger.exception("Failed to save cover CSV")
+            logger.exception("Failed to save cover CSVs")
 
     def _on_export_zip(self) -> None:
         if self._results_output_dir is None or not Path(self._results_output_dir).exists():
@@ -1297,6 +1433,104 @@ class DeepReefMapWindow(QMainWindow):
         except Exception as exc:
             self._status_label.setText(f"Export failed: {exc}")
             logger.exception("Failed to zip output directory")
+
+    def _on_export_current_frame(self) -> None:
+        if self._frame_slider.maximum() <= 0:
+            self._status_label.setText("No frames available to export.")
+            return
+        frame_idx = int(self._frame_slider.value())
+        try:
+            stack = self._viewer.current_frame_stack()
+        except AttributeError:
+            self._status_label.setText("Viewer doesn't support frame export.")
+            return
+        if stack is None:
+            self._status_label.setText("Current frame is not available.")
+            return
+        default = str(Path(self._default_export_dir()) / f"frame_{frame_idx:05d}.png")
+        path, _ = QFileDialog.getSaveFileName(self, "Save current frame PNG", default, "PNG image (*.png)")
+        if not path:
+            return
+        try:
+            import cv2
+            import numpy as np
+
+            arr = np.asarray(stack)
+            if arr.ndim == 3 and arr.shape[2] == 3:
+                bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+            else:
+                bgr = arr
+            cv2.imwrite(path, bgr)
+            self._status_label.setText(f"Saved frame PNG to {path}")
+        except Exception as exc:
+            self._status_label.setText(f"Export failed: {exc}")
+            logger.exception("Failed to save frame PNG")
+
+    def _on_export_qc_video(self) -> None:
+        if self._active_run_dir is None or not Path(self._active_run_dir).exists():
+            self._status_label.setText("Load a run before rendering the QC video.")
+            return
+        run_dir = Path(self._active_run_dir)
+        default = str(run_dir / "videos" / "qc_render.mp4")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save QC video (MP4)", default, "MP4 video (*.mp4)"
+        )
+        if not path:
+            return
+        # Pull transect/crop from the live spinners so the export matches what
+        # the user is currently looking at.
+        tl = float(self._results_transect_length.value()) or None
+        cw = float(self._results_crop_width.value()) or None
+
+        progress = QProgressDialog("Rendering QC video…", "Cancel", 0, 100, self)
+        progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress.setAutoClose(True)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        def _on_progress(cur: int, total: int) -> None:
+            self._sig_qc_render_progress.emit(int(cur), int(total))
+
+        def _on_done(ok: bool, error: str) -> None:
+            progress.close()
+            if ok:
+                self._status_label.setText(f"QC video saved to {path}")
+            else:
+                self._status_label.setText(f"QC render failed: {error}")
+
+        self._sig_qc_render_progress.connect(
+            lambda cur, total: (
+                progress.setMaximum(max(total, 1)),
+                progress.setValue(cur),
+            )
+        )
+        self._sig_qc_render_done.connect(_on_done)
+
+        def _worker() -> None:
+            from deepreefmap.postproc.reports import render_offline_video_placeholder
+
+            try:
+                # The placeholder writes to <run_dir>/videos/qc_render.mp4; we
+                # honor the user's chosen destination by moving on completion.
+                render_offline_video_placeholder(
+                    run_dir,
+                    transect_length_m=tl,
+                    crop_width_m=cw,
+                    progress_callback=_on_progress,
+                )
+                produced = run_dir / "videos" / "qc_render.mp4"
+                target = Path(path)
+                if produced != target:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    import shutil
+
+                    shutil.copy2(produced, target)
+                self._sig_qc_render_done.emit(True, "")
+            except Exception as exc:
+                logger.exception("QC video render failed")
+                self._sig_qc_render_done.emit(False, str(exc))
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _current_cover_dict(self) -> dict | None:
         if self._current_ortho_grid is not None and self._ortho_classes_config is not None:
@@ -1966,6 +2200,7 @@ class DeepReefMapWindow(QMainWindow):
         self._past_runs_combo.setCurrentIndex(0)
         self._past_runs_combo.blockSignals(False)
         self._status_label.setText("Ready. Fill the form above and click Start.")
+        self._set_app_mode("SETUP")
 
     def _on_submit(self) -> None:
         video = self._video_input.text().strip()
@@ -2013,6 +2248,10 @@ class DeepReefMapWindow(QMainWindow):
         self._set_form_enabled(False)
         self._begin_progress(self._recon_model)
         self._status_label.setText("Reconstruction starting…")
+        self._log_view.clear()
+        self._run_log_file_handler = open_run_log_file(out_dir)
+        self._log_view.set_current_log_path(out_dir / "run.log")
+        self._set_app_mode("RUNNING")
 
         self._pipeline_thread = threading.Thread(
             target=self._run_pipeline, args=(kwargs,), daemon=True
@@ -2035,6 +2274,11 @@ class DeepReefMapWindow(QMainWindow):
         self._status_label.setText(f"Failed: {msg}")
         self._reset_progress_bars()
         self._set_form_enabled(True)
+        close_run_log_file(self._run_log_file_handler)
+        self._run_log_file_handler = None
+        # Failures bounce back to SETUP so the user can adjust inputs and retry
+        # without needing to click "New reconstruction".
+        self._set_app_mode("SETUP")
 
     def _on_batch_clicked(self) -> None:
         path_str, _ = QFileDialog.getOpenFileName(
@@ -2290,6 +2534,7 @@ class DeepReefMapWindow(QMainWindow):
                     result.reference_cloud, outputs.grid, result.classes_config
                 )
                 self._cover_label.setText(self._format_cover_html(outputs.cover))
+                self._cover_sunburst.set_cover(outputs.cover, result.classes_config)
             except Exception:
                 logger.exception("Failed to build ortho preview for cached run")
             self._results_group.setVisible(True)
@@ -2315,6 +2560,11 @@ class DeepReefMapWindow(QMainWindow):
             )
             self._results_output_dir = run_dir
 
+        # Make the run.log from this past run openable.
+        log_path = run_dir / "run.log"
+        self._log_view.set_current_log_path(log_path if log_path.exists() else None)
+        self._set_app_mode("VIEWING")
+
 
     def _add_run_warning(self, message: str) -> None:
         if message in self._run_warnings:
@@ -2325,11 +2575,13 @@ class DeepReefMapWindow(QMainWindow):
         )
         self._warnings_label.setText(html)
         self._warnings_label.setVisible(True)
+        self._refresh_run_warnings_view()
 
     def _clear_run_warnings(self) -> None:
         self._run_warnings = []
         self._warnings_label.setText("")
         self._warnings_label.setVisible(False)
+        self._refresh_run_warnings_view()
 
     def _on_viewer_status(self, event: str, **kwargs: object) -> None:
         _STAGE_LABELS = {
@@ -2380,6 +2632,7 @@ class DeepReefMapWindow(QMainWindow):
                     outputs = build_ortho_outputs(ortho_cloud, cc)
                     self._set_ortho_sources(ortho_cloud, outputs.grid, cc)
                     self._cover_label.setText(self._format_cover_html(outputs.cover))
+                    self._cover_sunburst.set_cover(outputs.cover, cc)
                 except Exception:
                     logger.exception("Failed to build live ortho preview")
         elif event == "setup_progress":
@@ -2406,11 +2659,16 @@ class DeepReefMapWindow(QMainWindow):
                         self._active_run_manifest = None
                 self._settings.setValue("last_run_dir", str(self._active_run_dir))
                 self._refresh_past_runs_combo()
+            close_run_log_file(self._run_log_file_handler)
+            self._run_log_file_handler = None
         elif event == "fail_run":
             error = kwargs.get("error_message", "unknown error")
             self._status_label.setText(f"Failed: {error}")
             self._reset_progress_bars()
             self._set_form_enabled(True)
+            close_run_log_file(self._run_log_file_handler)
+            self._run_log_file_handler = None
+            self._set_app_mode("SETUP")
 
 
     def _check_for_update(self) -> None:
