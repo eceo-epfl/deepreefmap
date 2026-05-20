@@ -925,7 +925,16 @@ class DeepReefMapWindow(QMainWindow):
             if not ((last_run_path / "run_manifest.json").exists()
                     and (last_run_path / "mapping_outputs.npz").exists()):
                 self._settings.remove("last_run_dir")
-        layout.addWidget(models_group)
+        # The Models groupbox lives inside a modeless dialog opened from the
+        # top bar instead of cluttering the sidebar. It's setup-time UI, not
+        # something the user touches once a run is underway.
+        self._models_dialog = QDialog(self)
+        self._models_dialog.setWindowTitle("Models")
+        self._models_dialog.resize(560, 400)
+        dialog_layout = QVBoxLayout(self._models_dialog)
+        dialog_layout.setContentsMargins(12, 12, 12, 12)
+        dialog_layout.addWidget(models_group)
+        self._models_group = models_group
         threading.Thread(target=self._refresh_model_status, daemon=True).start()
 
 
@@ -986,6 +995,49 @@ class DeepReefMapWindow(QMainWindow):
         self._warnings_label_running.setText(text)
         self._warnings_label_running.setVisible(visible)
 
+    def _open_models_dialog(self) -> None:
+        # Modeless so the user can refer to the form while choosing a model.
+        self._models_dialog.show()
+        self._models_dialog.raise_()
+        self._models_dialog.activateWindow()
+
+    def _update_models_button_status(self) -> None:
+        """Badge the top-bar Models button when required models need attention.
+
+        Surfaces what used to be obvious from the inline sidebar groupbox: a
+        missing-cache or missing-login state for whatever the user has
+        selected in the form.
+        """
+        if not hasattr(self, "_models_btn"):
+            return
+        required = self._required_model_names()
+        missing_cache = [
+            info.name for info, cached in self._last_model_states
+            if info.name in required and not cached
+        ]
+        gated_no_auth = (
+            self._hf_auth_user is None
+            and any(
+                info.gated and info.name in required
+                for info, _cached in self._last_model_states
+            )
+        )
+        if missing_cache or gated_no_auth:
+            self._models_btn.setText("Models ⚠")
+            tip_parts = []
+            if missing_cache:
+                tip_parts.append("Not downloaded: " + ", ".join(missing_cache))
+            if gated_no_auth:
+                tip_parts.append("Hugging Face login required for gated models.")
+            self._models_btn.setToolTip("\n".join(tip_parts))
+            self._models_btn.setStyleSheet("QPushButton { color: #e8a04a; }")
+        else:
+            self._models_btn.setText("Models…")
+            self._models_btn.setToolTip(
+                "Manage downloaded model weights and Hugging Face login"
+            )
+            self._models_btn.setStyleSheet("")
+
     def _build_top_bar(self) -> QWidget:
         bar = QWidget()
         bar.setStyleSheet("QWidget { background-color: #2a2a2a; } ")
@@ -997,6 +1049,11 @@ class DeepReefMapWindow(QMainWindow):
         h.addWidget(self._past_runs_combo, 2)
         h.addWidget(self._past_open_btn)
         h.addWidget(self._new_run_btn)
+
+        self._models_btn = QPushButton("Models…")
+        self._models_btn.setToolTip("Manage downloaded model weights and Hugging Face login")
+        self._models_btn.clicked.connect(self._open_models_dialog)
+        h.addWidget(self._models_btn)
 
         # Vertical separator between navigation and status.
         sep = QWidget()
@@ -1568,6 +1625,7 @@ class DeepReefMapWindow(QMainWindow):
     def _apply_model_status(self, auth_user: str | None, model_states: list) -> None:
         self._hf_auth_user = auth_user
         self._last_model_states = list(model_states)
+        self._update_models_button_status()
         if auth_user:
             self._hf_auth_label.setText(f"Logged in to Hugging Face as <b>{auth_user}</b>")
             self._hf_auth_label.setToolTip(
