@@ -98,6 +98,8 @@ class DeepReefMapWindow(QMainWindow):
     _sig_download_progress = Signal(str, int)
     _sig_run_loaded = Signal(object, str, str)
     _sig_load_progress = Signal(str, int, int)
+    _sig_batch_progress = Signal(int, int, str)
+    _sig_batch_done = Signal(int, int, str)
 
     def __init__(self, classes_config: object, classes_path: Path) -> None:
         super().__init__()
@@ -116,6 +118,8 @@ class DeepReefMapWindow(QMainWindow):
         self._sig_download_progress.connect(self._on_download_progress)
         self._sig_run_loaded.connect(self._apply_loaded_run)
         self._sig_load_progress.connect(self._on_load_progress)
+        self._sig_batch_progress.connect(self._on_batch_progress)
+        self._sig_batch_done.connect(self._on_batch_done)
 
         self.setWindowTitle("DeepReefMap")
         self.resize(1400, 900)
@@ -334,6 +338,14 @@ class DeepReefMapWindow(QMainWindow):
         self._submit_btn = QPushButton("Start reconstruction")
         self._submit_btn.clicked.connect(self._on_submit)
         layout.addWidget(self._submit_btn)
+
+        self._batch_btn = QPushButton("Batch reconstruction…")
+        self._batch_btn.setToolTip(
+            "Run a CSV of reconstructions sequentially. "
+            "Columns: videos, timestamps (begin-end seconds), transect_length, crop_width."
+        )
+        self._batch_btn.clicked.connect(self._on_batch_clicked)
+        layout.addWidget(self._batch_btn)
 
         self._submit_hint = QLabel("")
         self._submit_hint.setWordWrap(True)
@@ -1440,6 +1452,111 @@ class DeepReefMapWindow(QMainWindow):
         self._progress_bar.setVisible(False)
         self._set_form_enabled(True)
 
+    def _on_batch_clicked(self) -> None:
+        path_str, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select batch CSV",
+            self._out_root_input.text(),
+            "CSV files (*.csv);;All files (*)",
+        )
+        if not path_str:
+            return
+        try:
+            jobs = _load_batch_csv(Path(path_str))
+        except Exception as exc:
+            self._status_label.setText(f"Batch CSV error: {exc}")
+            logger.exception("Failed to load batch CSV")
+            return
+
+        # Outputs go to `batch_out/<job_name>/` under the user's chosen
+        # output root so they don't collide with regular single runs.
+        base_out = Path(self._out_root_input.text()).expanduser() / "batch_out"
+        base_out.mkdir(parents=True, exist_ok=True)
+
+        self._set_form_enabled(False)
+        self._batch_btn.setEnabled(False)
+        self._status_label.setText(f"Batch starting: {len(jobs)} job(s)")
+        self._progress_bar.setRange(0, len(jobs))
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(True)
+
+        # Snapshot the form once so a user editing it mid-batch doesn't
+        # produce mixed configurations across jobs.
+        common = {
+            "fps": self._fps_spin.value(),
+            "segmentation_name": self._seg_combo.currentText(),
+            "mapping_name": self._map_combo.currentText(),
+            "camera_profile_name": self._profile_combo.currentText(),
+            "enable_viser": False,
+            "enable_tsdf": self._tsdf_check.isChecked(),
+            "skip_segmentation": self._skip_seg_check.isChecked(),
+            "classes_path": self._classes_path,
+        }
+        self._pipeline_thread = threading.Thread(
+            target=self._run_batch_worker,
+            args=(jobs, base_out, common),
+            daemon=True,
+        )
+        self._pipeline_thread.start()
+
+    def _run_batch_worker(
+        self, jobs: list[_BatchJob], base_out: Path, common: dict
+    ) -> None:
+        from deepreefmap.pipeline.orchestrator import run_reconstruction
+
+        ok = 0
+        last_error = ""
+        for idx, job in enumerate(jobs, start=1):
+            self._sig_batch_progress.emit(idx, len(jobs), job.name)
+            video_path = Path(job.video).expanduser()
+            if not video_path.exists():
+                last_error = f"row {idx}: {video_path} not found"
+                logger.error("Batch %s/%s: %s", idx, len(jobs), last_error)
+                continue
+            out_dir = base_out / self._sanitize_run_name(job.name)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                run_reconstruction(
+                    video_paths=[str(video_path)],
+                    output_dir=out_dir,
+                    transect_length=job.transect_length,
+                    transect_crop_width=job.crop_width,
+                    begin_s=job.begin_s,
+                    end_s=job.end_s,
+                    run_name=job.name,
+                    viewer=None,
+                    **common,
+                )
+                ok += 1
+            except Exception as exc:
+                logger.exception("Batch job %s failed", job.name)
+                last_error = f"{job.name}: {exc}"
+        self._sig_batch_done.emit(ok, len(jobs), last_error[:300])
+
+    def _on_batch_progress(self, idx: int, total: int, name: str) -> None:
+        self._status_label.setText(f"Batch: job {idx} of {total} — {name}")
+        if self._progress_bar.maximum() != total:
+            self._progress_bar.setRange(0, total)
+        self._progress_bar.setValue(idx - 1)
+        self._progress_bar.setVisible(True)
+
+    def _on_batch_done(self, ok: int, total: int, last_error: str) -> None:
+        self._progress_bar.setValue(total)
+        self._progress_bar.setVisible(False)
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        if ok == total:
+            self._status_label.setText(f"Batch complete: {ok}/{total} job(s) succeeded.")
+        elif last_error:
+            self._status_label.setText(
+                f"Batch finished: {ok}/{total} succeeded. Last error: {last_error}"
+            )
+        else:
+            self._status_label.setText(f"Batch finished: {ok}/{total} succeeded.")
+        self._set_form_enabled(True)
+        self._batch_btn.setEnabled(True)
+        self._refresh_past_runs_combo()
+
     def _set_form_enabled(self, enabled: bool) -> None:
         for w in (
             self._video_input, self._profile_combo, self._seg_combo,
@@ -1447,6 +1564,7 @@ class DeepReefMapWindow(QMainWindow):
             self._fps_spin, self._begin_spin, self._end_spin,
             self._transect_length, self._crop_width,
             self._tsdf_check, self._skip_seg_check, self._submit_btn,
+            self._batch_btn,
         ):
             w.setEnabled(enabled)
 
@@ -1894,6 +2012,106 @@ class _PastRunCardDelegate(QStyledItemDelegate):
             painter.drawText(r.left(), cursor_y + video_fm.ascent(), elided)
 
         painter.restore()
+
+
+class _BatchJob:
+    """One row of a batch reconstruction CSV.
+
+    Job name defaults to the video filename stem so outputs land in a
+    predictable folder per row.
+    """
+
+    __slots__ = ("video", "begin_s", "end_s", "transect_length", "crop_width", "name")
+
+    def __init__(
+        self,
+        video: str,
+        begin_s: float | None,
+        end_s: float | None,
+        transect_length: float | None,
+        crop_width: float | None,
+        name: str,
+    ) -> None:
+        self.video = video
+        self.begin_s = begin_s
+        self.end_s = end_s
+        self.transect_length = transect_length
+        self.crop_width = crop_width
+        self.name = name
+
+
+def _parse_optional_float(raw: str) -> float | None:
+    s = (raw or "").strip()
+    if not s:
+        return None
+    return float(s)
+
+
+def _parse_timestamp_range(raw: str) -> tuple[float | None, float | None]:
+    """Parse "<begin>-<end>" in seconds. Either side may be empty.
+
+    Accepts a single value like "30" as a begin with no end. The dash splits
+    on the *last* `-` so that ranges with negative-zero inputs would still
+    fail loudly via float() rather than silently parse.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None, None
+    if "-" not in s:
+        return _parse_optional_float(s), None
+    head, _, tail = s.partition("-")
+    return _parse_optional_float(head), _parse_optional_float(tail)
+
+
+def _load_batch_csv(path: Path) -> list[_BatchJob]:
+    """Read a CSV with case-insensitive columns and return parsed rows.
+
+    Required columns: videos, timestamps, transect_length, crop_width.
+    Raises ValueError on missing columns or unparseable values.
+    """
+    import csv
+
+    suffix = path.suffix.lower()
+    if suffix in (".xls", ".xlsx"):
+        raise ValueError(
+            "Excel files aren't supported (pandas isn't a dependency). "
+            "Save the sheet as CSV and try again."
+        )
+    required = {"videos", "timestamps", "transect_length", "crop_width"}
+    jobs: list[_BatchJob] = []
+    with path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None:
+            raise ValueError("CSV has no header row.")
+        norm = {fn.strip().lower(): fn for fn in reader.fieldnames}
+        missing = required - set(norm.keys())
+        if missing:
+            raise ValueError(
+                f"CSV is missing required columns: {', '.join(sorted(missing))}"
+            )
+        for n, row in enumerate(reader, start=2):
+            video = (row.get(norm["videos"], "") or "").strip()
+            if not video:
+                continue  # skip blank rows
+            try:
+                begin_s, end_s = _parse_timestamp_range(row.get(norm["timestamps"], ""))
+                transect_length = _parse_optional_float(row.get(norm["transect_length"], ""))
+                crop_width = _parse_optional_float(row.get(norm["crop_width"], ""))
+            except ValueError as exc:
+                raise ValueError(f"Row {n}: {exc}") from exc
+            jobs.append(
+                _BatchJob(
+                    video=video,
+                    begin_s=begin_s,
+                    end_s=end_s,
+                    transect_length=transect_length,
+                    crop_width=crop_width,
+                    name=Path(video).stem or f"job_{n - 1}",
+                )
+            )
+    if not jobs:
+        raise ValueError("No usable rows in CSV.")
+    return jobs
 
 
 def _probe_video_duration_s(video_path: str) -> float | None:
