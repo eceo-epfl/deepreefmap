@@ -463,20 +463,32 @@ class DeepReefMapWindow(QMainWindow):
         setup_layout.addWidget(self._profile_combo)
 
         setup_layout.addWidget(QLabel("Segmentation"))
+        seg_row = QHBoxLayout()
+        seg_row.setContentsMargins(0, 0, 0, 0)
+        seg_row.setSpacing(4)
         self._seg_combo = QComboBox()
         self._seg_combo.addItems(seg_models)
         idx = self._seg_combo.findText("segformer-b2")
         if idx >= 0:
             self._seg_combo.setCurrentIndex(idx)
-        setup_layout.addWidget(self._seg_combo)
+        seg_row.addWidget(self._seg_combo, 1)
+        self._seg_status_btn = self._build_model_status_button()
+        seg_row.addWidget(self._seg_status_btn)
+        setup_layout.addLayout(seg_row)
 
         setup_layout.addWidget(QLabel("Mapping"))
+        map_row = QHBoxLayout()
+        map_row.setContentsMargins(0, 0, 0, 0)
+        map_row.setSpacing(4)
         self._map_combo = QComboBox()
         self._map_combo.addItems(map_backends)
         idx = self._map_combo.findText("scsfmlearner")
         if idx >= 0:
             self._map_combo.setCurrentIndex(idx)
-        setup_layout.addWidget(self._map_combo)
+        map_row.addWidget(self._map_combo, 1)
+        self._map_status_btn = self._build_model_status_button()
+        map_row.addWidget(self._map_status_btn)
+        setup_layout.addLayout(map_row)
 
         setup_layout.addWidget(QLabel("Output root"))
         self._out_root_input = QLineEdit(default_root)
@@ -925,16 +937,11 @@ class DeepReefMapWindow(QMainWindow):
             if not ((last_run_path / "run_manifest.json").exists()
                     and (last_run_path / "mapping_outputs.npz").exists()):
                 self._settings.remove("last_run_dir")
-        # The Models groupbox lives inside a modeless dialog opened from the
-        # top bar instead of cluttering the sidebar. It's setup-time UI, not
-        # something the user touches once a run is underway.
-        self._models_dialog = QDialog(self)
-        self._models_dialog.setWindowTitle("Models")
-        self._models_dialog.resize(560, 400)
-        dialog_layout = QVBoxLayout(self._models_dialog)
-        dialog_layout.setContentsMargins(12, 12, 12, 12)
-        dialog_layout.addWidget(models_group)
+        # Models groupbox lives on the SETUP page so it's prominent while the
+        # user picks segmentation/mapping but stays out of the way during
+        # RUNNING/VIEWING modes.
         self._models_group = models_group
+        setup_layout.addWidget(models_group)
         threading.Thread(target=self._refresh_model_status, daemon=True).start()
 
 
@@ -995,48 +1002,76 @@ class DeepReefMapWindow(QMainWindow):
         self._warnings_label_running.setText(text)
         self._warnings_label_running.setVisible(visible)
 
-    def _open_models_dialog(self) -> None:
-        # Modeless so the user can refer to the form while choosing a model.
-        self._models_dialog.show()
-        self._models_dialog.raise_()
-        self._models_dialog.activateWindow()
+    def _scroll_to_models(self) -> None:
+        # Scroll the sidebar so the Models groupbox is in view, then briefly
+        # flash its border so the user knows where their click landed.
+        if not hasattr(self, "_models_group"):
+            return
+        self._models_group.parentWidget().setFocus()
+        scroll_area = self._models_group.parentWidget()
+        while scroll_area is not None and not isinstance(scroll_area, QScrollArea):
+            scroll_area = scroll_area.parentWidget()
+        if scroll_area is not None:
+            scroll_area.ensureWidgetVisible(self._models_group, 0, 20)
+
+    def _build_model_status_button(self) -> QPushButton:
+        # Compact indicator next to the model dropdown. Click scrolls the
+        # Models section into view; the icon/colour reflects whether the
+        # currently selected model is cached and (if gated) whether the user
+        # is logged in.
+        btn = QPushButton("…")
+        btn.setFixedWidth(28)
+        btn.setToolTip("Scroll to Models section")
+        btn.clicked.connect(self._scroll_to_models)
+        return btn
+
+    def _update_model_status_button(
+        self, btn: QPushButton, selected_name: str
+    ) -> None:
+        info = None
+        cached = False
+        for state_info, state_cached in self._last_model_states:
+            if state_info.name == selected_name:
+                info = state_info
+                cached = state_cached
+                break
+        if info is None:
+            btn.setText("…")
+            btn.setToolTip("Open Models dialog")
+            btn.setStyleSheet("")
+            return
+        if cached:
+            btn.setText("✓")
+            btn.setToolTip(f"{selected_name} is downloaded. Click to manage.")
+            btn.setStyleSheet("QPushButton { color: #4a4; font-weight: bold; }")
+        elif info.gated and self._hf_auth_user is None:
+            btn.setText("🔒")
+            btn.setToolTip(
+                f"{selected_name} is gated. Log in to Hugging Face in the Models dialog."
+            )
+            btn.setStyleSheet("QPushButton { color: #e8a04a; font-weight: bold; }")
+        else:
+            btn.setText("⬇")
+            btn.setToolTip(
+                f"{selected_name} not downloaded. Click to open the Models dialog."
+            )
+            btn.setStyleSheet("QPushButton { color: #e8a04a; font-weight: bold; }")
 
     def _update_models_button_status(self) -> None:
-        """Badge the top-bar Models button when required models need attention.
+        """Refresh the per-dropdown model status icons.
 
-        Surfaces what used to be obvious from the inline sidebar groupbox: a
-        missing-cache or missing-login state for whatever the user has
-        selected in the form.
+        Driven from _apply_model_status whenever the model cache or HF login
+        state changes; also after the user picks a different model in either
+        dropdown.
         """
-        if not hasattr(self, "_models_btn"):
-            return
-        required = self._required_model_names()
-        missing_cache = [
-            info.name for info, cached in self._last_model_states
-            if info.name in required and not cached
-        ]
-        gated_no_auth = (
-            self._hf_auth_user is None
-            and any(
-                info.gated and info.name in required
-                for info, _cached in self._last_model_states
+        if hasattr(self, "_seg_status_btn") and hasattr(self, "_seg_combo"):
+            self._update_model_status_button(
+                self._seg_status_btn, self._seg_combo.currentText()
             )
-        )
-        if missing_cache or gated_no_auth:
-            self._models_btn.setText("Models ⚠")
-            tip_parts = []
-            if missing_cache:
-                tip_parts.append("Not downloaded: " + ", ".join(missing_cache))
-            if gated_no_auth:
-                tip_parts.append("Hugging Face login required for gated models.")
-            self._models_btn.setToolTip("\n".join(tip_parts))
-            self._models_btn.setStyleSheet("QPushButton { color: #e8a04a; }")
-        else:
-            self._models_btn.setText("Models…")
-            self._models_btn.setToolTip(
-                "Manage downloaded model weights and Hugging Face login"
+        if hasattr(self, "_map_status_btn") and hasattr(self, "_map_combo"):
+            self._update_model_status_button(
+                self._map_status_btn, self._map_combo.currentText()
             )
-            self._models_btn.setStyleSheet("")
 
     def _build_top_bar(self) -> QWidget:
         bar = QWidget()
@@ -1049,11 +1084,6 @@ class DeepReefMapWindow(QMainWindow):
         h.addWidget(self._past_runs_combo, 2)
         h.addWidget(self._past_open_btn)
         h.addWidget(self._new_run_btn)
-
-        self._models_btn = QPushButton("Models…")
-        self._models_btn.setToolTip("Manage downloaded model weights and Hugging Face login")
-        self._models_btn.clicked.connect(self._open_models_dialog)
-        h.addWidget(self._models_btn)
 
         # Vertical separator between navigation and status.
         sep = QWidget()
