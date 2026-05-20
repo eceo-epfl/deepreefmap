@@ -98,6 +98,7 @@ class DeepReefMapWindow(QMainWindow):
     _sig_status_text = Signal(str)
     _sig_hf_auth_done = Signal(object, str)
     _sig_download_progress = Signal(str, int)
+    _sig_run_loaded = Signal(object, str, str)
 
     def __init__(self, classes_config: object, classes_path: Path) -> None:
         super().__init__()
@@ -114,6 +115,7 @@ class DeepReefMapWindow(QMainWindow):
         self._sig_status_text.connect(lambda t: self._status_label.setText(t))
         self._sig_hf_auth_done.connect(self._on_hf_auth_done)
         self._sig_download_progress.connect(self._on_download_progress)
+        self._sig_run_loaded.connect(self._apply_loaded_run)
 
         self.setWindowTitle("DeepReefMap")
         self.resize(1400, 900)
@@ -126,13 +128,27 @@ class DeepReefMapWindow(QMainWindow):
         )
         self._viewer.set_status_callback(self._on_viewer_status)
 
+        # Build the form first so widgets it references (status_label, etc.)
+        # are constructed before we wire them into the top toolbar.
+        form_panel = self._build_form_panel()
+        top_bar = self._build_top_bar()
+
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self._build_form_panel())
+        splitter.addWidget(form_panel)
         splitter.addWidget(self._viewer)
         splitter.setSizes([380, 1020])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        self.setCentralWidget(splitter)
+        splitter.setChildrenCollapsible(True)
+        splitter.setHandleWidth(6)
+
+        central = QWidget()
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(top_bar)
+        central_layout.addWidget(splitter, 1)
+        self.setCentralWidget(central)
 
     def _build_form_panel(self) -> QWidget:
         from deepreefmap.camera.intrinsics import available_profile_names
@@ -149,24 +165,25 @@ class DeepReefMapWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setAlignment(Qt.AlignTop)
 
-        layout.addWidget(QLabel("<b>Past runs</b>"))
-        past_row = QHBoxLayout()
+        # These widgets are owned by the top toolbar but constructed here so
+        # initialization code (_refresh_past_runs_combo, etc.) can reference
+        # them before the toolbar is laid out.
         self._past_runs_combo = QComboBox()
         self._past_runs_combo.setMinimumContentsLength(20)
         self._past_runs_combo.currentIndexChanged.connect(self._on_past_run_selected)
-        past_row.addWidget(self._past_runs_combo, 1)
-        past_open_btn = QPushButton("Open")
-        past_open_btn.setToolTip("Open the selected run's folder in the system file manager")
-        past_open_btn.clicked.connect(self._open_selected_past_run)
-        past_row.addWidget(past_open_btn)
-        layout.addLayout(past_row)
 
-        new_btn = QPushButton("New reconstruction")
-        new_btn.setToolTip("Clear the viewer and start a fresh run")
-        new_btn.clicked.connect(self._on_new_reconstruction)
-        layout.addWidget(new_btn)
+        self._new_run_btn = QPushButton("New reconstruction")
+        self._new_run_btn.setToolTip("Clear the viewer and start a fresh run")
+        self._new_run_btn.clicked.connect(self._on_new_reconstruction)
 
-        layout.addWidget(_separator())
+        self._past_open_btn = QPushButton("Open")
+        self._past_open_btn.setToolTip("Open the selected run's folder in the system file manager")
+        self._past_open_btn.clicked.connect(self._open_selected_past_run)
+
+        self._load_cancel_btn = QPushButton("Cancel")
+        self._load_cancel_btn.setVisible(False)
+        self._load_cancel_btn.clicked.connect(self._cancel_load)
+
         layout.addWidget(QLabel("<b>New reconstruction</b>"))
 
         video_row = QHBoxLayout()
@@ -265,15 +282,15 @@ class DeepReefMapWindow(QMainWindow):
         self._submit_hint.setStyleSheet("color: #c84; font-style: italic;")
         layout.addWidget(self._submit_hint)
 
+        # Status label and progress bar are owned by the top toolbar but
+        # constructed here so they exist before _recompute_submit_state runs.
         self._status_label = QLabel("Ready. Fill the form above and click Start.")
         self._status_label.setWordWrap(True)
-        layout.addWidget(self._status_label)
 
         self._progress_bar = QProgressBar()
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
         self._progress_bar.setVisible(False)
-        layout.addWidget(self._progress_bar)
 
         layout.addWidget(_separator())
 
@@ -432,6 +449,7 @@ class DeepReefMapWindow(QMainWindow):
 
         self._active_run_dir: Path | None = None
         self._active_run_manifest: dict | None = None
+        self._load_cancelled = False
 
         self._settings = QSettings("ECEO", "deepreefmap")
         last_video = self._settings.value("last_video_path", "", type=str)
@@ -444,16 +462,16 @@ class DeepReefMapWindow(QMainWindow):
         self._refresh_past_runs_combo()
         self._recompute_submit_state()
 
+        # Past runs are listed in the top-bar combo newest-first; the user
+        # can click one to load. We don't auto-load on startup so the app
+        # opens instantly. A stale half-finished last_run_dir is cleared so
+        # it doesn't appear at the top of the combo as the most recent entry
+        # only to error out on click.
         last_run = self._settings.value("last_run_dir", "", type=str)
         if last_run:
             last_run_path = Path(last_run)
-            manifest_ok = (last_run_path / "run_manifest.json").exists()
-            mapping_ok = (last_run_path / "mapping_outputs.npz").exists()
-            if manifest_ok and mapping_ok:
-                QTimer.singleShot(0, lambda: self._auto_load_run(last_run_path))
-            else:
-                # Stale or half-finished run — forget it silently so the next
-                # startup is clean.
+            if not ((last_run_path / "run_manifest.json").exists()
+                    and (last_run_path / "mapping_outputs.npz").exists()):
                 self._settings.remove("last_run_dir")
         layout.addWidget(models_group)
         threading.Thread(target=self._refresh_model_status, daemon=True).start()
@@ -475,9 +493,50 @@ class DeepReefMapWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(panel)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setMinimumWidth(370)
+        # Allow the user to drag the splitter to collapse the form down to a
+        # small minimum. Removing the hard min lets the 3D viewport take as
+        # much space as they want.
+        scroll.setMinimumWidth(0)
         return scroll
+
+    def _build_top_bar(self) -> QWidget:
+        bar = QWidget()
+        bar.setStyleSheet("QWidget { background-color: #2a2a2a; } ")
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(8, 6, 8, 6)
+        h.setSpacing(8)
+
+        h.addWidget(QLabel("Past runs:"))
+        h.addWidget(self._past_runs_combo, 2)
+        h.addWidget(self._past_open_btn)
+        h.addWidget(self._new_run_btn)
+
+        # Vertical separator between navigation and status.
+        sep = QWidget()
+        sep.setFixedWidth(1)
+        sep.setStyleSheet("background-color: #555;")
+        h.addSpacing(6)
+        h.addWidget(sep)
+        h.addSpacing(6)
+
+        self._status_label.setStyleSheet("color: #ccc;")
+        h.addWidget(self._status_label, 3)
+        self._progress_bar.setMaximumWidth(180)
+        h.addWidget(self._progress_bar)
+        h.addWidget(self._load_cancel_btn)
+
+        return bar
+
+    def _cancel_load(self) -> None:
+        # Soft cancel: the worker thread can't be interrupted mid-read, but
+        # we set a flag so _apply_loaded_run drops the result when it eventually
+        # arrives. The thread is a daemon and will exit with the process.
+        self._load_cancelled = True
+        self._load_cancel_btn.setVisible(False)
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(False)
+        self._status_label.setText("Load cancelled.")
 
 
     def _on_viewer_control_changed(self) -> None:
@@ -1163,35 +1222,66 @@ class DeepReefMapWindow(QMainWindow):
         self._auto_load_run(Path(run_dir))
 
     def _auto_load_run(self, run_dir: Path) -> None:
+        self._load_cancelled = False
+        self._status_label.setText(f"Loading run from {run_dir.name}…")
+        # Indeterminate ("busy") progress bar — setRange(0, 0) makes Qt animate
+        # the chunk back and forth so the user sees the app isn't frozen.
+        self._progress_bar.setRange(0, 0)
+        self._progress_bar.setVisible(True)
+        self._load_cancel_btn.setVisible(True)
+        threading.Thread(target=self._load_run_worker, args=(run_dir,), daemon=True).start()
+
+    def _load_run_worker(self, run_dir: Path) -> None:
         try:
-            from deepreefmap.pipeline.run_loader import GEOMETRY_ONLY_MODE, load_cached_run
+            from deepreefmap.pipeline.run_loader import load_cached_run
 
             result = load_cached_run(run_dir)
-            if result.mode == GEOMETRY_ONLY_MODE:
-                self._viewer.show_point_cloud(result.geometry_xyz, result.geometry_rgb)
-            else:
-                cloud = result.reference_cloud
-                fb = result.frame_batch
-                mr = result.mapping_result
-                if cloud is not None and fb is not None and mr is not None:
-                    self._viewer.load_scene_data(fb, mr, cloud, self._classes_config)
-                    self._build_legend()
-                    self._show_viewer_controls()
-                    self._on_viewer_control_changed()
-                elif cloud is not None:
-                    self._viewer.show_point_cloud(cloud.xyz, cloud.rgb)
-
-            self._active_run_dir = run_dir
-            self._active_run_manifest = result.manifest
-            display = result.manifest.get("name") or run_dir.name
-            self._status_label.setText(f"Loaded run '{display}' from {run_dir}")
-
-            ortho_path = run_dir / "ortho.png"
-            if ortho_path.exists():
-                self._show_results(str(run_dir))
+            self._sig_run_loaded.emit(result, str(run_dir), "")
         except Exception as exc:
-            self._status_label.setText(f"Error loading run: {exc}")
             logger.exception("Failed to load cached run")
+            self._sig_run_loaded.emit(None, str(run_dir), str(exc)[:300])
+
+    def _apply_loaded_run(self, result: object, run_dir_str: str, error: str) -> None:
+        from deepreefmap.pipeline.run_loader import GEOMETRY_ONLY_MODE
+
+        # Restore the progress bar to determinate-but-hidden so subsequent
+        # reconstruction runs aren't stuck in indeterminate mode.
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(False)
+        self._load_cancel_btn.setVisible(False)
+
+        if self._load_cancelled:
+            # User aborted while the worker was still reading from disk.
+            return
+
+        run_dir = Path(run_dir_str)
+        if error or result is None:
+            self._status_label.setText(f"Error loading run: {error}")
+            return
+
+        if result.mode == GEOMETRY_ONLY_MODE:
+            self._viewer.show_point_cloud(result.geometry_xyz, result.geometry_rgb)
+        else:
+            cloud = result.reference_cloud
+            fb = result.frame_batch
+            mr = result.mapping_result
+            if cloud is not None and fb is not None and mr is not None:
+                self._viewer.load_scene_data(fb, mr, cloud, self._classes_config)
+                self._build_legend()
+                self._show_viewer_controls()
+                self._on_viewer_control_changed()
+            elif cloud is not None:
+                self._viewer.show_point_cloud(cloud.xyz, cloud.rgb)
+
+        self._active_run_dir = run_dir
+        self._active_run_manifest = result.manifest
+        display = result.manifest.get("name") or run_dir.name
+        self._status_label.setText(f"Loaded run '{display}' from {run_dir}")
+
+        ortho_path = run_dir / "ortho.png"
+        if ortho_path.exists():
+            self._show_results(str(run_dir))
 
 
     def _on_viewer_status(self, event: str, **kwargs: object) -> None:
