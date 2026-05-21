@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
 if TYPE_CHECKING:
     from deepreefmap.pipeline.artifacts import SemanticPointCloud
+
+
+ProgressFn = Callable[[str, int, int], None]
 
 
 def median_distance_to_camera(cloud: "SemanticPointCloud") -> float | None:
@@ -43,12 +46,61 @@ class FinalCloudIndex:
     """For class c, prefix_end_by_class[c][t] = number of points with timeline_rank <= t."""
 
 
+def reconstruct_cloud_from_index(fci: FinalCloudIndex) -> "SemanticPointCloud":
+    """Flatten a FinalCloudIndex back into a SemanticPointCloud."""
+    from deepreefmap.pipeline.artifacts import SemanticPointCloud
+
+    if not fci.class_ids:
+        return SemanticPointCloud.empty()
+
+    xyz_parts, rgb_parts, label_parts, conf_parts, fi_parts = [], [], [], [], []
+    fo = np.asarray(fci.frame_order, dtype=np.int32)
+
+    for cid in fci.class_ids:
+        n = len(fci.xyz_by_class[cid])
+        if n == 0:
+            continue
+        xyz_parts.append(fci.xyz_by_class[cid])
+        rgb_parts.append(fci.rgb_by_class[cid])
+        conf_parts.append(fci.conf_by_class[cid])
+        label_parts.append(np.full(n, cid, dtype=np.int32))
+        pe = fci.prefix_end_by_class[cid]
+        point_fi = np.empty(n, dtype=np.int32)
+        prev = 0
+        for t in range(len(pe)):
+            cur = int(pe[t])
+            if cur > prev:
+                point_fi[prev:cur] = fo[t] if t < len(fo) else 0
+            prev = cur
+        fi_parts.append(point_fi)
+
+    return SemanticPointCloud(
+        xyz=np.concatenate(xyz_parts),
+        rgb=np.concatenate(rgb_parts),
+        labels=np.concatenate(label_parts),
+        frame_indices=np.concatenate(fi_parts),
+        confidence=np.concatenate(conf_parts),
+    )
+
+
 def build_final_cloud_index(
     cloud: "SemanticPointCloud",
     frame_order: list[int] | tuple[int, ...],
     class_colors: dict[int, tuple[int, int, int]],
+    progress: ProgressFn | None = None,
 ) -> FinalCloudIndex:
-    """Split cloud by label, sort points by timeline rank, build prefix-end arrays."""
+    """Split cloud by label, sort points by timeline rank, build prefix-end arrays.
+
+    `progress(stage_label, current, total)` fires at major phases, with `total == 0`
+    meaning indeterminate.
+    """
+    def _emit(stage: str, cur: int, tot: int) -> None:
+        if progress is not None:
+            try:
+                progress(stage, cur, tot)
+            except Exception:
+                pass
+
     if len(cloud) == 0:
         fo = tuple(int(x) for x in frame_order)
         return FinalCloudIndex(
@@ -104,8 +156,22 @@ def build_final_cloud_index(
             prefix_end_by_class={},
         )
 
-    frame_to_rank = {fid: r for r, fid in enumerate(frame_order_t)}
-    ranks = np.array([frame_to_rank.get(int(f), -1) for f in frame_indices.tolist()], dtype=np.int32)
+    _emit("Indexing cloud", 0, 0)
+
+    # Vectorised frame-index -> timeline-rank lookup. The previous Python
+    # comprehension `[frame_to_rank.get(int(f), -1) for f in tolist()]`
+    # was the dominant cost for large clouds (millions of points × dict.get).
+    fo_arr = np.asarray(frame_order_t, dtype=np.int64)
+    fi64 = frame_indices.astype(np.int64, copy=False)
+    fi_min = int(fi64.min()) if fi64.size else 0
+    fi_max = int(fi64.max()) if fi64.size else 0
+    fo_min = int(fo_arr.min())
+    fo_max = int(fo_arr.max())
+    lo = min(fi_min, fo_min)
+    hi = max(fi_max, fo_max)
+    lookup = np.full(hi - lo + 1, -1, dtype=np.int32)
+    lookup[fo_arr - lo] = np.arange(len(fo_arr), dtype=np.int32)
+    ranks = lookup[fi64 - lo]
     in_timeline = ranks >= 0
     xyz = xyz[in_timeline]
     rgb = rgb[in_timeline]
@@ -121,7 +187,10 @@ def build_final_cloud_index(
     prefix_end_by_class: dict[int, np.ndarray] = {}
 
     unique_labels = sorted(int(x) for x in np.unique(labels).tolist())
-    for class_id in unique_labels:
+    step_targets = np.arange(n_steps, dtype=np.int32)
+    n_classes = len(unique_labels)
+    for ci, class_id in enumerate(unique_labels):
+        _emit("Indexing classes", ci, n_classes)
         m = labels == int(class_id)
         if not np.any(m):
             continue
@@ -141,9 +210,9 @@ def build_final_cloud_index(
         sem[:, 1] = int(color[1])
         sem[:, 2] = int(color[2])
 
-        prefix_end = np.zeros(n_steps, dtype=np.int64)
-        for t in range(n_steps):
-            prefix_end[t] = int(np.searchsorted(ranks_c, t, side="right"))
+        # One C-level searchsorted across all timeline steps replaces the
+        # previous per-step Python loop.
+        prefix_end = np.searchsorted(ranks_c, step_targets, side="right").astype(np.int64, copy=False)
 
         cid = int(class_id)
         xyz_by_class[cid] = xyz_c
@@ -151,6 +220,8 @@ def build_final_cloud_index(
         semrgb_by_class[cid] = sem
         conf_by_class[cid] = conf_c.astype(np.float32, copy=False)
         prefix_end_by_class[cid] = prefix_end
+
+    _emit("Indexing classes", n_classes, n_classes)
 
     class_ids = tuple(sorted(xyz_by_class.keys()))
     return FinalCloudIndex(
