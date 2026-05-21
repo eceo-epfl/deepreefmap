@@ -452,6 +452,7 @@ class FormPanelMixin:
         # The legend lives as a floating overlay on the 3D canvas; this dict
         # is populated by _build_legend and queried by _enabled_class_set.
         self._legend_toggles: dict[int, QCheckBox] = {}
+        self._legend_solo_buttons: dict[int, object] = {}
 
         self._results_group = QGroupBox("Results")
         self._results_group.setVisible(False)

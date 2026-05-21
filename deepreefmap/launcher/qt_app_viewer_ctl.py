@@ -101,14 +101,77 @@ class ViewerControlsMixin:
     def _build_legend(self) -> None:
         cc = self._classes_config
         class_ids = sorted(cc.id_to_name.keys())
-        self._legend_toggles = self._viewer.legend_overlay.rebuild(
+        self._legend_toggles, self._legend_solo_buttons = self._viewer.legend_overlay.rebuild(
             class_ids,
             cc.id_to_name,
             cc.id_to_color,
             self._on_viewer_control_changed,
+            self._on_solo_class,
         )
         self._viewer.legend_overlay.setVisible(True)
         self._viewer.legend_overlay.reposition()
+
+    def _on_isolate_class(self, cid: int) -> None:
+        if not self._legend_toggles:
+            return
+        for other_cid, cb in self._legend_toggles.items():
+            cb.blockSignals(True)
+            cb.setChecked(other_cid == cid)
+            cb.blockSignals(False)
+        self._on_viewer_control_changed()
+
+    def _on_show_all_classes(self) -> None:
+        if not self._legend_toggles:
+            return
+        for cb in self._legend_toggles.values():
+            cb.blockSignals(True)
+            cb.setChecked(True)
+            cb.blockSignals(False)
+        self._on_viewer_control_changed()
+
+    def _on_solo_class(self, cid: int) -> None:
+        if self._enabled_class_set() == frozenset({cid}):
+            self._on_show_all_classes()
+        else:
+            self._on_isolate_class(cid)
+
+    def _on_point_picked(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        if self._pick_tooltip is None:
+            from deepreefmap.launcher.qt_pick_tooltip import PickTooltip
+
+            self._pick_tooltip = PickTooltip(self)
+            self._pick_tooltip.isolate_requested.connect(self._on_isolate_class)
+            self._pick_tooltip.show_all_requested.connect(self._on_show_all_classes)
+            self._pick_tooltip.close_requested.connect(self._pick_tooltip.hide)
+        self._pick_tooltip.set_payload(payload)
+        screen_xy = payload.get("screen_xy", (0, 0))
+        from PySide6.QtCore import QPoint
+
+        plotter = getattr(self._viewer, "_plotter", None)
+        anchor = plotter if plotter is not None else self._viewer
+        global_pt = anchor.mapToGlobal(QPoint(int(screen_xy[0]), int(screen_xy[1])))
+        self._pick_tooltip.adjustSize()
+        # Keep the tooltip on-screen by nudging away from the right/bottom edge.
+        screen = self._pick_tooltip.screen()
+        if screen is not None:
+            geo = screen.availableGeometry()
+            x = global_pt.x() + 12
+            y = global_pt.y() + 12
+            if x + self._pick_tooltip.width() > geo.right():
+                x = global_pt.x() - 12 - self._pick_tooltip.width()
+            if y + self._pick_tooltip.height() > geo.bottom():
+                y = global_pt.y() - 12 - self._pick_tooltip.height()
+            self._pick_tooltip.move(x, y)
+        else:
+            self._pick_tooltip.move(global_pt.x() + 12, global_pt.y() + 12)
+        self._pick_tooltip.show()
+        self._pick_tooltip.raise_()
+
+    def _on_point_picked_clear(self) -> None:
+        if self._pick_tooltip is not None:
+            self._pick_tooltip.hide()
     def _on_viewer_status(self, event: str, **kwargs: object) -> None:
         _STAGE_LABELS = {
             "startup": "Startup",

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QScrollArea,
     QSplitter,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -149,6 +150,16 @@ class LegendOverlay(QWidget):
             LegendOverlay QCheckBox::indicator { width: 12px; height: 12px; }
             LegendOverlay QScrollArea { background: transparent; border: none; }
             LegendOverlay QWidget#legend_inner { background: transparent; }
+            LegendOverlay QToolButton {
+                color: #e8e8e8;
+                background-color: rgba(255, 255, 255, 20);
+                border: 1px solid rgba(255, 255, 255, 50);
+                border-radius: 3px;
+                font-size: 10px;
+                padding: 0px;
+            }
+            LegendOverlay QToolButton:hover { background-color: rgba(255, 255, 255, 50); }
+            LegendOverlay QToolButton:pressed { background-color: rgba(255, 255, 255, 80); }
             """
         )
         outer = QVBoxLayout(self)
@@ -183,10 +194,12 @@ class LegendOverlay(QWidget):
         class_names: dict[int, str],
         class_colors: dict[int, tuple[int, int, int]],
         on_toggle: Callable[[], None],
-    ) -> dict[int, QCheckBox]:
-        """Populate one row per class; return id → checkbox map."""
+        on_solo: Callable[[int], None] | None = None,
+    ) -> tuple[dict[int, QCheckBox], dict[int, QToolButton]]:
+        """Populate one row per class; return (toggles, solo_buttons)."""
         self.clear()
         toggles: dict[int, QCheckBox] = {}
+        solo_buttons: dict[int, QToolButton] = {}
         for row, cid in enumerate(class_ids):
             name = class_names.get(cid, str(cid))
             r, g, b = class_colors.get(cid, (128, 128, 128))
@@ -199,10 +212,18 @@ class LegendOverlay(QWidget):
             cb = QCheckBox(name)
             cb.setChecked(True)
             cb.toggled.connect(on_toggle)
+            solo = QToolButton()
+            solo.setText("S")
+            solo.setFixedSize(16, 16)
+            solo.setToolTip("Solo this class")
+            if on_solo is not None:
+                solo.clicked.connect(lambda _checked=False, c=cid: on_solo(c))
             self._grid.addWidget(swatch, row, 0)
             self._grid.addWidget(cb, row, 1)
+            self._grid.addWidget(solo, row, 2)
             toggles[cid] = cb
-        return toggles
+            solo_buttons[cid] = solo
+        return toggles, solo_buttons
 
     def reposition(self) -> None:
         parent = self.parentWidget()
@@ -228,6 +249,9 @@ class QtPointCloudViewer(QWidget):
     _sig_mark_outputs = Signal(str, object)
     _sig_fail_run = Signal(str, str)
     _sig_close = Signal()
+
+    point_picked = Signal(object)
+    point_picked_clear = Signal()
 
     def __init__(
         self,
@@ -289,6 +313,8 @@ class QtPointCloudViewer(QWidget):
 
         self._point_filter: Callable[[np.ndarray], np.ndarray] | None = None
 
+        self._picking_enabled = False
+
         self._frame_panel_cache: dict[int, np.ndarray] = {}
 
         self._sig_start_run.connect(self._on_start_run)
@@ -332,7 +358,103 @@ class QtPointCloudViewer(QWidget):
         self._canvas_layout.addWidget(self._plotter)
         # Keep the legend on top after the plotter is added below it.
         self.legend_overlay.raise_()
+        self._enable_picking()
         return self._plotter
+
+    def _enable_picking(self) -> None:
+        if self._picking_enabled or self._plotter is None:
+            return
+        try:
+            self._plotter.enable_point_picking(
+                callback=self._on_point_picked,
+                show_message=False,
+                show_point=False,
+                left_clicking=True,
+                use_mesh=True,
+            )
+            self._picking_enabled = True
+        except Exception:
+            logger.debug("enable_point_picking unavailable", exc_info=True)
+
+    def _on_point_picked(self, mesh, point_id) -> None:
+        if self._final_index is None or self._plotter is None:
+            self.point_picked_clear.emit()
+            return
+        if mesh is None or point_id is None or int(point_id) < 0:
+            self.point_picked_clear.emit()
+            return
+
+        picked_cid: int | None = None
+        for cid, actor in self._class_actors.items():
+            try:
+                mapper = actor.GetMapper()
+                if mapper is None:
+                    continue
+                if mapper.GetInput() is mesh:
+                    if actor.GetVisibility():
+                        picked_cid = cid
+                    break
+            except Exception:
+                continue
+        if picked_cid is None:
+            self.point_picked_clear.emit()
+            return
+
+        fi = self._final_index
+        pid = int(point_id)
+
+        orig_idx_arr = None
+        try:
+            if "orig_idx" in mesh.point_data:
+                orig_idx_arr = np.asarray(mesh.point_data["orig_idx"], dtype=np.int64)
+        except Exception:
+            orig_idx_arr = None
+        if orig_idx_arr is not None and 0 <= pid < orig_idx_arr.shape[0]:
+            local_id = int(orig_idx_arr[pid])
+        else:
+            local_id = pid
+
+        xyz_c = fi.xyz_by_class.get(picked_cid)
+        conf_c = fi.conf_by_class.get(picked_cid)
+        if xyz_c is None or local_id < 0 or local_id >= xyz_c.shape[0]:
+            self.point_picked_clear.emit()
+            return
+
+        xyz = xyz_c[local_id]
+        confidence = (
+            float(conf_c[local_id])
+            if conf_c is not None and local_id < conf_c.shape[0]
+            else float("nan")
+        )
+
+        prefix_end = fi.prefix_end_by_class.get(picked_cid)
+        frame_index = -1
+        if prefix_end is not None and len(fi.frame_order) > 0:
+            t = int(np.searchsorted(prefix_end, local_id, side="right"))
+            if 0 <= t < len(fi.frame_order):
+                frame_index = int(fi.frame_order[t])
+
+        color = self._class_colors.get(picked_cid, (180, 180, 180))
+        name = self._class_names.get(picked_cid, f"class {picked_cid}")
+
+        screen_xy = (0, 0)
+        try:
+            pos = self._plotter.iren.GetEventPosition()
+            plotter_h = int(self._plotter.height())
+            screen_xy = (int(pos[0]), max(0, plotter_h - int(pos[1])))
+        except Exception:
+            pass
+
+        payload = {
+            "class_id": int(picked_cid),
+            "class_name": str(name),
+            "color": (int(color[0]), int(color[1]), int(color[2])),
+            "xyz": (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+            "frame_index": int(frame_index),
+            "confidence": confidence,
+            "screen_xy": screen_xy,
+        }
+        self.point_picked.emit(payload)
 
     def _reveal_canvas(self) -> None:
         self._ensure_plotter()
@@ -694,23 +816,31 @@ class QtPointCloudViewer(QWidget):
             src = fi.semrgb_by_class[cid] if semantic_colors else fi.rgb_by_class[cid]
             pts = xyz_c[:n]
             cols = src[:n]
+            orig_idx: np.ndarray | None = None
             if min_conf > 0.0:
                 conf_c = fi.conf_by_class.get(cid)
                 if conf_c is not None:
                     keep = conf_c[:n] >= min_conf
                     pts = pts[keep]
                     cols = cols[keep]
+                    orig_idx = np.nonzero(keep)[0].astype(np.int32)
             if self._point_filter is not None and pts.shape[0] > 0:
                 try:
                     keep_pf = np.asarray(self._point_filter(pts), dtype=bool).reshape(-1)
                     pts = pts[keep_pf]
                     cols = cols[keep_pf]
+                    if orig_idx is None:
+                        orig_idx = np.nonzero(keep_pf)[0].astype(np.int32)
+                    else:
+                        orig_idx = orig_idx[keep_pf]
                 except Exception:
                     logger.debug("Point filter failed on class %s", cid, exc_info=True)
             if pts.shape[0] == 0:
                 actor.SetVisibility(False)
                 continue
             pd = _make_point_polydata(pts, cols)
+            if orig_idx is not None:
+                pd.point_data["orig_idx"] = orig_idx
             actor.GetMapper().SetInputData(pd)
             actor.GetProperty().SetPointSize(point_size)
             actor.SetVisibility(True)

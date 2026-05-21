@@ -98,6 +98,9 @@ class DeepReefMapWindow(
             class_names=classes_config.id_to_name,
         )
         self._viewer.set_status_callback(self._on_viewer_status)
+        self._viewer.point_picked.connect(self._on_point_picked)
+        self._viewer.point_picked_clear.connect(self._on_point_picked_clear)
+        self._pick_tooltip = None
 
         # Build the form first so widgets it references (status_label, etc.)
         # are constructed before we wire them into the top toolbar.
