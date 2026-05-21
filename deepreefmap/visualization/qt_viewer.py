@@ -137,8 +137,13 @@ class LegendOverlay(QWidget):
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
+        # WA_StyledBackground lets the QSS background-color paint. We
+        # deliberately do NOT set WA_TranslucentBackground here: that
+        # attribute is for top-level windows, and on child widgets layered
+        # over a QOpenGLWidget (the pyvistaqt canvas) on Linux/X11 it
+        # suppresses the QSS background paint, leaving the overlay showing
+        # the default widget grey.
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet(
             """
             LegendOverlay {

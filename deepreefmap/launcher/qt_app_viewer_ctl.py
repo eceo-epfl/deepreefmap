@@ -18,19 +18,22 @@ class ViewerControlsMixin:
     """DeepReefMapWindow methods for app mode, playback, legend, and viewer status routing."""
 
     def _set_app_mode(self, mode: str) -> None:
-        """Switch the Run tab's content to SETUP / RUNNING / VIEWING.
+        """Switch app mode to SETUP / RUNNING / VIEWING.
 
-        The mode determines which page of the QStackedWidget is visible inside
-        the Run tab. Every mode transition also jumps the sidebar to the Run
-        tab so the user sees the relevant content immediately; they can still
-        click into Viewer/Tools afterwards.
+        SETUP and RUNNING swap the Run tab's stacked page (form vs. live log)
+        and keep the sidebar on Run. VIEWING leaves the Run tab on the setup
+        form so the user can start another reconstruction immediately, and
+        jumps the sidebar to the Results tab to surface the loaded outputs.
         """
         if mode == "SETUP":
             self._mode_stack.setCurrentWidget(self._setup_page)
+            target_tab = self._TAB_RUN
         elif mode == "RUNNING":
             self._mode_stack.setCurrentWidget(self._running_page)
+            target_tab = self._TAB_RUN
         elif mode == "VIEWING":
-            self._mode_stack.setCurrentWidget(self._viewing_page)
+            self._mode_stack.setCurrentWidget(self._setup_page)
+            target_tab = self._TAB_RESULTS
         else:
             raise ValueError(f"Unknown app mode: {mode!r}")
         self._app_mode = mode
@@ -38,7 +41,7 @@ class ViewerControlsMixin:
         # inside _build_form_panel before the tab widget is constructed (only
         # in unusual ordering); the production path constructs tabs first.
         if hasattr(self, "_sidebar_tabs"):
-            self._sidebar_tabs.setCurrentIndex(self._TAB_RUN)
+            self._sidebar_tabs.setCurrentIndex(target_tab)
 
     def _refresh_run_warnings_view(self) -> None:
         """Keep the running-page warning mirror in sync with the viewing one."""
@@ -96,7 +99,7 @@ class ViewerControlsMixin:
         self._frame_slider.setRange(0, max(0, n - 1))
         self._frame_slider.setValue(n - 1)
         self._viewer_controls_group.setVisible(True)
-        self._sidebar_tabs.setTabEnabled(self._TAB_VIEWER, True)
+        self._sidebar_tabs.setTabEnabled(self._TAB_RESULTS, True)
 
     def _build_legend(self) -> None:
         cc = self._classes_config

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -86,15 +87,16 @@ class FormPanelMixin:
         layout = QVBoxLayout(panel)
         layout.setAlignment(Qt.AlignTop)
 
-        # Three-tab sidebar: Run (mode-specific content), Viewer (playback +
-        # filter controls), Tools (utilities + update check). Tab indices are
-        # cached so _set_app_mode can auto-switch to Run on mode changes.
+        # Three-tab sidebar: Run (setup form / live log), Results (viewer
+        # controls + results panel for a loaded run), Tools (utilities +
+        # update check). The setup form lives in the Run tab so it is always
+        # one click away, even after a run completes.
         self._TAB_RUN = 0
-        self._TAB_VIEWER = 1
+        self._TAB_RESULTS = 1
         self._TAB_TOOLS = 2
         self._sidebar_tabs = QTabWidget()
         # Tabs expand to share the panel width equally so labels of different
-        # length (Run / Viewer / Tools) end up the same visible width.
+        # length (Run / Results / Tools) end up the same visible width.
         self._sidebar_tabs.tabBar().setExpanding(True)
         self._sidebar_tabs.setStyleSheet(
             "QTabBar::tab { min-width: 80px; padding: 6px 12px; }"
@@ -112,16 +114,17 @@ class FormPanelMixin:
         tools_layout.setContentsMargins(4, 6, 4, 4)
         tools_layout.setAlignment(Qt.AlignTop)
         self._sidebar_tabs.addTab(self._run_tab, "Run")
-        self._sidebar_tabs.addTab(self._viewer_tab, "Viewer")
+        self._sidebar_tabs.addTab(self._viewer_tab, "Results")
         self._sidebar_tabs.addTab(self._tools_tab, "Tools")
-        # Viewer tab has nothing to show until a run loads — disable it so the
-        # tab is greyed out and unclickable until _show_viewer_controls runs.
-        self._sidebar_tabs.setTabEnabled(self._TAB_VIEWER, False)
+        # Results tab has nothing to show until a run loads — disable it so
+        # the tab is greyed out and unclickable until _show_viewer_controls
+        # runs.
+        self._sidebar_tabs.setTabEnabled(self._TAB_RESULTS, False)
         layout.addWidget(self._sidebar_tabs)
 
-        # Three mode-specific pages stacked together. _set_app_mode swaps
-        # between them so the user only sees controls relevant to the current
-        # state (setting up a run / running / reviewing results).
+        # Run tab swaps between setup form and the live log via this stack.
+        # The VIEWING app mode does NOT swap the stack — it leaves the form
+        # in place and switches the sidebar to the Results tab instead.
         self._mode_stack = QStackedWidget()
         self._setup_page = QWidget()
         setup_layout = QVBoxLayout(self._setup_page)
@@ -131,13 +134,8 @@ class FormPanelMixin:
         running_layout = QVBoxLayout(self._running_page)
         running_layout.setAlignment(Qt.AlignTop)
         running_layout.setContentsMargins(0, 0, 0, 0)
-        self._viewing_page = QWidget()
-        viewing_layout = QVBoxLayout(self._viewing_page)
-        viewing_layout.setAlignment(Qt.AlignTop)
-        viewing_layout.setContentsMargins(0, 0, 0, 0)
         self._mode_stack.addWidget(self._setup_page)
         self._mode_stack.addWidget(self._running_page)
-        self._mode_stack.addWidget(self._viewing_page)
         run_layout.addWidget(self._mode_stack)
 
         # These widgets are owned by the top toolbar but constructed here so
@@ -331,8 +329,8 @@ class FormPanelMixin:
 
         # Sticky banner for non-fatal quality warnings emitted during a run
         # (preprocess detected mostly-background frames, missing transect line,
-        # etc.). Cleared at the start of each new run. Lives on the viewing
-        # page so it surfaces alongside the results it warns about, plus is
+        # etc.). Cleared at the start of each new run. Lives on the Results
+        # tab so it surfaces alongside the results it warns about, plus is
         # mirrored on the running page so the user sees them as they happen.
         self._warnings_label = QLabel("")
         self._warnings_label.setWordWrap(True)
@@ -343,7 +341,7 @@ class FormPanelMixin:
         )
         self._warnings_label.setVisible(False)
         self._run_warnings: list[str] = []
-        viewing_layout.addWidget(self._warnings_label)
+        viewer_layout.addWidget(self._warnings_label)
 
         # Running-page content: a sibling warnings label (Qt widgets can only
         # have one parent, so we use a second label and keep both texts in sync
@@ -443,11 +441,11 @@ class FormPanelMixin:
         play_row.addWidget(self._play_fps_spin)
         vc_layout.addLayout(play_row)
 
-        # Viewer tab: controls visible once a run is loaded. The tab itself is
-        # disabled until then (greyed out and unclickable), so no empty-state
-        # placeholder is needed inside.
+        # Results tab: viewer controls + results panel. The tab itself is
+        # disabled until a run is loaded (greyed out and unclickable), so no
+        # empty-state placeholder is needed inside. addStretch is appended at
+        # the end after the results group is added below.
         viewer_layout.addWidget(self._viewer_controls_group)
-        viewer_layout.addStretch()
 
         # The legend lives as a floating overlay on the 3D canvas; this dict
         # is populated by _build_legend and queried by _enabled_class_set.
@@ -567,7 +565,8 @@ class FormPanelMixin:
         self._export_frame_btn.clicked.connect(self._on_export_current_frame)
         exports_grid.addWidget(self._export_frame_btn, 2, 1)
         res_layout.addLayout(exports_grid)
-        viewing_layout.addWidget(self._results_group)
+        viewer_layout.addWidget(self._results_group)
+        viewer_layout.addStretch()
 
         tools_layout.addWidget(QLabel("<b>Tools</b>"))
         test_btn = QPushButton("Render test cloud")
@@ -692,6 +691,10 @@ class FormPanelMixin:
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(panel)
+        # NoFrame removes the QScrollArea's default beveled border so the
+        # sidebar blends into the main window instead of looking like a panel
+        # inside a panel.
+        scroll.setFrameShape(QFrame.NoFrame)
         # Allow the user to drag the splitter to collapse the form down to a
         # small minimum. Removing the hard min lets the 3D viewport take as
         # much space as they want.
