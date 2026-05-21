@@ -5,27 +5,25 @@ import logging
 
 import typer
 
-app = typer.Typer(help="DeepReefMap command line interface")
-
-
-@app.callback(invoke_without_command=True)
-def _default(
-    ctx: typer.Context,
-) -> None:
-    """When invoked with no subcommand, start the native Qt launcher."""
-    if ctx.invoked_subcommand is not None:
-        return
-    from deepreefmap.launcher.qt_app import launch
-
-    launch()
+app = typer.Typer(
+    help="DeepReefMap command line interface",
+    no_args_is_help=True,
+)
 
 
 @app.command("launch")
-def launch_command() -> None:
-    """Start the native Qt desktop launcher."""
+def launch_command(
+    run_dir: Optional[Path] = typer.Argument(
+        None,
+        exists=True,
+        file_okay=False,
+        help="Optional path to an existing run directory (contains run_manifest.json) to open on startup.",
+    ),
+) -> None:
+    """Start the native Qt desktop launcher, optionally pre-loading a run."""
     from deepreefmap.launcher.qt_app import launch
 
-    launch()
+    launch(view_run_dir=run_dir)
 
 
 def _available_profiles() -> list[str]:
@@ -254,13 +252,3 @@ def render_video(
         crop_width_m=crop_width_m,
     )
     typer.echo(f"Offline render completed in {run_dir}")
-
-
-@app.command("view-run")
-def view_run(
-    run_dir: Path = typer.Option(..., exists=True, file_okay=False, help="Run output directory from reconstruct."),
-) -> None:
-    """Open a cached reconstruction in the native Qt viewer."""
-    from deepreefmap.launcher.qt_app import launch
-
-    launch(view_run_dir=run_dir)
