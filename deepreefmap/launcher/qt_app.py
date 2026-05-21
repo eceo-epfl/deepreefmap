@@ -110,7 +110,7 @@ class DeepReefMapWindow(
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(form_panel)
         splitter.addWidget(self._viewer)
-        splitter.setSizes([380, 1020])
+        splitter.setSizes([440, 960])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setChildrenCollapsible(True)

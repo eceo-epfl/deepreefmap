@@ -87,19 +87,19 @@ class FormPanelMixin:
         layout = QVBoxLayout(panel)
         layout.setAlignment(Qt.AlignTop)
 
-        # Three-tab sidebar: Run (setup form / live log), Results (viewer
-        # controls + results panel for a loaded run), Tools (utilities +
-        # update check). The setup form lives in the Run tab so it is always
-        # one click away, even after a run completes.
+        # Four-tab sidebar: Run (setup form / live log), Results (viewer
+        # controls + results panel for a loaded run), Models (HF auth +
+        # per-model download/delete), Tools (utilities + update check).
         self._TAB_RUN = 0
         self._TAB_RESULTS = 1
-        self._TAB_TOOLS = 2
+        self._TAB_MODELS = 2
+        self._TAB_TOOLS = 3
         self._sidebar_tabs = QTabWidget()
         # Tabs expand to share the panel width equally so labels of different
-        # length (Run / Results / Tools) end up the same visible width.
+        # length (Run / Results / Models / Tools) end up the same visible width.
         self._sidebar_tabs.tabBar().setExpanding(True)
         self._sidebar_tabs.setStyleSheet(
-            "QTabBar::tab { min-width: 80px; padding: 6px 12px; }"
+            "QTabBar::tab { min-width: 70px; padding: 6px 10px; }"
         )
         self._run_tab = QWidget()
         run_layout = QVBoxLayout(self._run_tab)
@@ -109,12 +109,17 @@ class FormPanelMixin:
         viewer_layout = QVBoxLayout(self._viewer_tab)
         viewer_layout.setContentsMargins(4, 6, 4, 4)
         viewer_layout.setAlignment(Qt.AlignTop)
+        self._models_tab = QWidget()
+        models_layout = QVBoxLayout(self._models_tab)
+        models_layout.setContentsMargins(4, 6, 4, 4)
+        models_layout.setAlignment(Qt.AlignTop)
         self._tools_tab = QWidget()
         tools_layout = QVBoxLayout(self._tools_tab)
         tools_layout.setContentsMargins(4, 6, 4, 4)
         tools_layout.setAlignment(Qt.AlignTop)
         self._sidebar_tabs.addTab(self._run_tab, "Run")
         self._sidebar_tabs.addTab(self._viewer_tab, "Results")
+        self._sidebar_tabs.addTab(self._models_tab, "Models")
         self._sidebar_tabs.addTab(self._tools_tab, "Tools")
         # Results tab has nothing to show until a run loads — disable it so
         # the tab is greyed out and unclickable until _show_viewer_controls
@@ -196,7 +201,7 @@ class FormPanelMixin:
         if idx >= 0:
             self._seg_combo.setCurrentIndex(idx)
         seg_row.addWidget(self._seg_combo, 1)
-        self._seg_status_btn = self._build_model_status_button()
+        self._seg_status_btn = self._build_model_status_button(self._seg_combo)
         seg_row.addWidget(self._seg_status_btn)
         setup_layout.addLayout(seg_row)
 
@@ -210,7 +215,7 @@ class FormPanelMixin:
         if idx >= 0:
             self._map_combo.setCurrentIndex(idx)
         map_row.addWidget(self._map_combo, 1)
-        self._map_status_btn = self._build_model_status_button()
+        self._map_status_btn = self._build_model_status_button(self._map_combo)
         map_row.addWidget(self._map_status_btn)
         setup_layout.addLayout(map_row)
 
@@ -656,18 +661,24 @@ class FormPanelMixin:
             if not ((last_run_path / "run_manifest.json").exists()
                     and (last_run_path / "mapping_outputs.npz").exists()):
                 self._settings.remove("last_run_dir")
-        # Models groupbox lives on the SETUP page so it's prominent while the
-        # user picks segmentation/mapping but stays out of the way during
-        # RUNNING/VIEWING modes.
+        # Models groupbox lives in its own sidebar tab so the Run tab stays
+        # focused on the setup form. The inline status icons next to the
+        # seg/mapping dropdowns surface state without forcing the user to
+        # switch tabs for common cases.
         self._models_group = models_group
-        setup_layout.addWidget(models_group)
+        models_layout.addWidget(models_group)
+        models_layout.addStretch()
         threading.Thread(target=self._refresh_model_status, daemon=True).start()
 
 
         tools_layout.addWidget(_separator())
-        self._update_label = QLabel(f"Version: <b>{_current_version()}</b>. Checking for updates...")
-        self._update_label.setWordWrap(True)
-        tools_layout.addWidget(self._update_label)
+        self._update_version_label = QLabel(f"Version: <b>{_current_version()}</b>")
+        self._update_version_label.setWordWrap(True)
+        tools_layout.addWidget(self._update_version_label)
+        self._update_status_label = QLabel("Checking for updates…")
+        self._update_status_label.setWordWrap(True)
+        self._update_status_label.setStyleSheet("color: #aaa;")
+        tools_layout.addWidget(self._update_status_label)
         update_row = QHBoxLayout()
         self._update_version_combo = QComboBox()
         self._update_version_combo.setVisible(False)

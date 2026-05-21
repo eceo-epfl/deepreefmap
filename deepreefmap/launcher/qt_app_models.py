@@ -4,6 +4,7 @@ import threading
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -19,59 +20,91 @@ from deepreefmap.launcher.qt_app_hf_dialog import HfLoginDialog
 class ModelManagementMixin:
     """DeepReefMapWindow methods for HF auth, model status, download, and delete."""
 
-    def _scroll_to_models(self) -> None:
-        # Scroll the sidebar so the Models groupbox is in view, then briefly
-        # flash its border so the user knows where their click landed.
+    def _find_model_state(self, model_name: str) -> tuple[object, bool]:
+        for state_info, state_cached in self._last_model_states:
+            if state_info.name == model_name:
+                return state_info, state_cached
+        return None, False
+
+    def _jump_to_model(self, model_name: str | None = None) -> None:
+        """Switch the sidebar to the Models tab and reveal one row.
+
+        Used by the inline status buttons so the cached case ("Click ✓")
+        takes the user straight to the Delete control for that model.
+        """
+        if hasattr(self, "_sidebar_tabs") and hasattr(self, "_TAB_MODELS"):
+            self._sidebar_tabs.setCurrentIndex(self._TAB_MODELS)
         if not hasattr(self, "_models_group"):
             return
-        self._models_group.parentWidget().setFocus()
         scroll_area = self._models_group.parentWidget()
         while scroll_area is not None and not isinstance(scroll_area, QScrollArea):
             scroll_area = scroll_area.parentWidget()
+        target = self._model_rows.get(model_name) if model_name else None
         if scroll_area is not None:
-            scroll_area.ensureWidgetVisible(self._models_group, 0, 20)
+            scroll_area.ensureWidgetVisible(target or self._models_group, 0, 20)
+        if target is not None:
+            self._flash_model_row(target)
 
-    def _build_model_status_button(self) -> QPushButton:
-        # Compact indicator next to the model dropdown. Click scrolls the
-        # Models section into view; the icon/colour reflects whether the
-        # currently selected model is cached and (if gated) whether the user
-        # is logged in.
+    def _flash_model_row(self, label: QLabel) -> None:
+        prev = label.styleSheet()
+        label.setStyleSheet(
+            "QLabel { background-color: rgba(232, 160, 74, 60);"
+            " border: 1px solid #e8a04a; border-radius: 3px; padding: 2px; }"
+        )
+
+        def _clear() -> None:
+            try:
+                label.setStyleSheet(prev)
+            except RuntimeError:
+                pass  # widget destroyed by an _apply_model_status refresh
+
+        QTimer.singleShot(1500, _clear)
+
+    def _build_model_status_button(self, combo: QComboBox) -> QPushButton:
+        # Compact action button next to the model dropdown. The click
+        # behaviour depends on the current state of the selected model:
+        # ⬇ downloads, 🔒 opens the HF login dialog, ✓ jumps to the row in
+        # the Models tab so the user can delete it.
         btn = QPushButton("…")
         btn.setFixedWidth(28)
-        btn.setToolTip("Scroll to Models section")
-        btn.clicked.connect(self._scroll_to_models)
+        btn.setToolTip("Open Models")
+        btn.clicked.connect(lambda: self._on_status_button_click(combo.currentText()))
         return btn
+
+    def _on_status_button_click(self, model_name: str) -> None:
+        info, cached = self._find_model_state(model_name)
+        if info is None:
+            self._jump_to_model(None)
+            return
+        if cached:
+            self._jump_to_model(model_name)
+        elif info.gated and self._hf_auth_user is None:
+            self._on_hf_auth_button()
+        else:
+            self._download_model(model_name)
 
     def _update_model_status_button(
         self, btn: QPushButton, selected_name: str
     ) -> None:
-        info = None
-        cached = False
-        for state_info, state_cached in self._last_model_states:
-            if state_info.name == selected_name:
-                info = state_info
-                cached = state_cached
-                break
+        info, cached = self._find_model_state(selected_name)
         if info is None:
             btn.setText("…")
-            btn.setToolTip("Open Models dialog")
+            btn.setToolTip("Open Models")
             btn.setStyleSheet("")
             return
         if cached:
             btn.setText("✓")
-            btn.setToolTip(f"{selected_name} is downloaded. Click to manage.")
+            btn.setToolTip(f"{selected_name} is downloaded. Click to manage cache.")
             btn.setStyleSheet("QPushButton { color: #4a4; font-weight: bold; }")
         elif info.gated and self._hf_auth_user is None:
             btn.setText("🔒")
             btn.setToolTip(
-                f"{selected_name} is gated. Log in to Hugging Face in the Models dialog."
+                f"{selected_name} is gated. Click to log in to Hugging Face."
             )
             btn.setStyleSheet("QPushButton { color: #e8a04a; font-weight: bold; }")
         else:
             btn.setText("⬇")
-            btn.setToolTip(
-                f"{selected_name} not downloaded. Click to open the Models dialog."
-            )
+            btn.setToolTip(f"{selected_name} not downloaded. Click to download.")
             btn.setStyleSheet("QPushButton { color: #e8a04a; font-weight: bold; }")
 
     def _update_models_button_status(self) -> None:

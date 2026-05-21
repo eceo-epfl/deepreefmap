@@ -112,27 +112,29 @@ class VersionCheckMixin:
         self._sig_update_check_done.emit(current, releases, pyapp_bin)
 
     def _apply_update_check(self, current: str, releases: list[dict] | None, pyapp_bin: str | None) -> None:
+        self._update_version_label.setText(f"Version: <b>{current}</b>")
         if releases is None:
-            self._update_label.setText(f"Version: <b>{current}</b>. Couldn't reach GitHub.")
+            self._update_status_label.setText("Couldn't reach GitHub.")
             return
         if not releases:
-            self._update_label.setText(f"Version: <b>{current}</b>. No releases found.")
+            self._update_status_label.setText("No releases found.")
             return
         self._available_releases = list(releases)
         latest = _release_version(releases[0])
         installable = [r for r in releases if _release_version(r) != current]
         if not installable:
-            self._update_label.setText(f"Version: <b>{current}</b> (up to date).")
+            self._update_status_label.setText("Up to date.")
             return
         if not pyapp_bin:
             versions_summary = ", ".join(_release_version(r) for r in releases[:5])
-            self._update_label.setText(
-                f"Version: <b>{current}</b>. Latest: <b>{latest}</b> "
-                f"(not running from installer). Available: {versions_summary}"
+            self._update_status_label.setText(
+                f"Latest: <b>{latest}</b><br>"
+                f"<i>(not running from installer — can't update in place)</i><br>"
+                f"Available: {versions_summary}"
             )
             return
-        self._update_label.setText(
-            f"Version: <b>{current}</b>. Latest: <b>{latest}</b>. Pick a version to install:"
+        self._update_status_label.setText(
+            f"Latest: <b>{latest}</b>. Pick a version to install:"
         )
         self._update_version_combo.clear()
         for rel in installable:
