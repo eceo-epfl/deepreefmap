@@ -64,14 +64,6 @@ gopro = [
 ]
 train = ["wandb>=0.20.0", "tensorboard>=2.18.0"]
 dev = ["pytest>=8.4.0", "ruff>=0.12.0", "mypy>=2.0.0"]
-# Override torch/torchvision to the PyTorch ROCm index for AMD GPUs on Linux.
-# Default `uv sync` (no extra) pulls the CUDA build from PyPI, which is what we
-# want for the common case. Use `uv sync --extra rocm` on AMD hardware.
-rocm = [
-  "torch>=2.7,<3; sys_platform == 'linux'",
-  "torchvision>=0.22,<1; sys_platform == 'linux'",
-  "pytorch-triton-rocm; sys_platform == 'linux'",
-]
 
 [project.urls]
 Repository = "https://github.com/EPFL-ECEO/deepreefmap"
@@ -83,16 +75,6 @@ deepreefmap = "deepreefmap.cli.main:app"
 [build-system]
 requires = ["setuptools>=82.0.1", "wheel"]
 build-backend = "setuptools.build_meta"
-
-[tool.uv.sources]
-torch = [{ index = "pytorch-rocm", extra = "rocm" }]
-torchvision = [{ index = "pytorch-rocm", extra = "rocm" }]
-pytorch-triton-rocm = [{ index = "pytorch-rocm", extra = "rocm" }]
-
-[[tool.uv.index]]
-name = "pytorch-rocm"
-url = "https://download.pytorch.org/whl/rocm6.4"
-explicit = true
 
 [tool.setuptools.packages.find]
 include = ["deepreefmap*"]
