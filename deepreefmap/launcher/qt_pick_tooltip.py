@@ -3,7 +3,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPointF, QRect, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -15,12 +16,13 @@ from PySide6.QtWidgets import (
 )
 
 
-class PickTooltip(QFrame):
-    """Floating info bubble shown when the user clicks a point in the 3D viewer.
+class PickCard(QFrame):
+    """Inline info card shown when the user clicks a point in the 3D viewer.
 
-    Displays the picked point's class, world position, source frame, and
-    confidence. Carries buttons to isolate the picked class or restore all
-    classes. Emits signals; lifecycle is owned by the launcher window.
+    Lives as a regular child of the canvas container — not a top-level
+    window — so it floats over the plotter without spawning a separate OS
+    window. Shows the picked point's class, world position, source frame,
+    and confidence, with buttons to isolate or restore the class.
     """
 
     isolate_requested = Signal(int)
@@ -28,24 +30,18 @@ class PickTooltip(QFrame):
     close_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(
-            parent,
-            Qt.WindowType.Tool
-            | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint,
-        )
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(
             """
-            PickTooltip {
+            PickCard {
                 background-color: rgba(28, 28, 28, 240);
-                border: 1px solid rgba(255, 255, 255, 70);
+                border: 1px solid rgba(255, 255, 255, 80);
                 border-radius: 6px;
             }
-            PickTooltip QLabel { color: #e8e8e8; font-size: 11px; }
-            PickTooltip QLabel#class_name { font-weight: bold; font-size: 12px; }
-            PickTooltip QPushButton {
+            PickCard QLabel { color: #e8e8e8; font-size: 11px; }
+            PickCard QLabel#class_name { font-weight: bold; font-size: 12px; }
+            PickCard QPushButton {
                 color: #e8e8e8;
                 background-color: rgba(255, 255, 255, 25);
                 border: 1px solid rgba(255, 255, 255, 60);
@@ -53,15 +49,15 @@ class PickTooltip(QFrame):
                 padding: 3px 8px;
                 font-size: 11px;
             }
-            PickTooltip QPushButton:hover { background-color: rgba(255, 255, 255, 55); }
-            PickTooltip QToolButton {
+            PickCard QPushButton:hover { background-color: rgba(255, 255, 255, 55); }
+            PickCard QToolButton {
                 color: #e8e8e8;
                 background: transparent;
                 border: none;
                 font-size: 13px;
                 font-weight: bold;
             }
-            PickTooltip QToolButton:hover { color: #ff8080; }
+            PickCard QToolButton:hover { color: #ff8080; }
             """
         )
 
@@ -132,3 +128,71 @@ class PickTooltip(QFrame):
         else:
             self._conf_label.setText(f"confidence: {conf:.3f}")
         self.adjustSize()
+
+
+class PickOverlay(QWidget):
+    """Transparent layer over the 3D canvas that paints the pick marker.
+
+    Draws an outlined ring at the picked screen position and a leader line
+    from there to the inline `PickCard`. Click-through to the underlying
+    plotter — the card is a *sibling* widget, not a child, so its own
+    mouse handling stays intact.
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._anchor: tuple[float, float] | None = None
+        self._card_geom: QRect = QRect()
+        self._color: tuple[int, int, int] = (255, 255, 255)
+        self.hide()
+
+    def set_state(
+        self,
+        anchor: tuple[float, float],
+        card_geom: QRect,
+        color: tuple[int, int, int],
+    ) -> None:
+        self._anchor = (float(anchor[0]), float(anchor[1]))
+        self._card_geom = QRect(card_geom)
+        r, g, b = color
+        self._color = (int(r), int(g), int(b))
+        self.show()
+        self.update()
+
+    def clear(self) -> None:
+        self._anchor = None
+        self.hide()
+        self.update()
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        if self._anchor is None:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        ax, ay = self._anchor
+        anchor_pt = QPointF(ax, ay)
+
+        if self._card_geom.isValid():
+            target = _closest_point_on_rect(self._card_geom, anchor_pt)
+            painter.setPen(QPen(QColor(0, 0, 0, 200), 3))
+            painter.drawLine(anchor_pt, target)
+            painter.setPen(QPen(QColor(255, 255, 255, 220), 1.5))
+            painter.drawLine(anchor_pt, target)
+
+        ring_color = QColor(self._color[0], self._color[1], self._color[2], 235)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(0, 0, 0, 220), 3))
+        painter.drawEllipse(anchor_pt, 9, 9)
+        painter.setPen(QPen(ring_color, 2))
+        painter.drawEllipse(anchor_pt, 9, 9)
+        painter.setPen(QPen(QColor(255, 255, 255, 230), 1.5))
+        painter.drawEllipse(anchor_pt, 3, 3)
+
+
+def _closest_point_on_rect(rect: QRect, p: QPointF) -> QPointF:
+    cx = max(rect.left(), min(p.x(), rect.right()))
+    cy = max(rect.top(), min(p.y(), rect.bottom()))
+    return QPointF(cx, cy)

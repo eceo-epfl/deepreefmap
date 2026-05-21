@@ -20,19 +20,15 @@ class ViewerControlsMixin:
     def _set_app_mode(self, mode: str) -> None:
         """Switch app mode to SETUP / RUNNING / VIEWING.
 
-        SETUP and RUNNING swap the Run tab's stacked page (form vs. live log)
-        and keep the sidebar on Run. VIEWING leaves the Run tab on the setup
-        form so the user can start another reconstruction immediately, and
-        jumps the sidebar to the Results tab to surface the loaded outputs.
+        The setup form is always visible on the Run tab now; the live log lives
+        in a separate bottom panel. SETUP/RUNNING keep the sidebar on Run;
+        VIEWING jumps to the Results tab to surface the loaded outputs.
         """
         if mode == "SETUP":
-            self._mode_stack.setCurrentWidget(self._setup_page)
             target_tab = self._TAB_RUN
         elif mode == "RUNNING":
-            self._mode_stack.setCurrentWidget(self._running_page)
             target_tab = self._TAB_RUN
         elif mode == "VIEWING":
-            self._mode_stack.setCurrentWidget(self._setup_page)
             target_tab = self._TAB_RESULTS
         else:
             raise ValueError(f"Unknown app mode: {mode!r}")
@@ -44,7 +40,7 @@ class ViewerControlsMixin:
             self._sidebar_tabs.setCurrentIndex(target_tab)
 
     def _refresh_run_warnings_view(self) -> None:
-        """Keep the running-page warning mirror in sync with the viewing one."""
+        """Keep the setup-form warning mirror in sync with the Results-tab one."""
         text = self._warnings_label.text()
         visible = self._warnings_label.isVisible()
         self._warnings_label_running.setText(text)
@@ -104,12 +100,14 @@ class ViewerControlsMixin:
     def _build_legend(self) -> None:
         cc = self._classes_config
         class_ids = sorted(cc.id_to_name.keys())
+        counts = self._viewer.class_point_counts()
         self._legend_toggles, self._legend_solo_buttons = self._viewer.legend_overlay.rebuild(
             class_ids,
             cc.id_to_name,
             cc.id_to_color,
             self._on_viewer_control_changed,
             self._on_solo_class,
+            class_counts=counts or None,
         )
         self._viewer.legend_overlay.setVisible(True)
         self._viewer.legend_overlay.reposition()
@@ -141,40 +139,101 @@ class ViewerControlsMixin:
     def _on_point_picked(self, payload: object) -> None:
         if not isinstance(payload, dict):
             return
-        if self._pick_tooltip is None:
-            from deepreefmap.launcher.qt_pick_tooltip import PickTooltip
+        canvas = self._viewer._canvas_container
+        if self._pick_card is None:
+            from deepreefmap.launcher.qt_pick_tooltip import PickCard, PickOverlay
 
-            self._pick_tooltip = PickTooltip(self)
-            self._pick_tooltip.isolate_requested.connect(self._on_isolate_class)
-            self._pick_tooltip.show_all_requested.connect(self._on_show_all_classes)
-            self._pick_tooltip.close_requested.connect(self._pick_tooltip.hide)
-        self._pick_tooltip.set_payload(payload)
-        screen_xy = payload.get("screen_xy", (0, 0))
-        from PySide6.QtCore import QPoint
+            self._pick_overlay = PickOverlay(canvas)
+            self._pick_card = PickCard(canvas)
+            self._pick_card.isolate_requested.connect(self._on_isolate_class)
+            self._pick_card.show_all_requested.connect(self._on_show_all_classes)
+            self._pick_card.close_requested.connect(self._dismiss_pick)
 
-        plotter = getattr(self._viewer, "_plotter", None)
-        anchor = plotter if plotter is not None else self._viewer
-        global_pt = anchor.mapToGlobal(QPoint(int(screen_xy[0]), int(screen_xy[1])))
-        self._pick_tooltip.adjustSize()
-        # Keep the tooltip on-screen by nudging away from the right/bottom edge.
-        screen = self._pick_tooltip.screen()
-        if screen is not None:
-            geo = screen.availableGeometry()
-            x = global_pt.x() + 12
-            y = global_pt.y() + 12
-            if x + self._pick_tooltip.width() > geo.right():
-                x = global_pt.x() - 12 - self._pick_tooltip.width()
-            if y + self._pick_tooltip.height() > geo.bottom():
-                y = global_pt.y() - 12 - self._pick_tooltip.height()
-            self._pick_tooltip.move(x, y)
-        else:
-            self._pick_tooltip.move(global_pt.x() + 12, global_pt.y() + 12)
-        self._pick_tooltip.show()
-        self._pick_tooltip.raise_()
+        self._pick_card.set_payload(payload)
+        self._last_pick_payload = dict(payload)
+        self._position_pick_overlay()
+
+        xyz = payload.get("xyz", (0.0, 0.0, 0.0))
+        color = payload.get("color", (255, 220, 60))
+        try:
+            self._viewer.set_picked_marker(
+                (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+                (int(color[0]), int(color[1]), int(color[2])),
+            )
+        except Exception:
+            logger.exception("Failed to draw picked-point marker")
 
     def _on_point_picked_clear(self) -> None:
-        if self._pick_tooltip is not None:
-            self._pick_tooltip.hide()
+        self._dismiss_pick()
+
+    def _dismiss_pick(self) -> None:
+        if self._pick_card is not None:
+            self._pick_card.hide()
+        if self._pick_overlay is not None:
+            self._pick_overlay.clear()
+        self._last_pick_payload = None
+        try:
+            self._viewer.clear_picked_marker()
+        except Exception:
+            logger.debug("Failed to clear picked-point marker", exc_info=True)
+
+    def _on_canvas_resized(self) -> None:
+        if self._last_pick_payload is None or self._pick_card is None:
+            return
+        self._position_pick_overlay()
+
+    def _position_pick_overlay(self) -> None:
+        """Place the pick card next to the anchor and update the overlay.
+
+        Anchor coords arrive in plotter-local Qt pixels (top-origin). They're
+        mapped into canvas-container coords so the leader line and card use
+        the same coordinate system regardless of where the plotter sits in
+        the canvas layout.
+        """
+        from PySide6.QtCore import QPoint
+
+        if self._pick_card is None or self._pick_overlay is None:
+            return
+        payload = self._last_pick_payload
+        if payload is None:
+            return
+        canvas = self._viewer._canvas_container
+        plotter = getattr(self._viewer, "_plotter", None)
+        screen_xy = payload.get("screen_xy", (0, 0))
+        if plotter is not None:
+            canvas_pt = plotter.mapTo(canvas, QPoint(int(screen_xy[0]), int(screen_xy[1])))
+            ax, ay = canvas_pt.x(), canvas_pt.y()
+        else:
+            ax, ay = int(screen_xy[0]), int(screen_xy[1])
+
+        self._pick_overlay.setGeometry(0, 0, canvas.width(), canvas.height())
+        self._pick_card.adjustSize()
+        card_w = self._pick_card.width()
+        card_h = self._pick_card.height()
+        margin = 8
+        offset = 18
+
+        x = ax + offset
+        if x + card_w > canvas.width() - margin:
+            x = ax - offset - card_w
+        x = max(margin, min(x, canvas.width() - card_w - margin))
+
+        y = ay + offset
+        if y + card_h > canvas.height() - margin:
+            y = ay - offset - card_h
+        y = max(margin, min(y, canvas.height() - card_h - margin))
+
+        self._pick_card.move(x, y)
+        self._pick_card.show()
+        self._pick_overlay.set_state(
+            (ax, ay),
+            self._pick_card.geometry(),
+            payload.get("color", (255, 255, 255)),
+        )
+        # Z-order: overlay (line + ring) below the card, both below the legend.
+        self._pick_overlay.raise_()
+        self._pick_card.raise_()
+        self._viewer.legend_overlay.raise_()
     def _on_viewer_status(self, event: str, **kwargs: object) -> None:
         _STAGE_LABELS = {
             "startup": "Startup",

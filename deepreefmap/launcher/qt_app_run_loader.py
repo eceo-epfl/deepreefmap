@@ -81,6 +81,12 @@ class RunLoadingMixin:
         self._run_log_file_handler = open_run_log_file(out_dir)
         self._log_view.set_current_log_path(out_dir / "run.log")
         self._set_app_mode("RUNNING")
+        # Auto-open the bottom log panel so the user sees the stream live;
+        # they can collapse it afterwards via the Log button or close ×.
+        self._set_log_panel_visible(True)
+        # The run dir now exists, so the effective-path label can render its
+        # clickable file:// link.
+        self._update_effective_dir_label()
 
         self._pipeline_thread = threading.Thread(
             target=self._run_pipeline, args=(kwargs,), daemon=True

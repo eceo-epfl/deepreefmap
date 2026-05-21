@@ -4,7 +4,7 @@ import logging
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QStandardPaths, Qt, QUrl
+from PySide6.QtCore import QFileSystemWatcher, QSettings, QSize, QStandardPaths, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSpinBox,
-    QStackedWidget,
+    QStyle,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -127,21 +127,15 @@ class FormPanelMixin:
         self._sidebar_tabs.setTabEnabled(self._TAB_RESULTS, False)
         layout.addWidget(self._sidebar_tabs)
 
-        # Run tab swaps between setup form and the live log via this stack.
-        # The VIEWING app mode does NOT swap the stack — it leaves the form
-        # in place and switches the sidebar to the Results tab instead.
-        self._mode_stack = QStackedWidget()
+        # Setup form is the only content on the Run tab. The live log lives in
+        # a separate bottom panel built by _build_log_panel and assembled into
+        # the main window's vertical splitter in qt_app.py, so it stays visible
+        # alongside the form during a run instead of replacing it.
         self._setup_page = QWidget()
         setup_layout = QVBoxLayout(self._setup_page)
         setup_layout.setAlignment(Qt.AlignTop)
         setup_layout.setContentsMargins(0, 0, 0, 0)
-        self._running_page = QWidget()
-        running_layout = QVBoxLayout(self._running_page)
-        running_layout.setAlignment(Qt.AlignTop)
-        running_layout.setContentsMargins(0, 0, 0, 0)
-        self._mode_stack.addWidget(self._setup_page)
-        self._mode_stack.addWidget(self._running_page)
-        run_layout.addWidget(self._mode_stack)
+        run_layout.addWidget(self._setup_page)
 
         # These widgets are owned by the top toolbar but constructed here so
         # initialization code (_refresh_past_runs_combo, etc.) can reference
@@ -163,19 +157,59 @@ class FormPanelMixin:
             QComboBox.SizeAdjustPolicy.AdjustToContents
         )
 
-        self._new_run_btn = QPushButton("New reconstruction")
-        self._new_run_btn.setToolTip("Clear the viewer and start a fresh run")
+        # "+" icon button on the far left of the top bar starts a fresh
+        # reconstruction (clears the viewer + resets the past-run selection).
+        self._new_run_btn = QPushButton("+")
+        self._new_run_btn.setToolTip("New reconstruction")
+        self._new_run_btn.setFixedSize(28, 28)
+        self._new_run_btn.setStyleSheet("QPushButton { font-size: 18px; font-weight: bold; }")
         self._new_run_btn.clicked.connect(self._on_new_reconstruction)
 
-        self._past_open_btn = QPushButton("Open")
-        self._past_open_btn.setToolTip("Open the selected run's folder in the system file manager")
-        self._past_open_btn.clicked.connect(self._open_selected_past_run)
+        # Log toggle button — checkable so the pressed state mirrors panel
+        # visibility. Auto-opens when a run starts; user can collapse afterwards.
+        self._log_toggle_btn = QPushButton("Log")
+        self._log_toggle_btn.setToolTip("Show or hide the live log panel")
+        self._log_toggle_btn.setCheckable(True)
+        self._log_toggle_btn.setFixedHeight(24)
+        self._log_toggle_btn.toggled.connect(self._set_log_panel_visible)
 
         self._load_cancel_btn = QPushButton("Cancel")
         self._load_cancel_btn.setVisible(False)
         self._load_cancel_btn.clicked.connect(self._cancel_load)
 
         setup_layout.addWidget(QLabel("<b>New reconstruction</b>"))
+
+        # Sibling warnings label that lives on the setup form (the form stays
+        # visible during running mode now, so this is always reachable).
+        # The Results-tab label is the primary one; this mirror is kept in sync
+        # by _refresh_run_warnings_view so warnings show up wherever the user
+        # happens to be looking.
+        self._warnings_label_running = QLabel("")
+        self._warnings_label_running.setWordWrap(True)
+        self._warnings_label_running.setTextFormat(Qt.TextFormat.RichText)
+        self._warnings_label_running.setStyleSheet(
+            "background-color: #4a3a14; color: #ffd98a;"
+            " border: 1px solid #8a6b1a; padding: 6px; border-radius: 3px;"
+        )
+        self._warnings_label_running.setVisible(False)
+        setup_layout.addWidget(self._warnings_label_running)
+
+        # Run identity at the top: name + computed output path. The path label
+        # is rendered as a clickable file:// link once the directory exists
+        # (i.e. after Start creates it) — see _update_effective_dir_label.
+        setup_layout.addWidget(QLabel("Run name"))
+        from datetime import datetime
+
+        self._run_name_input = QLineEdit(datetime.now().strftime("%Y%m%d-%H%M%S"))
+        self._run_name_input.setPlaceholderText("Friendly name (e.g. barrier-reef-2026-05-20)")
+        setup_layout.addWidget(self._run_name_input)
+
+        self._effective_dir_label = QLabel("")
+        self._effective_dir_label.setStyleSheet("color: #888;")
+        self._effective_dir_label.setWordWrap(True)
+        self._effective_dir_label.setTextFormat(Qt.TextFormat.RichText)
+        self._effective_dir_label.setOpenExternalLinks(True)
+        setup_layout.addWidget(self._effective_dir_label)
 
         video_row = QHBoxLayout()
         self._video_input = QLineEdit()
@@ -219,36 +253,48 @@ class FormPanelMixin:
         map_row.addWidget(self._map_status_btn)
         setup_layout.addLayout(map_row)
 
-        setup_layout.addWidget(QLabel("Output root"))
-        self._out_root_input = QLineEdit(default_root)
-        setup_layout.addWidget(self._out_root_input)
-        root_btn_row = QHBoxLayout()
-        root_btn_row.setContentsMargins(0, 0, 0, 0)
-        root_browse_btn = QPushButton("Browse")
-        root_browse_btn.clicked.connect(self._browse_output_root)
-        root_btn_row.addWidget(root_browse_btn)
-        root_open_btn = QPushButton("Open")
-        root_open_btn.setToolTip("Open the output root folder in the system file manager")
+        # Output root row layout:
+        #   "Output root  →"     ← label + small arrow that opens the folder
+        #   [ path line edit ] [📂 browse] [↺ reset]
+        # Open lives next to the label because it acts on the existing folder;
+        # browse and reset are next to the input because they change it.
+        style = self.style()
+        label_row = QHBoxLayout()
+        label_row.setContentsMargins(0, 0, 0, 0)
+        label_row.setSpacing(4)
+        label_row.addWidget(QLabel("Output root"))
+        # Unicode RIGHTWARDS ARROW (→) renders as a real arrow at all sizes,
+        # avoiding the chevron look of Qt's SP_ArrowRight. Normal button frame
+        # (no setFlat) so it reads as clickable.
+        root_open_btn = QPushButton("→")
+        root_open_btn.setFixedSize(26, 24)
+        root_open_btn.setStyleSheet("QPushButton { font-size: 16px; padding: 0px; }")
+        root_open_btn.setToolTip("Open output root in file manager")
         root_open_btn.clicked.connect(self._open_output_root)
-        root_btn_row.addWidget(root_open_btn)
-        root_default_btn = QPushButton("Default")
+        label_row.addWidget(root_open_btn)
+        label_row.addStretch(1)
+        setup_layout.addLayout(label_row)
+
+        input_row = QHBoxLayout()
+        input_row.setContentsMargins(0, 0, 0, 0)
+        input_row.setSpacing(4)
+        self._out_root_input = QLineEdit(default_root)
+        input_row.addWidget(self._out_root_input, 1)
+        root_browse_btn = QPushButton()
+        root_browse_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        root_browse_btn.setIconSize(QSize(18, 18))
+        root_browse_btn.setFixedSize(28, 28)
+        root_browse_btn.setToolTip("Browse for output root folder…")
+        root_browse_btn.clicked.connect(self._browse_output_root)
+        input_row.addWidget(root_browse_btn)
+        root_default_btn = QPushButton()
+        root_default_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
+        root_default_btn.setIconSize(QSize(18, 18))
+        root_default_btn.setFixedSize(28, 28)
         root_default_btn.setToolTip("Reset to <Documents>/DeepReefMap")
         root_default_btn.clicked.connect(self._reset_output_root_to_default)
-        root_btn_row.addWidget(root_default_btn)
-        root_btn_row.addStretch(1)
-        setup_layout.addLayout(root_btn_row)
-
-        setup_layout.addWidget(QLabel("Run name"))
-        from datetime import datetime
-
-        self._run_name_input = QLineEdit(datetime.now().strftime("%Y%m%d-%H%M%S"))
-        self._run_name_input.setPlaceholderText("Friendly name (e.g. barrier-reef-2026-05-20)")
-        setup_layout.addWidget(self._run_name_input)
-
-        self._effective_dir_label = QLabel("")
-        self._effective_dir_label.setStyleSheet("color: #888;")
-        self._effective_dir_label.setWordWrap(True)
-        setup_layout.addWidget(self._effective_dir_label)
+        input_row.addWidget(root_default_btn)
+        setup_layout.addLayout(input_row)
 
         setup_layout.addWidget(QLabel("FPS"))
         self._fps_spin = QSpinBox()
@@ -348,19 +394,11 @@ class FormPanelMixin:
         self._run_warnings: list[str] = []
         viewer_layout.addWidget(self._warnings_label)
 
-        # Running-page content: a sibling warnings label (Qt widgets can only
-        # have one parent, so we use a second label and keep both texts in sync
-        # via _refresh_run_warnings_view) plus the live log panel.
-        self._warnings_label_running = QLabel("")
-        self._warnings_label_running.setWordWrap(True)
-        self._warnings_label_running.setTextFormat(Qt.TextFormat.RichText)
-        self._warnings_label_running.setStyleSheet(self._warnings_label.styleSheet())
-        self._warnings_label_running.setVisible(False)
-        running_layout.addWidget(self._warnings_label_running)
-
-        running_layout.addWidget(QLabel("<b>Live log</b>"))
+        # Live log view: lives in a bottom panel built by _build_log_panel and
+        # assembled into the main window's vertical splitter in qt_app.py.
+        # Construction is here so the panel is ready to receive log lines as
+        # soon as the qt log handler installs (next block).
         self._log_view = LogView()
-        running_layout.addWidget(self._log_view, 1)
 
         # The log handler streams every deepreefmap.* log line into the panel.
         # A per-run FileHandler is opened/closed in _begin_pipeline_run and
@@ -616,6 +654,7 @@ class FormPanelMixin:
         self._model_rows: dict[str, QWidget] = {}
         self._model_actions: dict[str, QWidget] = {}
         self._downloading: set[str] = set()
+        self._download_cancel_requested: set[str] = set()
         self._delete_armed: dict[str, QPushButton] = {}
         self._last_model_states: list = []
 
@@ -626,6 +665,14 @@ class FormPanelMixin:
         self._video_input.editingFinished.connect(self._on_video_input_committed)
         self._out_root_input.textChanged.connect(self._on_output_root_changed)
         self._run_name_input.textChanged.connect(self._on_run_name_changed)
+
+        # Watch the output root directory so the past-runs combo reflects new
+        # manifests appearing on disk (e.g. a sibling process completes a run)
+        # in addition to user edits of the path text.
+        self._out_root_watcher = QFileSystemWatcher(self)
+        self._out_root_watcher.directoryChanged.connect(
+            lambda _path: self._refresh_past_runs_combo()
+        )
 
         self._active_run_dir: Path | None = None
         self._active_run_manifest: dict | None = None
@@ -648,6 +695,7 @@ class FormPanelMixin:
             self._out_root_input.setText(saved_root)
         self._update_effective_dir_label()
         self._refresh_past_runs_combo()
+        self._update_out_root_watch()
         self._recompute_submit_state()
 
         # Past runs are listed in the top-bar combo newest-first; the user
@@ -718,10 +766,14 @@ class FormPanelMixin:
         h.setContentsMargins(8, 6, 8, 6)
         h.setSpacing(8)
 
+        # New-reconstruction "+" button is the leftmost element — it's the
+        # primary action that resets the workspace for a fresh run.
+        h.addWidget(self._new_run_btn)
+
         h.addWidget(QLabel("Past runs:"))
         h.addWidget(self._past_runs_combo, 2)
-        h.addWidget(self._past_open_btn)
-        h.addWidget(self._new_run_btn)
+
+        h.addWidget(self._log_toggle_btn)
 
         # Vertical separator between navigation and status.
         sep = QWidget()
@@ -740,6 +792,52 @@ class FormPanelMixin:
         h.addWidget(self._load_cancel_btn)
 
         return bar
+
+    def _build_log_panel(self) -> QWidget:
+        """Bottom-of-window panel hosting the live log.
+
+        Created lazily by qt_app.py so it can place the panel in the central
+        vertical splitter (alongside the form + viewer above it). The panel
+        is hidden initially and the log_toggle button in the top bar drives
+        its visibility.
+        """
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(8, 4, 8, 6)
+        layout.setSpacing(4)
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.addWidget(QLabel("<b>Live log</b>"))
+        header_row.addStretch(1)
+        close_btn = QPushButton("×")
+        close_btn.setFixedSize(20, 20)
+        close_btn.setToolTip("Hide log panel")
+        close_btn.setStyleSheet("QPushButton { font-size: 14px; font-weight: bold; }")
+        close_btn.clicked.connect(lambda: self._set_log_panel_visible(False))
+        header_row.addWidget(close_btn)
+        layout.addLayout(header_row)
+        layout.addWidget(self._log_view, 1)
+        panel.setVisible(False)
+        self._log_panel = panel
+        return panel
+
+    def _set_log_panel_visible(self, visible: bool) -> None:
+        if not hasattr(self, "_log_panel"):
+            return
+        self._log_panel.setVisible(visible)
+        # Keep the top-bar toggle in sync without re-triggering this slot.
+        if self._log_toggle_btn.isChecked() != visible:
+            self._log_toggle_btn.blockSignals(True)
+            self._log_toggle_btn.setChecked(visible)
+            self._log_toggle_btn.blockSignals(False)
+        # When the user re-opens the panel after collapsing the splitter all
+        # the way down, give it a reasonable default height again.
+        if visible and hasattr(self, "_central_vsplitter"):
+            sizes = self._central_vsplitter.sizes()
+            if len(sizes) == 2 and sizes[1] < 40:
+                total = sum(sizes) or 800
+                bottom = max(200, total // 4)
+                self._central_vsplitter.setSizes([total - bottom, bottom])
     def _on_advanced_toggled(self, checked: bool) -> None:
         self._advanced_panel.setVisible(checked)
 
@@ -831,15 +929,38 @@ class FormPanelMixin:
     def _update_effective_dir_label(self) -> None:
         try:
             target = self._effective_run_dir()
-            self._effective_dir_label.setText(f"→ {target}")
         except Exception:
             self._effective_dir_label.setText("")
+            return
+        if target.exists():
+            self._effective_dir_label.setText(
+                f'→ <a href="file://{target}" style="color:#9ecbff;">{target}</a>'
+            )
+        else:
+            self._effective_dir_label.setText(f"→ {target}")
 
     def _on_output_root_changed(self, _text: str = "") -> None:
         self._update_effective_dir_label()
         self._recompute_submit_state()
         self._settings.setValue("output_root_dir", self._out_root_input.text())
         self._refresh_past_runs_combo()
+        self._update_out_root_watch()
+
+    def _update_out_root_watch(self) -> None:
+        """Re-point the QFileSystemWatcher at the current output root.
+
+        Watching the directory lets us pick up new manifests that appear from
+        other processes (e.g. a parallel run, file-manager moves) without
+        requiring the user to interact with the form.
+        """
+        if not hasattr(self, "_out_root_watcher"):
+            return
+        existing = self._out_root_watcher.directories()
+        if existing:
+            self._out_root_watcher.removePaths(existing)
+        root = Path(self._out_root_input.text()).expanduser()
+        if root.exists() and root.is_dir():
+            self._out_root_watcher.addPath(str(root))
 
     def _on_run_name_changed(self, _text: str = "") -> None:
         self._update_effective_dir_label()

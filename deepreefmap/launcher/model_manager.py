@@ -15,6 +15,10 @@ ProgressCallback = Callable[[int, int], None]
 _HF_CACHE_ROOT = Path(HF_HUB_CACHE)
 
 
+class DownloadCancelled(Exception):
+    """Raised from a progress callback to abort an in-flight download."""
+
+
 @dataclass
 class ModelInfo:
     name: str
@@ -137,6 +141,8 @@ def _make_silent_tqdm(callback: ProgressCallback) -> type:
                 self._last_pct = pct
                 try:
                     callback(self.n, self.total)
+                except DownloadCancelled:
+                    raise
                 except Exception:
                     logger.debug("progress callback raised", exc_info=True)
 

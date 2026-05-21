@@ -15,8 +15,10 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QToolButton,
     QVBoxLayout,
@@ -126,13 +128,26 @@ def _make_line_segments_polydata(points: np.ndarray) -> pv.PolyData:
     return pd
 
 
+def _format_point_count(n: int) -> str:
+    """Compact human-readable count: 1234567 -> '1.23M', 4500 -> '4.5K'."""
+    n = int(n)
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.2f}M"
+    if n >= 10_000:
+        return f"{n / 1_000:.0f}K"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
+
+
 class LegendOverlay(QWidget):
     """Floating semi-transparent legend pinned to the top-right of the 3D canvas.
 
-    Populated by `rebuild()` with one row per class (color swatch + checkbox).
-    `reposition()` anchors the overlay to its parent's top-right corner and
-    clamps the height to 60% of the parent so a long class list scrolls
-    inside the overlay rather than overflowing the canvas.
+    Populated by `rebuild()` with one row per class (swatch + checkbox + optional
+    count + solo button). A header strip carries a minimize/expand toggle so the
+    user can shrink the overlay to just its title bar when it covers too much of
+    the canvas. `reposition()` anchors the overlay to its parent's top-right
+    corner and clamps the height to 60% of the parent.
     """
 
     def __init__(self, parent: QWidget) -> None:
@@ -150,6 +165,15 @@ class LegendOverlay(QWidget):
                 background-color: rgba(20, 20, 20, 200);
                 border: 1px solid rgba(255, 255, 255, 40);
                 border-radius: 6px;
+            }
+            LegendOverlay QLabel#legend_title {
+                color: #e8e8e8;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            LegendOverlay QLabel#legend_count {
+                color: #b8b8b8;
+                font-size: 10px;
             }
             LegendOverlay QCheckBox { color: #e8e8e8; font-size: 11px; spacing: 4px; }
             LegendOverlay QCheckBox::indicator { width: 12px; height: 12px; }
@@ -169,12 +193,28 @@ class LegendOverlay(QWidget):
         )
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 6, 8, 6)
-        outer.setSpacing(0)
+        outer.setSpacing(4)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(4)
+        self._title_label = QLabel("Legend")
+        self._title_label.setObjectName("legend_title")
+        header.addWidget(self._title_label, 1)
+        self._minimize_btn = QToolButton()
+        self._minimize_btn.setText("−")
+        self._minimize_btn.setFixedSize(16, 16)
+        self._minimize_btn.setToolTip("Collapse legend")
+        self._minimize_btn.clicked.connect(self._toggle_minimized)
+        header.addWidget(self._minimize_btn, 0)
+        outer.addLayout(header)
+
         self._scroll = QScrollArea(self)
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.NoFrame)
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self._inner = QWidget()
         self._inner.setObjectName("legend_inner")
         self._grid = QGridLayout(self._inner)
@@ -183,8 +223,19 @@ class LegendOverlay(QWidget):
         self._grid.setVerticalSpacing(2)
         self._grid.setColumnStretch(1, 1)
         self._scroll.setWidget(self._inner)
-        outer.addWidget(self._scroll)
+        outer.addWidget(self._scroll, 1)
+
+        self._minimized = False
         self.hide()
+
+    def _toggle_minimized(self) -> None:
+        self._minimized = not self._minimized
+        self._scroll.setVisible(not self._minimized)
+        self._minimize_btn.setText("+" if self._minimized else "−")
+        self._minimize_btn.setToolTip(
+            "Expand legend" if self._minimized else "Collapse legend"
+        )
+        self.reposition()
 
     def clear(self) -> None:
         while self._grid.count():
@@ -200,12 +251,23 @@ class LegendOverlay(QWidget):
         class_colors: dict[int, tuple[int, int, int]],
         on_toggle: Callable[[], None],
         on_solo: Callable[[int], None] | None = None,
+        class_counts: dict[int, int] | None = None,
     ) -> tuple[dict[int, QCheckBox], dict[int, QToolButton]]:
-        """Populate one row per class; return (toggles, solo_buttons)."""
+        """Populate one row per class; return (toggles, solo_buttons).
+
+        `class_counts`, if given, adds a right-aligned count cell per row with
+        a tooltip containing the full unformatted number. Classes with a
+        zero (or missing) count are omitted entirely — the legend only shows
+        classes actually present in the loaded cloud.
+        """
         self.clear()
         toggles: dict[int, QCheckBox] = {}
         solo_buttons: dict[int, QToolButton] = {}
-        for row, cid in enumerate(class_ids):
+        if class_counts is not None:
+            visible_ids = [cid for cid in class_ids if int(class_counts.get(cid, 0)) > 0]
+        else:
+            visible_ids = list(class_ids)
+        for row, cid in enumerate(visible_ids):
             name = class_names.get(cid, str(cid))
             r, g, b = class_colors.get(cid, (128, 128, 128))
             swatch = QLabel()
@@ -217,25 +279,56 @@ class LegendOverlay(QWidget):
             cb = QCheckBox(name)
             cb.setChecked(True)
             cb.toggled.connect(on_toggle)
+            count_label = QLabel()
+            count_label.setObjectName("legend_count")
+            count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            if class_counts is not None and cid in class_counts:
+                n = int(class_counts[cid])
+                count_label.setText(_format_point_count(n))
+                count_label.setToolTip(f"{n:,} points")
             solo = QToolButton()
-            solo.setText("S")
-            solo.setFixedSize(16, 16)
-            solo.setToolTip("Solo this class")
+            solo.setText("Only")
+            solo.setFixedHeight(18)
+            solo.setMinimumWidth(38)
+            solo.setToolTip("Show only this class (click again to restore all)")
             if on_solo is not None:
                 solo.clicked.connect(lambda _checked=False, c=cid: on_solo(c))
             self._grid.addWidget(swatch, row, 0)
             self._grid.addWidget(cb, row, 1)
-            self._grid.addWidget(solo, row, 2)
+            self._grid.addWidget(count_label, row, 2)
+            self._grid.addWidget(solo, row, 3)
             toggles[cid] = cb
             solo_buttons[cid] = solo
+
+        # Drive the scroll area's natural width from the inner content so
+        # adjustSize() in reposition() picks up the correct width instead of
+        # collapsing to QScrollArea's tiny default size hint.
+        sb_w = self._scroll.verticalScrollBar().sizeHint().width()
+        self._scroll.setMinimumWidth(self._inner.sizeHint().width() + sb_w + 4)
+
+        # Reserve space for ~10 rows by default so the legend doesn't collapse
+        # to the first handful of classes. If there are fewer classes, the
+        # scroll area sizes to its content; if more, the user scrolls.
+        n_rows = len(visible_ids)
+        if n_rows:
+            self._grid.activate()
+            inner_h = max(1, self._inner.sizeHint().height())
+            row_h = max(18, inner_h // n_rows)
+            visible_rows = min(10, n_rows)
+            target_h = visible_rows * row_h + 4
+            self._scroll.setMinimumHeight(target_h)
         return toggles, solo_buttons
 
     def reposition(self) -> None:
         parent = self.parentWidget()
         if parent is None:
             return
-        self.setMaximumHeight(max(80, int(parent.height() * 0.6)))
-        self.setMaximumWidth(min(240, max(120, parent.width() - 16)))
+        # Height capped so the overlay scrolls internally rather than
+        # overflowing the canvas. Width is allowed to grow to fit the longest
+        # class name, but capped at half the canvas so it can't swallow the
+        # whole view.
+        self.setMaximumHeight(max(60, int(parent.height() * 0.6)))
+        self.setMaximumWidth(max(140, int(parent.width() * 0.5)))
         self.adjustSize()
         margin = 8
         self.move(parent.width() - self.width() - margin, margin)
@@ -257,6 +350,7 @@ class QtPointCloudViewer(QWidget):
 
     point_picked = Signal(object)
     point_picked_clear = Signal()
+    canvas_resized = Signal()
 
     def __init__(
         self,
@@ -319,6 +413,8 @@ class QtPointCloudViewer(QWidget):
         self._point_filter: Callable[[np.ndarray], np.ndarray] | None = None
 
         self._picking_enabled = False
+        self._picked_actor_inner = None
+        self._picked_actor_outer = None
 
         self._frame_panel_cache: dict[int, np.ndarray] = {}
 
@@ -347,6 +443,7 @@ class QtPointCloudViewer(QWidget):
     def eventFilter(self, obj, event):  # type: ignore[override]
         if obj is self._canvas_container and event.type() == QEvent.Type.Resize:
             self.legend_overlay.reposition()
+            self.canvas_resized.emit()
         return super().eventFilter(obj, event)
 
     def _ensure_plotter(self):
@@ -461,6 +558,63 @@ class QtPointCloudViewer(QWidget):
         }
         self.point_picked.emit(payload)
 
+    def set_picked_marker(
+        self,
+        xyz: tuple[float, float, float],
+        color: tuple[int, int, int],
+    ) -> None:
+        """Place a haloed sphere marker at the picked world position.
+
+        Renders as a small bright sphere in the class color over a slightly
+        larger white sphere so the marker stays visible regardless of the
+        underlying point cloud color.
+        """
+        if self._plotter is None:
+            return
+        import pyvista as pv
+
+        self.clear_picked_marker()
+        pd = pv.PolyData(np.asarray([xyz], dtype=np.float32))
+        r, g, b = color
+        self._picked_actor_outer = self._plotter.add_mesh(
+            pd, color=(1.0, 1.0, 1.0), point_size=26.0,
+            render_points_as_spheres=True, style="points",
+            name="picked_marker_outer", pickable=False,
+        )
+        self._picked_actor_inner = self._plotter.add_mesh(
+            pd, color=(r / 255.0, g / 255.0, b / 255.0), point_size=16.0,
+            render_points_as_spheres=True, style="points",
+            name="picked_marker_inner", pickable=False,
+        )
+        try:
+            self._plotter.render()
+        except Exception:
+            pass
+
+    def clear_picked_marker(self) -> None:
+        if self._plotter is None:
+            self._picked_actor_inner = None
+            self._picked_actor_outer = None
+            return
+        for attr in ("_picked_actor_outer", "_picked_actor_inner"):
+            actor = getattr(self, attr, None)
+            if actor is None:
+                continue
+            try:
+                self._plotter.remove_actor(actor, render=False)
+            except TypeError:
+                try:
+                    self._plotter.remove_actor(actor)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            setattr(self, attr, None)
+        try:
+            self._plotter.render()
+        except Exception:
+            pass
+
     def _reveal_canvas(self) -> None:
         self._ensure_plotter()
         if self._canvas_revealed:
@@ -483,6 +637,15 @@ class QtPointCloudViewer(QWidget):
         if self._final_index is not None:
             return len(self._final_index.frame_order)
         return 0
+
+    def class_point_counts(self) -> dict[int, int]:
+        """Point counts per class in the loaded semantic cloud (empty if none)."""
+        if self._final_index is None:
+            return {}
+        return {
+            int(cid): int(arr.shape[0])
+            for cid, arr in self._final_index.xyz_by_class.items()
+        }
 
     # --- Simple point cloud ---
 
@@ -637,6 +800,10 @@ class QtPointCloudViewer(QWidget):
                 _remove(self._live_actor)
             if self._simple_actor is not None:
                 _remove(self._simple_actor)
+            if self._picked_actor_inner is not None:
+                _remove(self._picked_actor_inner)
+            if self._picked_actor_outer is not None:
+                _remove(self._picked_actor_outer)
             try:
                 self._plotter.render()
             except Exception:
@@ -647,6 +814,8 @@ class QtPointCloudViewer(QWidget):
         self._live_actor = None
         self._live_polydata = None
         self._simple_actor = None
+        self._picked_actor_inner = None
+        self._picked_actor_outer = None
         self._final_index = None
         self._live_cache = None
         self._frame_batch = None

@@ -100,12 +100,16 @@ class DeepReefMapWindow(
         self._viewer.set_status_callback(self._on_viewer_status)
         self._viewer.point_picked.connect(self._on_point_picked)
         self._viewer.point_picked_clear.connect(self._on_point_picked_clear)
-        self._pick_tooltip = None
+        self._viewer.canvas_resized.connect(self._on_canvas_resized)
+        self._pick_card = None
+        self._pick_overlay = None
+        self._last_pick_payload = None
 
         # Build the form first so widgets it references (status_label, etc.)
         # are constructed before we wire them into the top toolbar.
         form_panel = self._build_form_panel()
         top_bar = self._build_top_bar()
+        log_panel = self._build_log_panel()
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(form_panel)
@@ -115,6 +119,19 @@ class DeepReefMapWindow(
         splitter.setStretchFactor(1, 1)
         splitter.setChildrenCollapsible(True)
         splitter.setHandleWidth(6)
+
+        # Vertical splitter places the live log as a togglable section at the
+        # bottom of the window, alongside the form + 3D viewer above it. Hidden
+        # initially; the top-bar Log button drives visibility, and _on_submit
+        # auto-opens it when a run starts.
+        self._central_vsplitter = QSplitter(Qt.Vertical)
+        self._central_vsplitter.addWidget(splitter)
+        self._central_vsplitter.addWidget(log_panel)
+        self._central_vsplitter.setSizes([700, 220])
+        self._central_vsplitter.setStretchFactor(0, 1)
+        self._central_vsplitter.setStretchFactor(1, 0)
+        self._central_vsplitter.setChildrenCollapsible(True)
+        self._central_vsplitter.setHandleWidth(6)
 
         # Banner below the toolbar that pops up the instant a past run is
         # clicked, with the manifest metadata. Hidden until populated.
@@ -135,7 +152,7 @@ class DeepReefMapWindow(
         central_layout.setSpacing(0)
         central_layout.addWidget(top_bar)
         central_layout.addWidget(self._run_meta_banner)
-        central_layout.addWidget(splitter, 1)
+        central_layout.addWidget(self._central_vsplitter, 1)
         self.setCentralWidget(central)
 
 

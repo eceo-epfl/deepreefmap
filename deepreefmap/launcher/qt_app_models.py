@@ -72,6 +72,9 @@ class ModelManagementMixin:
         return btn
 
     def _on_status_button_click(self, model_name: str) -> None:
+        if model_name in self._downloading:
+            self._cancel_download(model_name)
+            return
         info, cached = self._find_model_state(model_name)
         if info is None:
             self._jump_to_model(None)
@@ -86,6 +89,10 @@ class ModelManagementMixin:
     def _update_model_status_button(
         self, btn: QPushButton, selected_name: str
     ) -> None:
+        if selected_name in self._downloading:
+            pct = int(btn.property("downloadPercent") or 0)
+            self._apply_downloading_style(btn, selected_name, pct)
+            return
         info, cached = self._find_model_state(selected_name)
         if info is None:
             btn.setText("…")
@@ -106,6 +113,50 @@ class ModelManagementMixin:
             btn.setText("⬇")
             btn.setToolTip(f"{selected_name} not downloaded. Click to download.")
             btn.setStyleSheet("QPushButton { color: #e8a04a; font-weight: bold; }")
+
+    def _apply_downloading_style(
+        self, btn: QPushButton, model_name: str, percent: int
+    ) -> None:
+        # Render the inline status button as a cancel control (✕) with a
+        # left-to-right green fill that tracks download percent. Clamp the
+        # gradient stop just inside [0, 1] so qlineargradient stays well-formed
+        # at the edges.
+        pct = max(0, min(100, percent))
+        stop = max(0.0001, min(0.9999, pct / 100.0))
+        cancelling = model_name in self._download_cancel_requested
+        if cancelling:
+            btn.setText("…")
+            btn.setToolTip(f"Cancelling download of {model_name}…")
+            btn.setEnabled(False)
+        else:
+            btn.setText("✕")
+            btn.setToolTip(f"Downloading {model_name} ({pct}%). Click to cancel.")
+            btn.setEnabled(True)
+        btn.setProperty("downloadPercent", pct)
+        btn.setStyleSheet(
+            "QPushButton {"
+            " color: #fff; font-weight: bold;"
+            f" background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+            f" stop:0 #3a7a3a, stop:{stop:.4f} #3a7a3a,"
+            f" stop:{min(stop + 0.0001, 1.0):.4f} #2a2a2a, stop:1 #2a2a2a);"
+            " border: 1px solid #555; border-radius: 3px;"
+            "}"
+        )
+
+    def _form_status_buttons_for(self, model_name: str) -> list[QPushButton]:
+        # The inline status button next to each combo always reflects the
+        # currently-selected model in that combo, so this only matches form
+        # buttons whose combo points at this model right now. If the user
+        # changes the dropdown mid-download, _update_models_button_status
+        # re-renders the affected button to whatever state its new model is in.
+        out: list[QPushButton] = []
+        if hasattr(self, "_seg_combo") and hasattr(self, "_seg_status_btn"):
+            if self._seg_combo.currentText() == model_name:
+                out.append(self._seg_status_btn)
+        if hasattr(self, "_map_combo") and hasattr(self, "_map_status_btn"):
+            if self._map_combo.currentText() == model_name:
+                out.append(self._map_status_btn)
+        return out
 
     def _update_models_button_status(self) -> None:
         """Refresh the per-dropdown model status icons.
@@ -369,6 +420,8 @@ class ModelManagementMixin:
         widget = self._model_actions.get(model_name)
         if isinstance(widget, QProgressBar):
             widget.setValue(max(0, min(100, percent)))
+        for btn in self._form_status_buttons_for(model_name):
+            self._apply_downloading_style(btn, model_name, percent)
 
     def _on_hf_auth_done(self, user: object, error: str) -> None:
         if error:
@@ -380,16 +433,25 @@ class ModelManagementMixin:
         threading.Thread(target=self._refresh_model_status, daemon=True).start()
 
     def _download_model(self, model_name: str) -> None:
-        from deepreefmap.launcher.model_manager import ALL_MODELS, prefetch_model
+        from deepreefmap.launcher.model_manager import (
+            ALL_MODELS,
+            DownloadCancelled,
+            prefetch_model,
+        )
 
         info = next((m for m in ALL_MODELS if m.name == model_name), None)
         if info is None or model_name in self._downloading:
             return
         self._status_label.setText(f"Downloading model {model_name}...")
         self._downloading.add(model_name)
+        self._download_cancel_requested.discard(model_name)
         self._swap_action_to_progress(model_name)
+        for btn in self._form_status_buttons_for(model_name):
+            self._apply_downloading_style(btn, model_name, 0)
 
         def _progress(n: int, total: int) -> None:
+            if model_name in self._download_cancel_requested:
+                raise DownloadCancelled()
             if total <= 0:
                 return
             self._sig_download_progress.emit(model_name, int(100 * n / total))
@@ -398,11 +460,26 @@ class ModelManagementMixin:
             try:
                 prefetch_model(info, progress_cb=_progress)
                 self._sig_status_text.emit(f"Model {model_name} downloaded.")
+            except DownloadCancelled:
+                self._sig_status_text.emit(f"Download of {model_name} cancelled.")
             except Exception as exc:
                 msg = str(exc)[:200]
                 self._sig_status_text.emit(f"Download failed: {msg}")
             finally:
                 self._downloading.discard(model_name)
+                self._download_cancel_requested.discard(model_name)
                 threading.Thread(target=self._refresh_model_status, daemon=True).start()
 
         threading.Thread(target=_do_download, daemon=True).start()
+
+    def _cancel_download(self, model_name: str) -> None:
+        if model_name not in self._downloading:
+            return
+        self._download_cancel_requested.add(model_name)
+        self._status_label.setText(f"Cancelling download of {model_name}…")
+        # Re-render any matching form buttons so they show the "…" cancelling
+        # tooltip immediately, without waiting for the next progress tick.
+        for btn in self._form_status_buttons_for(model_name):
+            self._apply_downloading_style(
+                btn, model_name, int(btn.property("downloadPercent") or 0)
+            )

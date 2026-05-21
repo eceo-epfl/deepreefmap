@@ -5,8 +5,8 @@ import logging
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QStyle,
     QStyledItemDelegate,
@@ -386,17 +386,6 @@ class PastRunsMixin:
     def _hide_run_meta_banner(self) -> None:
         self._run_meta_banner.setVisible(False)
         self._run_meta_banner.setText("")
-
-    def _open_selected_past_run(self) -> None:
-        index = self._past_runs_combo.currentIndex()
-        run_dir = self._past_runs_combo.itemData(index) if index > 0 else None
-        if not run_dir:
-            run_dir = str(self._active_run_dir) if self._active_run_dir else self._out_root_input.text()
-        path = Path(run_dir).expanduser()
-        if path.exists():
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
-        else:
-            self._status_label.setText(f"Folder not found: {path}")
 
     def _begin_rename(self) -> None:
         if self._active_run_dir is None:
