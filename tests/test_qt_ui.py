@@ -1,7 +1,8 @@
 """Tests for the Qt launcher, viewer, model manager, and version checking.
 
-Requires a real display because VTK (used by the 3D viewer) needs a working
-OpenGL context. CI runs these under xvfb.
+Runs headless via QT_QPA_PLATFORM=offscreen (set in conftest.py when no
+DISPLAY/WAYLAND_DISPLAY is present). VTK still needs a working OpenGL
+context, so VTK-only tests are skipped when that can't be obtained.
 """
 
 from __future__ import annotations
