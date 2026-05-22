@@ -1,4 +1,6 @@
 from pathlib import Path
+from typing import Any, Callable
+import csv
 import json
 import logging
 
@@ -6,11 +8,13 @@ import cv2
 import numpy as np
 from tqdm.auto import tqdm
 
-from deepreefmap.config.classes import load_classes
+from deepreefmap.config.classes import ClassConfig, load_classes, resolve_manifest_classes
+from deepreefmap.pipeline.resume import read_labels_file, resolve_labels_path
 from deepreefmap.pointcloud.transect_crop import (
     build_transect_crop_geometry,
     build_transect_crop_selection,
 )
+from deepreefmap.postproc.benthic_cover import aggregate_cover
 
 logger = logging.getLogger(__name__)
 
@@ -19,41 +23,81 @@ def save_cover_report(path: Path, cover: dict[str, object]) -> None:
     path.write_text(json.dumps(cover, indent=2))
 
 
+def save_cover_csv(path: Path, cover: dict[str, object]) -> None:
+    """Write the fine-grained cover dict produced by compute_benthic_cover."""
+    classes_block = cover.get("classes") if isinstance(cover, dict) else None
+    rows: list[tuple[int, str, float, float]] = []
+    if isinstance(classes_block, dict):
+        for class_id_str, entry in classes_block.items():
+            try:
+                cid = int(class_id_str)
+            except (TypeError, ValueError):
+                continue
+            rows.append(
+                (
+                    cid,
+                    str(entry.get("name", f"class_{cid}")),
+                    float(entry.get("fraction", 0.0)),
+                    float(entry.get("count", 0.0)),
+                )
+            )
+    rows.sort(key=lambda r: r[2], reverse=True)
+    with path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["class_id", "name", "fraction", "count"])
+        for cid, name, frac, count in rows:
+            writer.writerow([cid, name, f"{frac:.6f}", f"{count:.4f}"])
+
+
+def save_cover_csv_levels(
+    out_dir: Path,
+    cover: dict[str, object],
+    classes_config: ClassConfig,
+    prefix: str = "benthic_cover",
+) -> dict[str, Path]:
+    """Write fine / intermediate / coarse CSVs of the cover dict to `out_dir`."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: dict[str, Path] = {}
+    fine_path = out_dir / f"{prefix}_fine.csv"
+    save_cover_csv(fine_path, cover)
+    written["fine"] = fine_path
+    for level in ("intermediate", "coarse"):
+        grouped = aggregate_cover(cover, classes_config, level)
+        rows = sorted(
+            ((name, payload["fraction"], payload["count"]) for name, payload in grouped.items()),
+            key=lambda r: r[1],
+            reverse=True,
+        )
+        path = out_dir / f"{prefix}_{level}.csv"
+        with path.open("w", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["name", "fraction", "count"])
+            for name, frac, count in rows:
+                writer.writerow([name, f"{frac:.6f}", f"{count:.4f}"])
+        written[level] = path
+    return written
+
+
 def save_run_manifest(path: Path, manifest: dict[str, object]) -> None:
     path.write_text(json.dumps(manifest, indent=2))
 
 
-def render_offline_video_placeholder(
+def render_offline_video(
     run_dir: Path,
     transect_length_m: float | None = None,
     crop_width_m: float | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> None:
     """Render a DRM-style 4-panel QC video from manifest artifacts.
 
-    Layout per frame (matching the original mee-deepreefmap render):
-      ┌──────────────┬──────────────────────┐
-      │ RGB          │ 0.3·RGB + 0.7·seg    │
-      ├──────────────┼──────────────────────┤
-      │ 0.2·RGB +    │ cumulative ortho     │
-      │ 0.8·jet(d)   │ (RGB / class) + legend│
-      └──────────────┴──────────────────────┘
-
-    The bottom-right ortho cell reveals progressively as the timeline
-    advances, using the per-pixel `frame_index` in `ortho.npz`.
+    Panel layout and blend weights match the original mee-deepreefmap render.
     """
     manifest_path = run_dir / "run_manifest.json"
     if not manifest_path.exists():
         raise FileNotFoundError(f"Missing run manifest: {manifest_path}")
 
     manifest = json.loads(manifest_path.read_text())
-    classes_path = Path(manifest.get("classes", "configs/classes_coralscapes.yaml"))
-    if not classes_path.is_absolute():
-        classes_path = run_dir / classes_path
-    if not classes_path.exists():
-        classes_path = Path(manifest.get("classes", "configs/classes_coralscapes.yaml"))
-    if not classes_path.exists():
-        raise FileNotFoundError(f"Classes config not found for offline render: {classes_path}")
-    classes_config = load_classes(classes_path)
+    classes_config = load_classes(resolve_manifest_classes(manifest.get("classes"), run_dir))
     class_colors = classes_config.id_to_color
     class_names = classes_config.id_to_name
     frame_paths = [run_dir / p for p in manifest.get("frame_paths", [])]
@@ -96,14 +140,21 @@ def render_offline_video_placeholder(
     if first is None:
         raise RuntimeError(f"Failed to read first cached frame: {frame_paths[0]}")
     h, w = first.shape[:2]
-    writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), 10, (w * 2, h * 2))
+    writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), 10, (w * 2, h * 2))  # type: ignore[attr-defined]  # cv2 stubs omit VideoWriter_fourcc
     legend_cache: dict[tuple[int, ...], np.ndarray] = {}
 
     n_frames = len(frame_paths[: len(depths)])
     logger.info("Rendering QC video → %s (%d frames)", out_path, n_frames)
     iterable = list(enumerate(frame_paths[: len(depths)]))
-    progress = tqdm(iterable, desc="render-video", unit="frame", total=n_frames)
+    # When a progress_callback is provided (GUI usage) we skip the tqdm bar to
+    # avoid double progress reporting and let the caller drive its own widget.
+    if progress_callback is None:
+        progress: Any = tqdm(iterable, desc="render-video", unit="frame", total=n_frames, disable=None)
+    else:
+        progress = iterable
     for idx, frame_path in progress:
+        if progress_callback is not None:
+            progress_callback(idx, n_frames)
         bgr = cv2.imread(str(frame_path))
         if bgr is None:
             continue
@@ -113,8 +164,8 @@ def render_offline_video_placeholder(
         depth_blend = np.clip(0.2 * rgb + 0.8 * depth_vis, 0.0, 1.0)
         depth_panel = cv2.cvtColor((depth_blend * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
 
-        if idx < len(labels_paths) and labels_paths[idx].exists():
-            labels = np.load(labels_paths[idx])
+        labels = _read_manifest_labels(labels_paths[idx]) if idx < len(labels_paths) else None
+        if labels is not None:
             seg_rgb = _colorize_labels_rgb(labels, class_colors, (w, h)).astype(np.float32) / 255.0
         else:
             seg_rgb = np.zeros_like(rgb)
@@ -134,7 +185,10 @@ def render_offline_video_placeholder(
         top = np.concatenate([bgr, seg_panel], axis=1)
         bottom = np.concatenate([depth_panel, ortho_panel], axis=1)
         writer.write(np.concatenate([top, bottom], axis=0))
-    progress.close()
+    if progress_callback is None:
+        progress.close()
+    else:
+        progress_callback(n_frames, n_frames)
     writer.release()
     logger.info("Render-video complete: %s", out_path)
 
@@ -156,6 +210,21 @@ def _colorize_depth(depth: np.ndarray, size_wh: tuple[int, int]) -> np.ndarray:
         scaled = (norm * 255.0).astype(np.uint8)
     colored = cv2.applyColorMap(scaled, cv2.COLORMAP_JET)
     return cv2.resize(colored, size_wh, interpolation=cv2.INTER_AREA)
+
+
+def _read_manifest_labels(path: Path) -> np.ndarray:
+    """Read a manifest-recorded label map, accepting a pre-v2 `.npy` cache.
+
+    Unreadable is fatal on purpose: the blend would otherwise fall back to a dimmed
+    RGB frame, which looks rendered but carries no segmentation at all.
+    """
+    resolved = resolve_labels_path(path.parent, path.stem)
+    if resolved is None:
+        raise RuntimeError(f"Manifest records a label map that is missing on disk: {path}")
+    labels = read_labels_file(resolved)
+    if labels is None:
+        raise RuntimeError(f"Manifest records a label map that could not be read: {resolved}")
+    return labels
 
 
 def _colorize_labels_rgb(
