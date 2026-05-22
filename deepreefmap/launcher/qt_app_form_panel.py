@@ -518,11 +518,6 @@ class FormPanelMixin:
         ortho_row.addWidget(self._ortho_seg_preview, 1)
         res_layout.addLayout(ortho_row)
 
-        self._ortho_label = QLabel()
-        self._ortho_label.setAlignment(Qt.AlignCenter)
-        self._ortho_label.setVisible(False)
-        res_layout.addWidget(self._ortho_label)
-
         crop_box = QGroupBox("Transect crop (live)")
         crop_box.setVisible(False)
         crop_layout = QGridLayout(crop_box)

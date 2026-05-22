@@ -283,15 +283,27 @@ class ViewerControlsMixin:
                 self._on_viewer_control_changed()
             self._apply_progress("viewer_finalise", "Reconstruction complete", 1, 1)
             ortho_cloud = kwargs.get("ortho_cloud")
+            ortho_grid = kwargs.get("ortho_grid")
             cc = kwargs.get("classes_config") or self._classes_config
             if ortho_cloud is not None and len(ortho_cloud) > 1:
                 try:
-                    from deepreefmap.postproc.ortho_outputs import build_ortho_outputs
+                    if ortho_grid is None:
+                        from deepreefmap.postproc.ortho_outputs import build_ortho_outputs
 
-                    outputs = build_ortho_outputs(ortho_cloud, cc)
-                    self._set_ortho_sources(ortho_cloud, outputs.grid, cc)
-                    self._cover_label.setText(self._format_cover_html(outputs.cover))
-                    self._cover_sunburst.set_cover(outputs.cover, cc)
+                        outputs = build_ortho_outputs(ortho_cloud, cc)
+                        ortho_grid = outputs.grid
+                        cover = outputs.cover
+                    else:
+                        from deepreefmap.postproc.benthic_cover import compute_benthic_cover
+
+                        cover = compute_benthic_cover(
+                            ortho_grid.labels,
+                            classes_config=cc,
+                            counts=getattr(ortho_grid, "counts", None),
+                        )
+                    self._set_ortho_sources(ortho_cloud, ortho_grid, cc)
+                    self._cover_label.setText(self._format_cover_html(cover))
+                    self._cover_sunburst.set_cover(cover, cc)
                 except Exception:
                     logger.exception("Failed to build live ortho preview")
         elif event == "setup_progress":

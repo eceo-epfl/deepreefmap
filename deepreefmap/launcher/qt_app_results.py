@@ -31,13 +31,6 @@ class ResultsMixin:
         else:
             self._metadata_label.setText("")
 
-        ortho_path = out / "ortho.png"
-        if ortho_path.exists():
-            pixmap = QPixmap(str(ortho_path))
-            scaled = pixmap.scaledToWidth(min(340, pixmap.width()), Qt.SmoothTransformation)
-            self._ortho_label.setPixmap(scaled)
-            self._ortho_label.setVisible(True)
-
         cover_path = out / "benthic_cover.json"
         if cover_path.exists():
             try:
