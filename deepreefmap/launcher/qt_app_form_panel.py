@@ -549,6 +549,7 @@ class FormPanelMixin:
         # appears above the HTML cover table so the user gets a visual sense of
         # composition at a glance. Updates live with the transect crop.
         self._cover_sunburst = SunburstWidget()
+        self._cover_sunburst.selection_clicked.connect(self._on_sunburst_selection)
         res_layout.addWidget(self._cover_sunburst, 1)
 
         self._cover_label = QLabel()

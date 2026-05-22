@@ -136,6 +136,21 @@ class ViewerControlsMixin:
         else:
             self._on_isolate_class(cid)
 
+    def _on_sunburst_selection(self, class_ids: list) -> None:
+        if not self._legend_toggles:
+            return
+        wanted = frozenset(int(c) for c in class_ids if int(c) in self._legend_toggles)
+        if not wanted:
+            return
+        if self._enabled_class_set() == wanted:
+            self._on_show_all_classes()
+            return
+        for cid, cb in self._legend_toggles.items():
+            cb.blockSignals(True)
+            cb.setChecked(cid in wanted)
+            cb.blockSignals(False)
+        self._on_viewer_control_changed()
+
     def _on_point_picked(self, payload: object) -> None:
         if not isinstance(payload, dict):
             return
