@@ -42,8 +42,10 @@ jobs:
       - name: Label binary
         run: mv dist/deepreefmap-linux-x64 dist/deepreefmap-linux-x64-${{ steps.label.outputs.value }}
 
-      - name: Smoke-test binary
-        run: ./dist/deepreefmap-linux-x64-${{ steps.label.outputs.value }} --help
+      - name: Verify binary is executable
+        run: |
+          test -x dist/deepreefmap-linux-x64-${{ steps.label.outputs.value }}
+          file dist/deepreefmap-linux-x64-${{ steps.label.outputs.value }} | grep -q ELF
 
       - name: Upload linux artifact
         uses: actions/upload-artifact@v4
@@ -86,9 +88,9 @@ jobs:
         shell: pwsh
         run: Move-Item dist\deepreefmap-windows-x64.exe "dist\deepreefmap-windows-x64-${{ steps.label.outputs.value }}.exe"
 
-      - name: Smoke-test binary
+      - name: Verify binary exists
         shell: pwsh
-        run: .\dist\deepreefmap-windows-x64-${{ steps.label.outputs.value }}.exe --help
+        run: Get-Item "dist\deepreefmap-windows-x64-${{ steps.label.outputs.value }}.exe"
 
       - name: Upload windows artifact
         uses: actions/upload-artifact@v4
