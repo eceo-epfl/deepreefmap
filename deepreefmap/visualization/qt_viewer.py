@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QScrollArea,
     QSizePolicy,
+    QSlider,
     QSplitter,
     QToolButton,
     QVBoxLayout,
@@ -372,11 +373,20 @@ class QtPointCloudViewer(QWidget):
         self._seg_label.setMinimumHeight(120)
         self._seg_label.setStyleSheet("background-color: #1a1a1a;")
         self._frames_panel = QWidget()
-        frames_layout = QHBoxLayout(self._frames_panel)
+        frames_outer = QVBoxLayout(self._frames_panel)
+        frames_outer.setContentsMargins(0, 0, 0, 0)
+        frames_outer.setSpacing(2)
+        frames_row = QWidget()
+        frames_layout = QHBoxLayout(frames_row)
         frames_layout.setContentsMargins(0, 0, 0, 0)
         frames_layout.setSpacing(2)
         frames_layout.addWidget(self._rgb_label, 1)
         frames_layout.addWidget(self._seg_label, 1)
+        frames_outer.addWidget(frames_row, 1)
+        self.frame_slider = QSlider(Qt.Horizontal)
+        self.frame_slider.setRange(0, 0)
+        self.frame_slider.setValue(0)
+        frames_outer.addWidget(self.frame_slider)
 
         self._main_splitter = QSplitter(Qt.Vertical)
         self._canvas_container = QWidget()

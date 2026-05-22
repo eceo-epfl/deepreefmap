@@ -465,12 +465,8 @@ class FormPanelMixin:
         self._confidence_slider.valueChanged.connect(self._on_viewer_control_changed)
         vc_layout.addWidget(self._confidence_slider)
 
-        vc_layout.addWidget(QLabel("Frame"))
-        self._frame_slider = QSlider(Qt.Horizontal)
-        self._frame_slider.setRange(0, 0)
-        self._frame_slider.setValue(0)
+        self._frame_slider = self._viewer.frame_slider
         self._frame_slider.valueChanged.connect(self._on_viewer_control_changed)
-        vc_layout.addWidget(self._frame_slider)
 
         play_row = QHBoxLayout()
         self._play_check = QCheckBox("Play")
