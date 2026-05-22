@@ -982,6 +982,40 @@ class QtPointCloudViewer(QWidget):
         self._plotter.camera.up = (0.0, 1.0, 0.0)
         self._plotter.reset_camera()
 
+    def view_from_frame_pose(self, t: int, backoff_m: float = 0.0) -> bool:
+        """Snap the 3D camera to frame `t`'s pose, optionally pulled back."""
+        if self._plotter is None or self._final_index is None or self._mapping_result is None:
+            return False
+        frame_order = self._final_index.frame_order
+        if len(frame_order) == 0:
+            return False
+        tt = int(np.clip(t, 0, len(frame_order) - 1))
+        target_frame = int(frame_order[tt])
+        mapping_indices = np.asarray(self._mapping_result.frame_indices, dtype=np.int32).reshape(-1)
+        mi = None
+        for i, fid in enumerate(mapping_indices.tolist()):
+            if int(fid) == target_frame:
+                mi = i
+                break
+        if mi is None:
+            return False
+        pose_w_c = np.asarray(self._mapping_result.poses_w_c[mi], dtype=np.float64)
+        # Columns of the rotation block are the camera basis vectors in world
+        # coordinates: x=right, y=down, z=forward (looking along +z).
+        origin = pose_w_c[:3, 3]
+        down = pose_w_c[:3, 1]
+        forward = pose_w_c[:3, 2]
+        cam_pos = origin - float(backoff_m) * forward
+        focal = origin + forward
+        self._plotter.camera.position = tuple(cam_pos.tolist())
+        self._plotter.camera.focal_point = tuple(focal.tolist())
+        self._plotter.camera.up = tuple((-down).tolist())
+        try:
+            self._plotter.render()
+        except Exception:
+            pass
+        return True
+
     # --- State application ---
 
     def apply_state(

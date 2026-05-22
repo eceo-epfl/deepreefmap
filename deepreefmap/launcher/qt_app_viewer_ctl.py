@@ -67,6 +67,8 @@ class ViewerControlsMixin:
             min_confidence=self._confidence_slider.value() / 100.0,
             frustums_visible=not self._hide_frustums_check.isChecked(),
         )
+        if getattr(self, "_follow_camera_check", None) and self._follow_camera_check.isChecked():
+            self._snap_camera_to_current_frame()
 
     def _enabled_class_set(self) -> frozenset[int]:
         return frozenset(int(cid) for cid, cb in self._legend_toggles.items() if cb.isChecked())
@@ -135,6 +137,22 @@ class ViewerControlsMixin:
             self._on_show_all_classes()
         else:
             self._on_isolate_class(cid)
+
+    def _on_follow_camera_changed(self) -> None:
+        if not getattr(self, "_follow_camera_check", None):
+            return
+        if not self._follow_camera_check.isChecked():
+            return
+        self._snap_camera_to_current_frame()
+
+    def _on_view_from_camera(self) -> None:
+        self._snap_camera_to_current_frame()
+
+    def _snap_camera_to_current_frame(self) -> None:
+        if not hasattr(self, "_frame_slider"):
+            return
+        backoff = float(getattr(self, "_camera_backoff_spin", None).value()) if hasattr(self, "_camera_backoff_spin") else 0.0
+        self._viewer.view_from_frame_pose(int(self._frame_slider.value()), backoff_m=backoff)
 
     def _on_frustum_picked(self, frame_idx: int) -> None:
         if not hasattr(self, "_frame_slider"):

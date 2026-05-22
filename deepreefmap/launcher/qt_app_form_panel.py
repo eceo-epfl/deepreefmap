@@ -480,6 +480,24 @@ class FormPanelMixin:
         play_row.addWidget(self._play_fps_spin)
         vc_layout.addLayout(play_row)
 
+        follow_row = QHBoxLayout()
+        self._follow_camera_check = QCheckBox("Follow camera")
+        self._follow_camera_check.toggled.connect(self._on_follow_camera_changed)
+        follow_row.addWidget(self._follow_camera_check)
+        self._view_from_camera_btn = QPushButton("Snap")
+        self._view_from_camera_btn.setToolTip("Snap the 3D view to the current frame's camera")
+        self._view_from_camera_btn.clicked.connect(self._on_view_from_camera)
+        follow_row.addWidget(self._view_from_camera_btn)
+        vc_layout.addLayout(follow_row)
+
+        vc_layout.addWidget(QLabel("Camera backoff (m)"))
+        self._camera_backoff_spin = QDoubleSpinBox()
+        self._camera_backoff_spin.setRange(0.0, 5.0)
+        self._camera_backoff_spin.setSingleStep(0.1)
+        self._camera_backoff_spin.setValue(0.5)
+        self._camera_backoff_spin.valueChanged.connect(self._on_follow_camera_changed)
+        vc_layout.addWidget(self._camera_backoff_spin)
+
         # Results tab: viewer controls + results panel. The tab itself is
         # disabled until a run is loaded (greyed out and unclickable), so no
         # empty-state placeholder is needed inside. addStretch is appended at
