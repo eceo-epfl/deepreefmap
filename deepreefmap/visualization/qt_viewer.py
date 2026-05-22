@@ -363,17 +363,27 @@ class QtPointCloudViewer(QWidget):
         self._class_names = class_names or {}
         self._output_dir: Path | None = None
 
-        self._image_label = QLabel()
-        self._image_label.setAlignment(Qt.AlignCenter)
-        self._image_label.setMinimumHeight(120)
-        self._image_label.setStyleSheet("background-color: #1a1a1a;")
+        self._rgb_label = QLabel()
+        self._rgb_label.setAlignment(Qt.AlignCenter)
+        self._rgb_label.setMinimumHeight(120)
+        self._rgb_label.setStyleSheet("background-color: #1a1a1a;")
+        self._seg_label = QLabel()
+        self._seg_label.setAlignment(Qt.AlignCenter)
+        self._seg_label.setMinimumHeight(120)
+        self._seg_label.setStyleSheet("background-color: #1a1a1a;")
+        self._frames_panel = QWidget()
+        frames_layout = QHBoxLayout(self._frames_panel)
+        frames_layout.setContentsMargins(0, 0, 0, 0)
+        frames_layout.setSpacing(2)
+        frames_layout.addWidget(self._rgb_label, 1)
+        frames_layout.addWidget(self._seg_label, 1)
 
         self._main_splitter = QSplitter(Qt.Vertical)
         self._canvas_container = QWidget()
         self._canvas_layout = QVBoxLayout(self._canvas_container)
         self._canvas_layout.setContentsMargins(0, 0, 0, 0)
         self._main_splitter.addWidget(self._canvas_container)
-        self._main_splitter.addWidget(self._image_label)
+        self._main_splitter.addWidget(self._frames_panel)
         self._main_splitter.setStretchFactor(0, 3)
         self._main_splitter.setStretchFactor(1, 1)
         self._canvas_revealed = False
@@ -1184,12 +1194,7 @@ class QtPointCloudViewer(QWidget):
     # --- Image panel ---
 
     def current_frame_stack(self) -> "np.ndarray | None":
-        """Return the RGB/seg/depth composite shown in the image panel.
-
-        Used by the GUI to export the current frame as a PNG. Returns the
-        same uint8 RGB stack the panel last rendered, or None if the viewer
-        has no frame data yet.
-        """
+        """Return the RGB/seg/depth composite for exporting the current frame."""
         if self._last_t is None:
             return None
         if self._frame_batch is None or self._mapping_result is None:
@@ -1197,13 +1202,12 @@ class QtPointCloudViewer(QWidget):
         if self._final_index is None:
             return None
         t = int(self._last_t)
-        cached = self._frame_panel_cache.get(t)
-        if cached is not None:
-            return cached
-        stacked = self._compose_frame_panel(t)
-        if stacked is not None:
-            self._frame_panel_cache[t] = stacked
-        return stacked
+        parts = self._frame_panel_cache.get(t) or self._compose_frame_panel(t)
+        if parts is None:
+            return None
+        self._frame_panel_cache[t] = parts
+        rgb, seg, depth = parts
+        return np.concatenate([rgb, seg, depth], axis=0)
 
     def _update_image_panel(self, t: int) -> None:
         if self._frame_batch is None or self._mapping_result is None:
@@ -1211,25 +1215,30 @@ class QtPointCloudViewer(QWidget):
         if self._final_index is None:
             return
 
-        if t in self._frame_panel_cache:
-            stacked = self._frame_panel_cache[t]
-        else:
-            stacked = self._compose_frame_panel(t)
-            if stacked is not None:
-                self._frame_panel_cache[t] = stacked
+        parts = self._frame_panel_cache.get(t)
+        if parts is None:
+            parts = self._compose_frame_panel(t)
+            if parts is not None:
+                self._frame_panel_cache[t] = parts
 
-        if stacked is None:
+        if parts is None:
             return
 
-        h, w, _ = stacked.shape
-        qimg = QImage(stacked.data, w, h, 3 * w, QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(qimg)
-        scaled = pixmap.scaledToWidth(
-            min(w, self._image_label.width()), Qt.SmoothTransformation,
-        )
-        self._image_label.setPixmap(scaled)
+        rgb, seg, _depth = parts
+        self._paint_label(self._rgb_label, rgb)
+        self._paint_label(self._seg_label, seg)
 
-    def _compose_frame_panel(self, t: int) -> np.ndarray | None:
+    @staticmethod
+    def _paint_label(label: QLabel, image: np.ndarray) -> None:
+        h, w, _ = image.shape
+        qimg = QImage(np.ascontiguousarray(image).data, w, h, 3 * w, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(qimg)
+        target = max(1, min(w, label.width() or w))
+        label.setPixmap(pixmap.scaledToWidth(target, Qt.SmoothTransformation))
+
+    def _compose_frame_panel(
+        self, t: int,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
         import cv2
 
         fi = self._final_index
@@ -1267,7 +1276,7 @@ class QtPointCloudViewer(QWidget):
         depth_color = _colorize_depth(
             cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST),
         )
-        return np.concatenate([rgb, seg_color, depth_color], axis=0)
+        return rgb, seg_color, depth_color
 
     def _show_live_preprocess_frame(self, frame_index: int) -> None:
         import cv2
@@ -1281,6 +1290,7 @@ class QtPointCloudViewer(QWidget):
         if rgb is None:
             return
         rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
+        self._paint_label(self._rgb_label, rgb)
         if labels_path.exists():
             labels = np.load(str(labels_path))
             h, w = rgb.shape[:2]
@@ -1288,16 +1298,7 @@ class QtPointCloudViewer(QWidget):
                 cv2.resize(labels, (w, h), interpolation=cv2.INTER_NEAREST),
                 self._class_colors,
             )
-            stacked = np.concatenate([rgb, seg_color], axis=0)
-        else:
-            stacked = rgb
-        h, w, _ = stacked.shape
-        qimg = QImage(np.ascontiguousarray(stacked).data, w, h, 3 * w, QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(qimg)
-        label_w = self._image_label.width()
-        if label_w > 0:
-            pixmap = pixmap.scaledToWidth(min(w, label_w), Qt.SmoothTransformation)
-        self._image_label.setPixmap(pixmap)
+            self._paint_label(self._seg_label, seg_color)
 
     # --- Viewer protocol ---
 
