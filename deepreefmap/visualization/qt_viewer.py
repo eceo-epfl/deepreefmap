@@ -597,15 +597,10 @@ class QtPointCloudViewer(QWidget):
         anchor_display: tuple[float, float] | None = None,
         leader_target_display: tuple[float, float] | None = None,
     ) -> None:
-        """Mark the picked point with a 3D haloed sphere and optional 2D leader.
+        """Mark the picked point with a small translucent class-coloured sphere.
 
-        The 3D sphere (white "border" + class-colored center) is anchored to
-        `xyz` so it follows the camera. When `anchor_display` is given, a 2D
-        ring is drawn at that display-pixel position; `leader_target_display`
-        adds a straight line from the ring to that target — used by the
-        inline pick card so users can see what the card refers to. All
-        coordinates passed in display-space are in VTK convention
-        (bottom-origin pixels of the plotter widget).
+        Optional 2D leader line and outline ring in display coords connect the
+        sphere to a screen-space tooltip card.
         """
         if self._plotter is None:
             return
@@ -615,46 +610,34 @@ class QtPointCloudViewer(QWidget):
         pd = pv.PolyData(np.asarray([xyz], dtype=np.float32))
         r, g, b = color
 
-        def _add_marker_mesh(
-            color_rgb: tuple[float, float, float],
-            point_size: float,
-            actor_name: str,
-        ) -> object | None:
-            try:
-                return self._plotter.add_mesh(
-                    pd, color=color_rgb, point_size=point_size,
-                    render_points_as_spheres=True, style="points",
-                    name=actor_name, pickable=False,
-                )
-            except TypeError:
-                # Older pyvista signatures may not accept `pickable`.
-                return self._plotter.add_mesh(
-                    pd, color=color_rgb, point_size=point_size,
-                    render_points_as_spheres=True, style="points",
-                    name=actor_name,
-                )
-
-        self._picked_actor_outer = _add_marker_mesh(
-            (1.0, 1.0, 1.0), 36.0, "picked_marker_outer",
-        )
-        self._picked_actor_inner = _add_marker_mesh(
-            (r / 255.0, g / 255.0, b / 255.0), 22.0, "picked_marker_inner",
-        )
-        # Push the marker spheres toward the camera so they aren't buried in
-        # the dense point cloud. Negative offsets bias depth in favor of
-        # this actor at z-fights, and SetForceOpaque keeps it visible
-        # through translucent points.
-        for actor in (self._picked_actor_outer, self._picked_actor_inner):
-            if actor is None:
-                continue
+        try:
+            actor = self._plotter.add_mesh(
+                pd,
+                color=(r / 255.0, g / 255.0, b / 255.0),
+                point_size=14.0,
+                opacity=0.55,
+                render_points_as_spheres=True,
+                style="points",
+                name="picked_marker",
+                pickable=False,
+            )
+        except TypeError:
+            actor = self._plotter.add_mesh(
+                pd,
+                color=(r / 255.0, g / 255.0, b / 255.0),
+                point_size=14.0,
+                opacity=0.55,
+                render_points_as_spheres=True,
+                style="points",
+                name="picked_marker",
+            )
+        self._picked_actor_inner = actor
+        self._picked_actor_outer = None
+        if actor is not None:
             try:
                 mapper = actor.GetMapper()
                 if mapper is not None:
                     mapper.SetRelativeCoincidentTopologyPointOffsetParameter(-2.0)
-            except Exception:
-                pass
-            try:
-                actor.SetForceOpaque(True)
             except Exception:
                 pass
 
@@ -666,6 +649,9 @@ class QtPointCloudViewer(QWidget):
             )
         try:
             self._plotter.render()
+            # Some pyvistaqt builds need an extra render-window flush before
+            # the 2D actors actually appear on screen.
+            self._plotter.iren.GetRenderWindow().Render()
         except Exception:
             pass
 
@@ -696,52 +682,47 @@ class QtPointCloudViewer(QWidget):
         coord = vtk.vtkCoordinate()
         coord.SetCoordinateSystemToDisplay()
 
-        if leader_target_display is not None:
-            tx, ty = float(leader_target_display[0]), float(leader_target_display[1])
+        def _add_line(p1, p2, rgb, width, opacity=1.0):
             line_src = vtk.vtkLineSource()
-            line_src.SetPoint1(ax, ay, 0.0)
-            line_src.SetPoint2(tx, ty, 0.0)
-            line_mapper = vtk.vtkPolyDataMapper2D()
-            line_mapper.SetInputConnection(line_src.GetOutputPort())
-            line_mapper.SetTransformCoordinate(coord)
+            line_src.SetPoint1(p1[0], p1[1], 0.0)
+            line_src.SetPoint2(p2[0], p2[1], 0.0)
+            mapper = vtk.vtkPolyDataMapper2D()
+            mapper.SetInputConnection(line_src.GetOutputPort())
+            mapper.SetTransformCoordinate(coord)
             line_actor = vtk.vtkActor2D()
-            line_actor.SetMapper(line_mapper)
-            line_actor.GetProperty().SetColor(1.0, 1.0, 1.0)
-            line_actor.GetProperty().SetLineWidth(1.6)
-            line_actor.GetProperty().SetOpacity(0.9)
+            line_actor.SetMapper(mapper)
+            line_actor.GetProperty().SetColor(*rgb)
+            line_actor.GetProperty().SetLineWidth(width)
+            line_actor.GetProperty().SetOpacity(opacity)
             renderer.AddActor2D(line_actor)
             self._pick_2d_actors.append(line_actor)
 
-        ring_outer = vtk.vtkRegularPolygonSource()
-        ring_outer.SetNumberOfSides(64)
-        ring_outer.SetRadius(11.0)
-        ring_outer.SetCenter(ax, ay, 0.0)
-        ring_outer.GeneratePolygonOff()
-        ring_outer_mapper = vtk.vtkPolyDataMapper2D()
-        ring_outer_mapper.SetInputConnection(ring_outer.GetOutputPort())
-        ring_outer_mapper.SetTransformCoordinate(coord)
-        ring_outer_actor = vtk.vtkActor2D()
-        ring_outer_actor.SetMapper(ring_outer_mapper)
-        ring_outer_actor.GetProperty().SetColor(0.0, 0.0, 0.0)
-        ring_outer_actor.GetProperty().SetLineWidth(3.0)
-        ring_outer_actor.GetProperty().SetOpacity(0.85)
-        renderer.AddActor2D(ring_outer_actor)
-        self._pick_2d_actors.append(ring_outer_actor)
+        def _add_ring(radius, rgb, width, opacity=1.0):
+            src = vtk.vtkRegularPolygonSource()
+            src.SetNumberOfSides(64)
+            src.SetRadius(radius)
+            src.SetCenter(ax, ay, 0.0)
+            src.GeneratePolygonOff()
+            mapper = vtk.vtkPolyDataMapper2D()
+            mapper.SetInputConnection(src.GetOutputPort())
+            mapper.SetTransformCoordinate(coord)
+            ring_actor = vtk.vtkActor2D()
+            ring_actor.SetMapper(mapper)
+            ring_actor.GetProperty().SetColor(*rgb)
+            ring_actor.GetProperty().SetLineWidth(width)
+            ring_actor.GetProperty().SetOpacity(opacity)
+            renderer.AddActor2D(ring_actor)
+            self._pick_2d_actors.append(ring_actor)
 
-        ring_inner = vtk.vtkRegularPolygonSource()
-        ring_inner.SetNumberOfSides(64)
-        ring_inner.SetRadius(10.0)
-        ring_inner.SetCenter(ax, ay, 0.0)
-        ring_inner.GeneratePolygonOff()
-        ring_inner_mapper = vtk.vtkPolyDataMapper2D()
-        ring_inner_mapper.SetInputConnection(ring_inner.GetOutputPort())
-        ring_inner_mapper.SetTransformCoordinate(coord)
-        ring_inner_actor = vtk.vtkActor2D()
-        ring_inner_actor.SetMapper(ring_inner_mapper)
-        ring_inner_actor.GetProperty().SetColor(r / 255.0, g / 255.0, b / 255.0)
-        ring_inner_actor.GetProperty().SetLineWidth(2.0)
-        renderer.AddActor2D(ring_inner_actor)
-        self._pick_2d_actors.append(ring_inner_actor)
+        if leader_target_display is not None:
+            tgt = (float(leader_target_display[0]), float(leader_target_display[1]))
+            # Black stroke under, white over: stays readable against any background.
+            _add_line((ax, ay), tgt, (0.0, 0.0, 0.0), 3.0, 0.95)
+            _add_line((ax, ay), tgt, (1.0, 1.0, 1.0), 1.2, 0.95)
+
+        # Sphere is point_size 14 (~14px diameter); a 10/8 ring frames it.
+        _add_ring(10.0, (0.0, 0.0, 0.0), 2.5, 0.95)
+        _add_ring(8.5, (r / 255.0, g / 255.0, b / 255.0), 1.5, 1.0)
 
     def clear_picked_marker(self) -> None:
         if self._plotter is None:
