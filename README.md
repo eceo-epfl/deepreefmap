@@ -31,11 +31,10 @@ uv run deepreefmap reconstruct \
   --videos assets/demo_input.mp4 \
   --camera-profile gopro_hero_10 \
   --mapping scsfmlearner \
-  --out out \
-  --viser
+  --out out
 
 # 3. Reopen the interactive viewer later
-uv run deepreefmap view-run --run-dir out --viser-port 8080
+uv run deepreefmap view-run --run-dir out
 ```
 
 Don't have a GoPro Hero 10? See [Camera setup](#camera-setup-and-calibration) to calibrate your own. 
