@@ -495,9 +495,6 @@ def run_reconstruction(
         if viewer is not None:
             viewer.fail_run(active_stage, str(exc))
         raise
-    finally:
-        if viewer is not None:
-            viewer.close()
 
 
 def _prepare_frames(
