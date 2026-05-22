@@ -9,7 +9,7 @@ import numpy as np
 if TYPE_CHECKING:
     import pyvista as pv
     from pyvistaqt import QtInteractor
-from PySide6.QtCore import QEvent, Qt, Signal, Slot
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -746,11 +746,12 @@ class QtPointCloudViewer(QWidget):
 
     def _reveal_canvas(self) -> None:
         self._ensure_plotter()
-        if self._canvas_revealed:
-            return
         self._canvas_revealed = True
         self._canvas_container.setVisible(True)
-        total = max(self._main_splitter.height(), 1)
+        # Re-apply on every call: the early-bail used here previously meant the
+        # second set_data (semantic, after geometry preview) and the later
+        # sidebar switch to Results could leave the bottom panel oversized.
+        total = max(self._main_splitter.height(), self._main_splitter.sizeHint().height(), 400)
         self._main_splitter.setSizes([int(total * 0.75), int(total * 0.25)])
 
     def _hide_canvas(self) -> None:
@@ -1361,6 +1362,11 @@ class QtPointCloudViewer(QWidget):
     @Slot(str, object)
     def _on_mark_outputs(self, output_dir: str, output_files: object) -> None:
         self._notify_status("mark_outputs", output_dir=output_dir, output_files=output_files)
+        # The callback above switches the sidebar to Results, which reflows the
+        # central pane and can leave setSizes stale. Defer a re-apply until the
+        # event queue has caught up.
+        if self._canvas_revealed:
+            QTimer.singleShot(0, self._reveal_canvas)
 
     @Slot(str, str)
     def _on_fail_run(self, stage: str, error_message: str) -> None:
