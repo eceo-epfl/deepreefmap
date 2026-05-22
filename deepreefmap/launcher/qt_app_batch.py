@@ -147,7 +147,6 @@ class BatchMixin:
             "segmentation_name": self._seg_combo.currentText(),
             "mapping_name": self._map_combo.currentText(),
             "camera_profile_name": self._profile_combo.currentText(),
-            "enable_viser": False,
             "enable_tsdf": self._tsdf_check.isChecked(),
             "skip_segmentation": self._skip_seg_check.isChecked(),
             "classes_path": self._classes_path,

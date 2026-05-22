@@ -42,8 +42,6 @@ def run_reconstruction(
     output_dir: Path,
     transect_length: float | None,
     transect_crop_width: float | None,
-    enable_viser: bool = False,
-    viser_port: int = 8080,
     enable_tsdf: bool = False,
     replacement_radius_factor: float | None = None,
     replacement_radius_estimation_frames: int = 30,
@@ -53,7 +51,6 @@ def run_reconstruction(
     mapping_options: dict[str, object] | None = None,
     classes_path: Path = DEFAULT_CLASSES_PATH,
     grid_bins: int = 2000,
-    keep_viser_open: bool = False,
     require_gravity_telemetry: bool = False,
     preprocess_batch_size: int = 4,
     processing_width: int | None = None,
@@ -360,9 +357,6 @@ def run_reconstruction(
                     geometry_rgb=geometry_rgb,
                 )
                 viewer.mark_outputs_ready(str(output_dir), output_files)
-                if keep_viser_open:
-                    logger.info("Viser is still running. Press Ctrl-C to close it.")
-                    viewer.wait_forever()
             logger.info("Done. Outputs in %s", output_dir)
             return
 
@@ -496,9 +490,6 @@ def run_reconstruction(
         ))
         if viewer is not None:
             viewer.mark_outputs_ready(str(output_dir), output_files)
-            if keep_viser_open:
-                logger.info("Viser is still running. Press Ctrl-C to close it.")
-                viewer.wait_forever()
         logger.info("Done. Outputs in %s", output_dir)
     except Exception as exc:
         if viewer is not None:

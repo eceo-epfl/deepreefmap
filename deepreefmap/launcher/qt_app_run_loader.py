@@ -65,7 +65,6 @@ class RunLoadingMixin:
             "output_dir": out_dir,
             "transect_length": transect_length,
             "transect_crop_width": transect_crop,
-            "enable_viser": False,
             "enable_tsdf": self._tsdf_check.isChecked(),
             "skip_segmentation": self._skip_seg_check.isChecked(),
             "classes_path": self._classes_path,

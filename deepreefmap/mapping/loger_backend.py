@@ -18,10 +18,9 @@ logger = logging.getLogger(__name__)
 
 # LoGeR's Pi3 model returns `camera_poses` as camera-to-world (T_w_c) transforms,
 # canonicalized so that the first camera in the window sits at the world origin.
-# Downstream (orchestrator -> integrate_tsdf, viser frustums) assumes T_w_c. If a
-# future LoGeR variant flips this, the identity-pose assertion in
-# `_assert_pose_convention` will fail loudly at runtime instead of silently
-# producing mirrored geometry.
+# Downstream consumers (integrate_tsdf, Qt viewer frustum overlay) assume T_w_c;
+# if a future LoGeR variant flips this, the identity-pose assertion in
+# `_assert_pose_convention` will fail loudly instead of mirroring geometry.
 _POSE_IDENTITY_TOLERANCE = 1e-3
 
 
