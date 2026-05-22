@@ -3,8 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from PySide6.QtCore import QPointF, QRect, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -128,71 +127,3 @@ class PickCard(QFrame):
         else:
             self._conf_label.setText(f"confidence: {conf:.3f}")
         self.adjustSize()
-
-
-class PickOverlay(QWidget):
-    """Transparent layer over the 3D canvas that paints the pick marker.
-
-    Draws an outlined ring at the picked screen position and a leader line
-    from there to the inline `PickCard`. Click-through to the underlying
-    plotter — the card is a *sibling* widget, not a child, so its own
-    mouse handling stays intact.
-    """
-
-    def __init__(self, parent: QWidget) -> None:
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self._anchor: tuple[float, float] | None = None
-        self._card_geom: QRect = QRect()
-        self._color: tuple[int, int, int] = (255, 255, 255)
-        self.hide()
-
-    def set_state(
-        self,
-        anchor: tuple[float, float],
-        card_geom: QRect,
-        color: tuple[int, int, int],
-    ) -> None:
-        self._anchor = (float(anchor[0]), float(anchor[1]))
-        self._card_geom = QRect(card_geom)
-        r, g, b = color
-        self._color = (int(r), int(g), int(b))
-        self.show()
-        self.update()
-
-    def clear(self) -> None:
-        self._anchor = None
-        self.hide()
-        self.update()
-
-    def paintEvent(self, event) -> None:  # type: ignore[override]
-        if self._anchor is None:
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        ax, ay = self._anchor
-        anchor_pt = QPointF(ax, ay)
-
-        if self._card_geom.isValid():
-            target = _closest_point_on_rect(self._card_geom, anchor_pt)
-            painter.setPen(QPen(QColor(0, 0, 0, 200), 3))
-            painter.drawLine(anchor_pt, target)
-            painter.setPen(QPen(QColor(255, 255, 255, 220), 1.5))
-            painter.drawLine(anchor_pt, target)
-
-        ring_color = QColor(self._color[0], self._color[1], self._color[2], 235)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor(0, 0, 0, 220), 3))
-        painter.drawEllipse(anchor_pt, 9, 9)
-        painter.setPen(QPen(ring_color, 2))
-        painter.drawEllipse(anchor_pt, 9, 9)
-        painter.setPen(QPen(QColor(255, 255, 255, 230), 1.5))
-        painter.drawEllipse(anchor_pt, 3, 3)
-
-
-def _closest_point_on_rect(rect: QRect, p: QPointF) -> QPointF:
-    cx = max(rect.left(), min(p.x(), rect.right()))
-    cy = max(rect.top(), min(p.y(), rect.bottom()))
-    return QPointF(cx, cy)

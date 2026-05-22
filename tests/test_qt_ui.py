@@ -53,6 +53,90 @@ def test_cache_detection_returns_false_for_nonexistent():
     assert not is_model_cached(fake)
 
 
+def test_dinov3_dpt_entries_include_facebook_backbone():
+    from deepreefmap.launcher.model_manager import ALL_MODELS
+
+    expected = {
+        "coralscapes-vit-s-dpt": "facebook/dinov3-vits16-pretrain-lvd1689m",
+        "coralscapes-vit-b-dpt": "facebook/dinov3-vitb16-pretrain-lvd1689m",
+        "coralscapes-vit-l-dpt": "facebook/dinov3-vitl16-pretrain-lvd1689m",
+    }
+    for name, backbone in expected.items():
+        info = next(m for m in ALL_MODELS if m.name == name)
+        assert backbone in info.hf_repos, (
+            f"{name} must list {backbone} so offline laptops also cache the "
+            "DINOv3 backbone that coralscapes_hub_model.py pulls in at load time"
+        )
+
+
+def test_loger_entries_materialise_into_third_party_ckpts():
+    from deepreefmap.launcher.model_manager import MAPPING_MODELS
+    from deepreefmap.mapping.registry import _LOGER_CKPTS
+
+    by_name = {m.name: m for m in MAPPING_MODELS}
+    assert "loger" in by_name and "loger_star" in by_name
+
+    loger = by_name["loger"]
+    assert loger.hf_repos == ["Junyi42/LoGeR"]
+    assert loger.materialise_to[
+        "LoGeR/latest.pt"
+    ] == _LOGER_CKPTS / "LoGeR" / "latest.pt"
+
+    star = by_name["loger_star"]
+    assert star.materialise_to[
+        "LoGeR_star/latest.pt"
+    ] == _LOGER_CKPTS / "LoGeR_star" / "latest.pt"
+
+
+def test_is_model_cached_requires_materialised_destinations(tmp_path, monkeypatch):
+    from deepreefmap.launcher import model_manager
+    from deepreefmap.launcher.model_manager import ModelInfo, is_model_cached
+
+    fake_cache = tmp_path / "hf"
+    repo_dir = fake_cache / "models--fake--repo"
+    repo_dir.mkdir(parents=True)
+    monkeypatch.setattr(model_manager, "_HF_CACHE_ROOT", fake_cache)
+
+    dest = tmp_path / "ckpts" / "weight.pt"
+    info = ModelInfo(
+        name="materialise-fake",
+        kind="test",
+        hf_repos=["fake/repo"],
+        gated=False,
+        description="test",
+        materialise_to={"weight.pt": dest},
+    )
+    assert not is_model_cached(info), "missing materialised file must read as not cached"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(b"x")
+    assert is_model_cached(info)
+
+
+def test_prefetch_refuses_when_disk_is_low(tmp_path, monkeypatch):
+    from deepreefmap.launcher import model_manager
+    from deepreefmap.launcher.model_manager import (
+        InsufficientDiskSpace,
+        ModelInfo,
+        prefetch_model,
+    )
+
+    monkeypatch.setattr(model_manager, "_HF_CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(
+        model_manager.shutil,
+        "disk_usage",
+        lambda _p: type("U", (), {"total": 1, "used": 1, "free": 1})(),
+    )
+    info = ModelInfo(
+        name="any",
+        kind="test",
+        hf_repos=["fake/repo"],
+        gated=False,
+        description="test",
+    )
+    with pytest.raises(InsufficientDiskSpace):
+        prefetch_model(info)
+
+
 # --- Version fetching ---
 
 def test_fetch_versions_mock_env(monkeypatch):

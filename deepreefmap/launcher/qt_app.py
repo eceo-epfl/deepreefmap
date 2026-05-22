@@ -102,7 +102,6 @@ class DeepReefMapWindow(
         self._viewer.point_picked_clear.connect(self._on_point_picked_clear)
         self._viewer.canvas_resized.connect(self._on_canvas_resized)
         self._pick_card = None
-        self._pick_overlay = None
         self._last_pick_payload = None
 
         # Build the form first so widgets it references (status_label, etc.)

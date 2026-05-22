@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from huggingface_hub.constants import HF_HUB_CACHE
@@ -14,9 +15,23 @@ ProgressCallback = Callable[[int, int], None]
 
 _HF_CACHE_ROOT = Path(HF_HUB_CACHE)
 
+# LoGeR checkpoints live outside the HF cache because the backend resolves
+# them via a relative path under the vendored submodule. Keep this in sync
+# with mapping/registry.py::_LOGER_CKPTS.
+_LOGER_CKPTS = Path(__file__).resolve().parents[2] / "third_party" / "LoGeR" / "ckpts"
+
+# Refuse to start a download when free disk under the HF cache mount is below
+# this threshold. The DINOv3-L head + backbone alone are ~2.5 GB; leaving a
+# comfortable margin avoids half-written caches on field laptops with thin SSDs.
+_MIN_FREE_BYTES = 10 * 1024**3
+
 
 class DownloadCancelled(Exception):
     """Raised from a progress callback to abort an in-flight download."""
+
+
+class InsufficientDiskSpace(RuntimeError):
+    """Raised before download when free disk under the HF cache is too low."""
 
 
 @dataclass
@@ -26,6 +41,12 @@ class ModelInfo:
     hf_repos: list[str]
     gated: bool
     description: str
+    approx_size_mb: int | None = None
+    # Optional copy step run after snapshot_download. Maps repo-relative
+    # paths inside the snapshot to absolute destinations the runtime backend
+    # reads from. Used for LoGeR, which loads checkpoints from a fixed path
+    # under third_party/LoGeR/ckpts rather than the HF cache.
+    materialise_to: dict[str, Path] = field(default_factory=dict)
 
 
 SEGMENTATION_MODELS: list[ModelInfo] = [
@@ -35,6 +56,7 @@ SEGMENTATION_MODELS: list[ModelInfo] = [
         hf_repos=["EPFL-ECEO/segformer-b2-finetuned-coralscapes-1024-1024"],
         gated=False,
         description="SegFormer B2 (lightweight, no auth required)",
+        approx_size_mb=110,
     ),
     ModelInfo(
         name="segformer-b5",
@@ -42,27 +64,44 @@ SEGMENTATION_MODELS: list[ModelInfo] = [
         hf_repos=["EPFL-ECEO/segformer-b5-finetuned-coralscapes-1024-1024"],
         gated=False,
         description="SegFormer B5 (larger, no auth required)",
+        approx_size_mb=339,
     ),
+    # The coralscapes-vit-*-dpt repos only ship the DPT head plus a custom
+    # loader. The loader's from_pretrained() pulls a Meta DINOv3 backbone
+    # named in config.json#encoder_id the first time it runs, so the backbone
+    # repo is listed alongside the head to keep offline laptops self-sufficient.
     ModelInfo(
         name="coralscapes-vit-s-dpt",
         kind="segmentation",
-        hf_repos=["EPFL-ECEO/coralscapes-vit-s-dpt"],
+        hf_repos=[
+            "EPFL-ECEO/coralscapes-vit-s-dpt",
+            "facebook/dinov3-vits16-pretrain-lvd1689m",
+        ],
         gated=True,
         description="DINOv3 ViT-S DPT (requires HF login)",
+        approx_size_mb=257,
     ),
     ModelInfo(
         name="coralscapes-vit-b-dpt",
         kind="segmentation",
-        hf_repos=["EPFL-ECEO/coralscapes-vit-b-dpt"],
+        hf_repos=[
+            "EPFL-ECEO/coralscapes-vit-b-dpt",
+            "facebook/dinov3-vitb16-pretrain-lvd1689m",
+        ],
         gated=True,
         description="DINOv3 ViT-B DPT (requires HF login)",
+        approx_size_mb=786,
     ),
     ModelInfo(
         name="coralscapes-vit-l-dpt",
         kind="segmentation",
-        hf_repos=["EPFL-ECEO/coralscapes-vit-l-dpt"],
+        hf_repos=[
+            "EPFL-ECEO/coralscapes-vit-l-dpt",
+            "facebook/dinov3-vitl16-pretrain-lvd1689m",
+        ],
         gated=True,
         description="DINOv3 ViT-L DPT (largest, requires HF login)",
+        approx_size_mb=2542,
     ),
 ]
 
@@ -73,6 +112,31 @@ MAPPING_MODELS: list[ModelInfo] = [
         hf_repos=["EPFL-ECEO/deepreefmap-sfm-net"],
         gated=False,
         description="SC-SfMLearner depth + pose estimation",
+        approx_size_mb=326,
+    ),
+    ModelInfo(
+        name="loger",
+        kind="mapping",
+        hf_repos=["Junyi42/LoGeR"],
+        gated=False,
+        description="LoGeR (high quality, CUDA required)",
+        approx_size_mb=4787,
+        materialise_to={
+            "LoGeR/latest.pt": _LOGER_CKPTS / "LoGeR" / "latest.pt",
+            "LoGeR/original_config.yaml": _LOGER_CKPTS / "LoGeR" / "original_config.yaml",
+        },
+    ),
+    ModelInfo(
+        name="loger_star",
+        kind="mapping",
+        hf_repos=["Junyi42/LoGeR"],
+        gated=False,
+        description="LoGeR* (longer-context variant, CUDA required)",
+        approx_size_mb=4787,
+        materialise_to={
+            "LoGeR_star/latest.pt": _LOGER_CKPTS / "LoGeR_star" / "latest.pt",
+            "LoGeR_star/original_config.yaml": _LOGER_CKPTS / "LoGeR_star" / "original_config.yaml",
+        },
     ),
 ]
 
@@ -84,7 +148,9 @@ def _hf_cache_dir(repo_id: str) -> Path:
 
 
 def is_model_cached(info: ModelInfo) -> bool:
-    return all(_hf_cache_dir(repo).exists() for repo in info.hf_repos)
+    if not all(_hf_cache_dir(repo).exists() for repo in info.hf_repos):
+        return False
+    return all(dest.exists() for dest in info.materialise_to.values())
 
 
 def check_hf_auth() -> str | None:
@@ -96,16 +162,64 @@ def check_hf_auth() -> str | None:
         return None
 
 
+def check_disk_space(required_bytes: int = _MIN_FREE_BYTES) -> tuple[int, int]:
+    """Return (free_bytes, required_bytes) for the HF cache mount."""
+    _HF_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+    usage = shutil.disk_usage(_HF_CACHE_ROOT)
+    return usage.free, required_bytes
+
+
 def prefetch_model(info: ModelInfo, progress_cb: ProgressCallback | None = None) -> None:
     from huggingface_hub import snapshot_download
 
+    # Field laptops fill up fast; refuse to start rather than leave a partial
+    # cache that confuses is_model_cached on the next launch.
+    free, required = check_disk_space()
+    if free < required:
+        free_gb = free / 1024**3
+        required_gb = required / 1024**3
+        raise InsufficientDiskSpace(
+            f"Only {free_gb:.1f} GB free under {_HF_CACHE_ROOT}; "
+            f"need at least {required_gb:.0f} GB to download safely."
+        )
+
     tqdm_class = _make_silent_tqdm(progress_cb) if progress_cb is not None else None
+    # Track snapshot paths so materialise_to can look up the source file for
+    # each repo-relative key without re-resolving the cache layout.
+    snapshot_roots: dict[str, Path] = {}
     for repo in info.hf_repos:
         logger.info("Downloading %s...", repo)
         if tqdm_class is not None:
-            snapshot_download(repo, tqdm_class=tqdm_class)
+            root = snapshot_download(repo, tqdm_class=tqdm_class)
         else:
-            snapshot_download(repo)
+            root = snapshot_download(repo)
+        snapshot_roots[repo] = Path(root)
+
+    _materialise_files(info, snapshot_roots)
+
+
+def _materialise_files(info: ModelInfo, snapshot_roots: dict[str, Path]) -> None:
+    if not info.materialise_to:
+        return
+    # All current materialise entries source from the first hf_repo; if a
+    # future model needs files from a different repo we can extend the key
+    # format to "<repo>::<path>".
+    source_root = snapshot_roots[info.hf_repos[0]]
+    for rel, dest in info.materialise_to.items():
+        src = source_root / rel
+        if not src.exists():
+            raise FileNotFoundError(
+                f"Expected {rel} inside {info.hf_repos[0]} snapshot at {src}"
+            )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists() or dest.is_symlink():
+            dest.unlink()
+        try:
+            # Symlink keeps the HF cache the single source of truth and
+            # avoids doubling disk usage on POSIX laptops.
+            os.symlink(src, dest)
+        except (OSError, NotImplementedError):
+            shutil.copy2(src, dest)
 
 
 def _make_silent_tqdm(callback: ProgressCallback) -> type:
@@ -167,6 +281,16 @@ def hf_logout() -> None:
 
 def delete_model(info: ModelInfo) -> int:
     from huggingface_hub import scan_cache_dir
+
+    # Drop materialised symlinks/copies first; the HF cache scan below will
+    # leave those orphaned otherwise. Skip silently if the file is missing or
+    # shared with another entry that hasn't been deleted yet.
+    for dest in info.materialise_to.values():
+        try:
+            if dest.is_symlink() or dest.exists():
+                dest.unlink()
+        except FileNotFoundError:
+            pass
 
     cache = scan_cache_dir()
     revisions: list[str] = []

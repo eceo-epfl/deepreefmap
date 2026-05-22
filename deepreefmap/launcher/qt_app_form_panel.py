@@ -657,6 +657,7 @@ class FormPanelMixin:
         self._download_cancel_requested: set[str] = set()
         self._delete_armed: dict[str, QPushButton] = {}
         self._last_model_states: list = []
+        self._download_errors: dict[str, str] = {}
 
         self._seg_combo.currentTextChanged.connect(self._on_required_models_changed)
         self._map_combo.currentTextChanged.connect(self._on_required_models_changed)

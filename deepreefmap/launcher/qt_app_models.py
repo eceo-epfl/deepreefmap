@@ -234,6 +234,13 @@ class ModelManagementMixin:
         ordered_states = sorted(model_states, key=lambda s: s[0].name not in required)
         for row, (info, cached) in enumerate(ordered_states):
             name_html = f'<span style="color:#cfd">{info.name}</span>'
+            if info.approx_size_mb:
+                size_text = (
+                    f"~{info.approx_size_mb / 1024:.1f} GB"
+                    if info.approx_size_mb >= 1024
+                    else f"~{info.approx_size_mb} MB"
+                )
+                name_html += f'&nbsp;<span style="color:#888; font-size:10px">{size_text}</span>'
             if info.name in required:
                 name_html += (
                     '&nbsp;<span style="color:#e8a04a; '
@@ -302,8 +309,16 @@ class ModelManagementMixin:
             btn.setFixedWidth(110)
             btn.clicked.connect(self._on_hf_auth_button)
         else:
-            btn = QPushButton("Download")
+            prior_error = self._download_errors.get(info.name)
+            label = "Retry" if prior_error else "Download"
+            btn = QPushButton(label)
             btn.setFixedWidth(110)
+            if prior_error:
+                # Surface the failure at the row so it survives the next
+                # status refresh, instead of disappearing from the shared
+                # status bar the moment the user clicks anywhere else.
+                btn.setToolTip(f"Previous download failed: {prior_error}\nClick to retry.")
+                btn.setStyleSheet("QPushButton { color: #e8a04a; }")
             model_name = info.name
             btn.clicked.connect(lambda checked=False, n=model_name: self._download_model(n))
         hb.addWidget(btn)
@@ -445,6 +460,7 @@ class ModelManagementMixin:
         self._status_label.setText(f"Downloading model {model_name}...")
         self._downloading.add(model_name)
         self._download_cancel_requested.discard(model_name)
+        self._download_errors.pop(model_name, None)
         self._swap_action_to_progress(model_name)
         for btn in self._form_status_buttons_for(model_name):
             self._apply_downloading_style(btn, model_name, 0)
@@ -464,6 +480,7 @@ class ModelManagementMixin:
                 self._sig_status_text.emit(f"Download of {model_name} cancelled.")
             except Exception as exc:
                 msg = str(exc)[:200]
+                self._download_errors[model_name] = msg
                 self._sig_status_text.emit(f"Download failed: {msg}")
             finally:
                 self._downloading.discard(model_name)

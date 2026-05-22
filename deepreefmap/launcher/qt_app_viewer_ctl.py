@@ -141,9 +141,8 @@ class ViewerControlsMixin:
             return
         canvas = self._viewer._canvas_container
         if self._pick_card is None:
-            from deepreefmap.launcher.qt_pick_tooltip import PickCard, PickOverlay
+            from deepreefmap.launcher.qt_pick_tooltip import PickCard
 
-            self._pick_overlay = PickOverlay(canvas)
             self._pick_card = PickCard(canvas)
             self._pick_card.isolate_requested.connect(self._on_isolate_class)
             self._pick_card.show_all_requested.connect(self._on_show_all_classes)
@@ -151,17 +150,7 @@ class ViewerControlsMixin:
 
         self._pick_card.set_payload(payload)
         self._last_pick_payload = dict(payload)
-        self._position_pick_overlay()
-
-        xyz = payload.get("xyz", (0.0, 0.0, 0.0))
-        color = payload.get("color", (255, 220, 60))
-        try:
-            self._viewer.set_picked_marker(
-                (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                (int(color[0]), int(color[1]), int(color[2])),
-            )
-        except Exception:
-            logger.exception("Failed to draw picked-point marker")
+        self._refresh_pick_marker()
 
     def _on_point_picked_clear(self) -> None:
         self._dismiss_pick()
@@ -169,8 +158,6 @@ class ViewerControlsMixin:
     def _dismiss_pick(self) -> None:
         if self._pick_card is not None:
             self._pick_card.hide()
-        if self._pick_overlay is not None:
-            self._pick_overlay.clear()
         self._last_pick_payload = None
         try:
             self._viewer.clear_picked_marker()
@@ -180,19 +167,19 @@ class ViewerControlsMixin:
     def _on_canvas_resized(self) -> None:
         if self._last_pick_payload is None or self._pick_card is None:
             return
-        self._position_pick_overlay()
+        self._refresh_pick_marker()
 
-    def _position_pick_overlay(self) -> None:
-        """Place the pick card next to the anchor and update the overlay.
+    def _refresh_pick_marker(self) -> None:
+        """Place the pick card and tell the viewer where to draw line/ring.
 
-        Anchor coords arrive in plotter-local Qt pixels (top-origin). They're
-        mapped into canvas-container coords so the leader line and card use
-        the same coordinate system regardless of where the plotter sits in
-        the canvas layout.
+        `screen_xy` arrives in plotter-local Qt pixels (top-origin from
+        `_on_point_picked` in the viewer). We position the card in
+        canvas-container coords, then compute display-space (bottom-origin)
+        endpoints for the VTK 2D ring + leader line.
         """
         from PySide6.QtCore import QPoint
 
-        if self._pick_card is None or self._pick_overlay is None:
+        if self._pick_card is None:
             return
         payload = self._last_pick_payload
         if payload is None:
@@ -200,40 +187,61 @@ class ViewerControlsMixin:
         canvas = self._viewer._canvas_container
         plotter = getattr(self._viewer, "_plotter", None)
         screen_xy = payload.get("screen_xy", (0, 0))
+        plotter_x_qt = int(screen_xy[0])
+        plotter_y_qt = int(screen_xy[1])
         if plotter is not None:
-            canvas_pt = plotter.mapTo(canvas, QPoint(int(screen_xy[0]), int(screen_xy[1])))
-            ax, ay = canvas_pt.x(), canvas_pt.y()
+            canvas_pt = plotter.mapTo(canvas, QPoint(plotter_x_qt, plotter_y_qt))
+            cx, cy = canvas_pt.x(), canvas_pt.y()
         else:
-            ax, ay = int(screen_xy[0]), int(screen_xy[1])
+            cx, cy = plotter_x_qt, plotter_y_qt
 
-        self._pick_overlay.setGeometry(0, 0, canvas.width(), canvas.height())
         self._pick_card.adjustSize()
         card_w = self._pick_card.width()
         card_h = self._pick_card.height()
         margin = 8
         offset = 18
 
-        x = ax + offset
+        x = cx + offset
         if x + card_w > canvas.width() - margin:
-            x = ax - offset - card_w
-        x = max(margin, min(x, canvas.width() - card_w - margin))
+            x = cx - offset - card_w
+        x = max(margin, min(x, max(margin, canvas.width() - card_w - margin)))
 
-        y = ay + offset
+        y = cy + offset
         if y + card_h > canvas.height() - margin:
-            y = ay - offset - card_h
-        y = max(margin, min(y, canvas.height() - card_h - margin))
+            y = cy - offset - card_h
+        y = max(margin, min(y, max(margin, canvas.height() - card_h - margin)))
 
         self._pick_card.move(x, y)
         self._pick_card.show()
-        self._pick_overlay.set_state(
-            (ax, ay),
-            self._pick_card.geometry(),
-            payload.get("color", (255, 255, 255)),
-        )
-        # Z-order: overlay (line + ring) below the card, both below the legend.
-        self._pick_overlay.raise_()
         self._pick_card.raise_()
         self._viewer.legend_overlay.raise_()
+
+        # VTK display coords are bottom-origin pixels of the plotter.
+        anchor_display = None
+        leader_display = None
+        if plotter is not None:
+            plotter_h = max(1, plotter.height())
+            anchor_display = (float(plotter_x_qt), float(plotter_h - plotter_y_qt))
+            # Closest point on the card edge, then map back to plotter coords.
+            card_rect = self._pick_card.geometry()
+            cx_target = max(card_rect.left(), min(cx, card_rect.right()))
+            cy_target = max(card_rect.top(), min(cy, card_rect.bottom()))
+            plotter_origin_in_canvas = plotter.mapTo(canvas, QPoint(0, 0))
+            tx_plotter = cx_target - plotter_origin_in_canvas.x()
+            ty_plotter = cy_target - plotter_origin_in_canvas.y()
+            leader_display = (float(tx_plotter), float(plotter_h - ty_plotter))
+
+        xyz = payload.get("xyz", (0.0, 0.0, 0.0))
+        color = payload.get("color", (255, 220, 60))
+        try:
+            self._viewer.set_picked_marker(
+                (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+                (int(color[0]), int(color[1]), int(color[2])),
+                anchor_display=anchor_display,
+                leader_target_display=leader_display,
+            )
+        except Exception:
+            logger.exception("Failed to draw picked-point marker")
     def _on_viewer_status(self, event: str, **kwargs: object) -> None:
         _STAGE_LABELS = {
             "startup": "Startup",
