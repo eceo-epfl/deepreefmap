@@ -352,6 +352,7 @@ class QtPointCloudViewer(QWidget):
     point_picked = Signal(object)
     point_picked_clear = Signal()
     canvas_resized = Signal()
+    frustum_picked = Signal(int)
 
     def __init__(
         self,
@@ -506,6 +507,16 @@ class QtPointCloudViewer(QWidget):
         if mesh is None or point_id is None or int(point_id) < 0:
             self.point_picked_clear.emit()
             return
+
+        for fid, actor in self._frustum_actors.items():
+            try:
+                mapper = actor.GetMapper()
+                if mapper is not None and mapper.GetInput() is mesh:
+                    self.frustum_picked.emit(int(fid))
+                    self.point_picked_clear.emit()
+                    return
+            except Exception:
+                continue
 
         picked_cid: int | None = None
         for cid, actor in self._class_actors.items():

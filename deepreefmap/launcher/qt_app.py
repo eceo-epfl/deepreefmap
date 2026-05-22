@@ -101,6 +101,7 @@ class DeepReefMapWindow(
         self._viewer.point_picked.connect(self._on_point_picked)
         self._viewer.point_picked_clear.connect(self._on_point_picked_clear)
         self._viewer.canvas_resized.connect(self._on_canvas_resized)
+        self._viewer.frustum_picked.connect(self._on_frustum_picked)
         self._pick_card = None
         self._last_pick_payload = None
 

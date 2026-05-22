@@ -136,6 +136,18 @@ class ViewerControlsMixin:
         else:
             self._on_isolate_class(cid)
 
+    def _on_frustum_picked(self, frame_idx: int) -> None:
+        if not hasattr(self, "_frame_slider"):
+            return
+        viewer = self._viewer
+        if not hasattr(viewer, "_final_index") or viewer._final_index is None:
+            return
+        frame_order = viewer._final_index.frame_order
+        for t, fid in enumerate(frame_order):
+            if int(fid) == int(frame_idx):
+                self._frame_slider.setValue(int(t))
+                return
+
     def _on_sunburst_selection(self, class_ids: list) -> None:
         if not self._legend_toggles:
             return
