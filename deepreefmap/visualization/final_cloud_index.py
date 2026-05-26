@@ -46,6 +46,47 @@ class FinalCloudIndex:
     """For class c, prefix_end_by_class[c][t] = number of points with timeline_rank <= t."""
 
 
+def reconstruct_cloud_from_index(fci: FinalCloudIndex) -> "SemanticPointCloud":
+    """Flatten a FinalCloudIndex back into a SemanticPointCloud.
+
+    Recovers per-point frame_indices from the prefix_end arrays so the ortho
+    builder can use the cloud for progressive rendering.
+    """
+    from deepreefmap.pipeline.artifacts import SemanticPointCloud
+
+    if not fci.class_ids:
+        return SemanticPointCloud.empty()
+
+    xyz_parts, rgb_parts, label_parts, conf_parts, fi_parts = [], [], [], [], []
+    fo = np.asarray(fci.frame_order, dtype=np.int32)
+
+    for cid in fci.class_ids:
+        n = len(fci.xyz_by_class[cid])
+        if n == 0:
+            continue
+        xyz_parts.append(fci.xyz_by_class[cid])
+        rgb_parts.append(fci.rgb_by_class[cid])
+        conf_parts.append(fci.conf_by_class[cid])
+        label_parts.append(np.full(n, cid, dtype=np.int32))
+        pe = fci.prefix_end_by_class[cid]
+        point_fi = np.empty(n, dtype=np.int32)
+        prev = 0
+        for t in range(len(pe)):
+            cur = int(pe[t])
+            if cur > prev:
+                point_fi[prev:cur] = fo[t] if t < len(fo) else 0
+            prev = cur
+        fi_parts.append(point_fi)
+
+    return SemanticPointCloud(
+        xyz=np.concatenate(xyz_parts),
+        rgb=np.concatenate(rgb_parts),
+        labels=np.concatenate(label_parts),
+        frame_indices=np.concatenate(fi_parts),
+        confidence=np.concatenate(conf_parts),
+    )
+
+
 def build_final_cloud_index(
     cloud: "SemanticPointCloud",
     frame_order: list[int] | tuple[int, ...],

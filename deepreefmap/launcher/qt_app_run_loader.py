@@ -215,13 +215,15 @@ class RunLoadingMixin:
         self._apply_progress(phase_key, label, current=cur, total=tot)
 
     def _apply_loaded_run(self, result: object, run_dir_str: str, error: str) -> None:
+        import time as _time
         from deepreefmap.pipeline.run_loader import GEOMETRY_ONLY_MODE
+
+        _t0 = _time.monotonic()
 
         self._load_cancel_btn.setVisible(False)
 
         if self._load_cancelled:
             self._reset_progress_bars()
-            # Close scene accessor if the load was from a scene file
             if hasattr(result, "scene_accessor") and result.scene_accessor is not None:
                 result.scene_accessor.close()
             return
@@ -232,19 +234,14 @@ class RunLoadingMixin:
             self._reset_progress_bars()
             return
 
-        # Close any previous scene accessor before opening a new one.
         if hasattr(self, "_scene_accessor") and self._scene_accessor is not None:
             self._scene_accessor.close()
             self._scene_accessor = None
-
-        # Track the new scene accessor (if any) for lifecycle management.
         self._scene_accessor = getattr(result, "scene_accessor", None)
 
-        # The post-cloud work below all runs on the GUI thread (PyVista actor
-        # creation must); the viewer emits setup_progress events that drive
-        # both the per-step and the total bar via _apply_progress.
         self._apply_progress("viewer_index_cloud", "Setting up viewer", 0, 0, flush=True)
 
+        _t1 = _time.monotonic()
         if result.mode == GEOMETRY_ONLY_MODE:
             self._viewer.show_point_cloud(result.geometry_xyz, result.geometry_rgb)
         elif getattr(result, "from_scene_file", False) and result.final_cloud_index is not None:
@@ -254,29 +251,53 @@ class RunLoadingMixin:
                 self._viewer.load_scene_data_indexed(
                     fb, mr, result.final_cloud_index, self._classes_config,
                 )
+                _t2 = _time.monotonic()
+                logger.info("[timing] load_scene_data_indexed: %.3fs", _t2 - _t1)
                 self._build_legend()
+                _t3 = _time.monotonic()
+                logger.info("[timing] _build_legend: %.3fs", _t3 - _t2)
                 self._show_viewer_controls()
                 self._on_viewer_control_changed()
+                _t4 = _time.monotonic()
+                logger.info("[timing] _on_viewer_control_changed (initial apply_state): %.3fs", _t4 - _t3)
         else:
             cloud = result.reference_cloud
             fb = result.frame_batch
             mr = result.mapping_result
             if cloud is not None and fb is not None and mr is not None:
                 self._viewer.load_scene_data(fb, mr, cloud, self._classes_config)
+                _t2 = _time.monotonic()
+                logger.info("[timing] load_scene_data: %.3fs", _t2 - _t1)
                 self._build_legend()
+                _t3 = _time.monotonic()
+                logger.info("[timing] _build_legend: %.3fs", _t3 - _t2)
                 self._show_viewer_controls()
                 self._on_viewer_control_changed()
+                _t4 = _time.monotonic()
+                logger.info("[timing] _on_viewer_control_changed (initial apply_state): %.3fs", _t4 - _t3)
             elif cloud is not None:
                 self._viewer.show_point_cloud(cloud.xyz, cloud.rgb)
 
-        # Build the live ortho preview BEFORE finalising — otherwise the bars
-        # hide and the user stares at a frozen UI during the PCA/aggregate
-        # work. Drive both bars through the same setup_progress event keys
-        # by routing the build_ortho_outputs callback through _apply_progress.
+        _t5 = _time.monotonic()
+
+        # For scene-file loads the reference_cloud is empty — reconstruct it
+        # from the FinalCloudIndex so the ortho builder can run.
+        ortho_cloud = getattr(result, "reference_cloud", None)
+        ortho_classes = getattr(result, "classes_config", self._classes_config)
+        if (
+            getattr(result, "from_scene_file", False)
+            and result.final_cloud_index is not None
+            and (ortho_cloud is None or len(ortho_cloud) == 0)
+        ):
+            from deepreefmap.visualization.final_cloud_index import reconstruct_cloud_from_index
+            ortho_cloud = reconstruct_cloud_from_index(result.final_cloud_index)
+            ortho_classes = result.classes_config
+
+        # Build the live ortho preview BEFORE finalising.
         if (
             result.mode != GEOMETRY_ONLY_MODE
-            and result.reference_cloud is not None
-            and len(result.reference_cloud) > 1
+            and ortho_cloud is not None
+            and len(ortho_cloud) > 1
         ):
             try:
                 from deepreefmap.postproc.ortho_outputs import build_ortho_outputs
@@ -286,18 +307,21 @@ class RunLoadingMixin:
                     self._apply_progress(phase, message, 0, 0, flush=True)
 
                 outputs = build_ortho_outputs(
-                    result.reference_cloud,
-                    result.classes_config,
+                    ortho_cloud,
+                    ortho_classes,
                     progress=_ortho_load_progress,
                 )
                 self._set_ortho_sources(
-                    result.reference_cloud, outputs.grid, result.classes_config
+                    ortho_cloud, outputs.grid, ortho_classes
                 )
                 self._cover_label.setText(self._format_cover_html(outputs.cover))
                 self._cover_sunburst.set_cover(outputs.cover, result.classes_config)
             except Exception:
                 logger.exception("Failed to build ortho preview for cached run")
             self._results_group.setVisible(True)
+
+        _t6 = _time.monotonic()
+        logger.info("[timing] ortho build: %.3fs", _t6 - _t5)
 
         self._apply_progress("viewer_finalise", "Finalising viewer", 1, 1)
         self._reset_progress_bars()
@@ -306,7 +330,6 @@ class RunLoadingMixin:
         self._active_run_manifest = result.manifest
         display = result.manifest.get("name") or run_dir.name
         self._status_label.setText(f"Loaded run '{display}' from {run_dir}")
-        # Refresh the banner now that the full load is done, including disk size.
         self._show_run_meta_banner(result.manifest, run_dir, include_disk_size=True)
 
         ortho_path = run_dir / "ortho.png"
