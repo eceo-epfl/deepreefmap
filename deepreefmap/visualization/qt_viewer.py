@@ -96,6 +96,86 @@ def _build_frustum_lines(pose_w_c: np.ndarray, fov_y: float, aspect: float, scal
     return np.array(lines, dtype=np.float32)
 
 
+def _compute_transect_view(
+    positions: np.ndarray,
+    cam_origins: np.ndarray | None,
+    world_up: tuple[float, float, float] = (0.0, 1.0, 0.0),
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    """Return (camera_position, focal_point, up) for a transect-lengthwise view.
+
+    The view is oriented so that the transect runs left-to-right on screen
+    (start of recording on the left, end on the right) with world_up as
+    screen-up — frustums, which sit at the recording camera origins, end up
+    above the reef pointcloud when poses are gravity-aligned.
+
+    Falls back to looking along world +Z if PCA fails or there isn't enough
+    data to infer a direction.
+    """
+    up = np.asarray(world_up, dtype=np.float64)
+    up_n = up / max(float(np.linalg.norm(up)), 1e-9)
+
+    pts = np.asarray(positions, dtype=np.float64).reshape(-1, 3)
+    if pts.size == 0:
+        return ((0.0, 0.0, 1.0), (0.0, 0.0, 0.0), tuple(up_n.tolist()))  # type: ignore[return-value]
+    center = pts.mean(axis=0)
+    extent = float(np.linalg.norm(pts.max(axis=0) - pts.min(axis=0)))
+    if not np.isfinite(extent) or extent <= 0.0:
+        extent = 1.0
+
+    def _principal_direction(samples: np.ndarray) -> np.ndarray | None:
+        if samples.shape[0] < 2:
+            return None
+        centred = samples - samples.mean(axis=0)
+        # Drop the up-component first so we only PCA the horizontal spread.
+        centred = centred - np.outer(centred @ up_n, up_n)
+        try:
+            _, _, vh = np.linalg.svd(centred, full_matrices=False)
+        except np.linalg.LinAlgError:
+            return None
+        v = vh[0]
+        v = v - (v @ up_n) * up_n
+        n = float(np.linalg.norm(v))
+        if n < 1e-9:
+            return None
+        return v / n
+
+    along: np.ndarray | None = None
+    if cam_origins is not None:
+        co = np.asarray(cam_origins, dtype=np.float64).reshape(-1, 3)
+        along = _principal_direction(co)
+        if along is not None and co.shape[0] >= 2:
+            travel = co[-1] - co[0]
+            travel = travel - (travel @ up_n) * up_n
+            if float(travel @ along) < 0.0:
+                along = -along
+    if along is None:
+        along = _principal_direction(pts)
+    if along is None:
+        return (
+            tuple((center + np.array([0.0, 0.0, extent * 1.5])).tolist()),  # type: ignore[return-value]
+            tuple(center.tolist()),  # type: ignore[return-value]
+            tuple(up_n.tolist()),  # type: ignore[return-value]
+        )
+
+    # forward = camera look direction (into the scene). Right-handed:
+    # right_world × up_world = forward_world. We want screen-right = along.
+    forward = np.cross(up_n, along)
+    n_fwd = float(np.linalg.norm(forward))
+    if n_fwd < 1e-9:
+        return (
+            tuple((center + np.array([0.0, 0.0, extent * 1.5])).tolist()),  # type: ignore[return-value]
+            tuple(center.tolist()),  # type: ignore[return-value]
+            tuple(up_n.tolist()),  # type: ignore[return-value]
+        )
+    forward = forward / n_fwd
+    cam_pos = center - extent * 1.5 * forward
+    return (
+        tuple(cam_pos.tolist()),  # type: ignore[return-value]
+        tuple(center.tolist()),  # type: ignore[return-value]
+        tuple(up_n.tolist()),  # type: ignore[return-value]
+    )
+
+
 def _as_uint8_rgb(rgb: np.ndarray) -> np.ndarray:
     arr = np.asarray(rgb)
     if arr.dtype == np.uint8:
@@ -657,6 +737,14 @@ class QtPointCloudViewer(QWidget):
         self._class_actors: dict[int, object] = {}
         self._class_polydata: dict[int, pv.PolyData] = {}
         self._frustum_actors: dict[int, object] = {}
+        self._frustum_batch_actor: object | None = None
+        self._frustum_batch_pd: object | None = None
+        self._frustum_highlight_actor: object | None = None
+        self._frustum_highlight_pd: object | None = None
+        self._frustum_frame_ids: list[int] = []
+        self._frustum_fid_to_idx: dict[int, int] = {}
+        self._frustum_all_pts: list[np.ndarray] = []
+        self._frustum_pts_per: int = 16
 
         self._final_index: FinalCloudIndex | None = None
         self._live_cache: LiveFrameCloudCache | None = None
@@ -736,6 +824,21 @@ class QtPointCloudViewer(QWidget):
             self._plotter.enable_eye_dome_lighting()
         except Exception:
             logger.debug("Eye dome lighting unavailable", exc_info=True)
+        try:
+            self._plotter.add_axes(
+                interactive=False,
+                line_width=3,
+                color="white",
+                x_color="#ff5a5a",
+                y_color="#5aff7a",
+                z_color="#5aaaff",
+                xlabel="X",
+                ylabel="Y",
+                zlabel="Z",
+                viewport=(0.82, 0.0, 1.0, 0.18),
+            )
+        except Exception:
+            logger.debug("Axes widget unavailable", exc_info=True)
         self._canvas_layout.addWidget(self._plotter)
         # Keep the legend on top after the plotter is added below it.
         self.legend_overlay.raise_()
@@ -834,6 +937,20 @@ class QtPointCloudViewer(QWidget):
             self.point_picked_clear.emit()
             return
 
+        # Batched frustum pick: identify which frustum by point index
+        if self._frustum_batch_actor is not None:
+            try:
+                mapper = self._frustum_batch_actor.GetMapper()
+                if mapper is not None and mapper.GetInput() is mesh and point_id is not None:
+                    frustum_idx = int(point_id) // self._frustum_pts_per
+                    if 0 <= frustum_idx < len(self._frustum_frame_ids):
+                        self.frustum_picked.emit(self._frustum_frame_ids[frustum_idx])
+                        self.point_picked_clear.emit()
+                        return
+            except Exception:
+                pass
+
+        # Legacy per-actor frustum pick
         for fid, actor in self._frustum_actors.items():
             try:
                 mapper = actor.GetMapper()
@@ -1412,6 +1529,7 @@ class QtPointCloudViewer(QWidget):
     def _build_frustums(self, frame_batch: object, mapping_result: object) -> None:
         if self._plotter is None:
             return
+        self._emit_setup("Building camera frustums", 0, 1)
         mapping_indices = np.asarray(mapping_result.frame_indices, dtype=np.int32).reshape(-1)
         intrinsics = np.asarray(mapping_result.intrinsics, dtype=np.float64)
         depth_h, depth_w = mapping_result.depth_maps[0].shape
@@ -1421,27 +1539,42 @@ class QtPointCloudViewer(QWidget):
 
         mi_lookup = {int(fid): i for i, fid in enumerate(mapping_indices.tolist())}
 
-        frame_ids = [int(f.frame_index) for f in frame_batch.frames]
-        total = len(frame_ids)
-        # Throttle progress emits so we don't spam processEvents for hundreds
-        # of frames — every ~16 frames is plenty to keep the bar moving.
-        emit_every = max(1, total // 32)
-        for i, frame_idx in enumerate(frame_ids):
-            if i % emit_every == 0 or i == total - 1:
-                self._emit_setup("Building camera frustums", i, total)
+        all_pts: list[np.ndarray] = []
+        frustum_frame_ids: list[int] = []
+        for f in frame_batch.frames:
+            frame_idx = int(f.frame_index)
             mi = mi_lookup.get(frame_idx)
             if mi is None:
                 continue
             pose_w_c = np.asarray(mapping_result.poses_w_c[mi], dtype=np.float64)
-            pts = _build_frustum_lines(pose_w_c, fov_y, aspect)
-            pd = _make_line_segments_polydata(pts)
-            actor = self._plotter.add_mesh(
-                pd, color=(0.5, 0.5, 0.5), line_width=1, opacity=0.6,
-                name=f"frustum_{frame_idx}",
-            )
-            self._frustum_actors[frame_idx] = actor
-        if total:
-            self._emit_setup("Building camera frustums", total, total)
+            all_pts.append(_build_frustum_lines(pose_w_c, fov_y, aspect))
+            frustum_frame_ids.append(frame_idx)
+
+        if not all_pts:
+            self._emit_setup("Building camera frustums", 1, 1)
+            return
+
+        # Single batched mesh for all frustums (one add_mesh call).
+        batched = np.concatenate(all_pts, axis=0)
+        pd = _make_line_segments_polydata(batched)
+        self._frustum_batch_actor = self._plotter.add_mesh(
+            pd, color=(0.5, 0.5, 0.5), line_width=1, opacity=0.6,
+            name="frustums_batch",
+        )
+        self._frustum_batch_pd = pd
+        self._frustum_frame_ids = frustum_frame_ids
+        self._frustum_fid_to_idx = {fid: i for i, fid in enumerate(frustum_frame_ids)}
+        self._frustum_pts_per = 16  # 8 line segments × 2 endpoints
+
+        # Separate actor for the highlighted (current) frustum.
+        hl_pd = _make_line_segments_polydata(all_pts[0])
+        self._frustum_highlight_actor = self._plotter.add_mesh(
+            hl_pd, color=(1.0, 0.8, 0.25), line_width=2, opacity=0.9,
+            name="frustum_highlight",
+        )
+        self._frustum_highlight_pd = hl_pd
+        self._frustum_all_pts = all_pts
+        self._emit_setup("Building camera frustums", 1, 1)
 
     def _clear_scene_data(self) -> None:
         if self._plotter is not None:
@@ -1462,6 +1595,10 @@ class QtPointCloudViewer(QWidget):
 
             for actor in self._class_actors.values():
                 _remove(actor)
+            if hasattr(self, "_frustum_batch_actor") and self._frustum_batch_actor is not None:
+                _remove(self._frustum_batch_actor)
+            if hasattr(self, "_frustum_highlight_actor") and self._frustum_highlight_actor is not None:
+                _remove(self._frustum_highlight_actor)
             for actor in self._frustum_actors.values():
                 _remove(actor)
             if self._live_actor is not None:
@@ -1479,6 +1616,13 @@ class QtPointCloudViewer(QWidget):
         self._class_actors.clear()
         self._class_polydata.clear()
         self._frustum_actors.clear()
+        self._frustum_batch_actor = None
+        self._frustum_batch_pd = None
+        self._frustum_highlight_actor = None
+        self._frustum_highlight_pd = None
+        self._frustum_frame_ids = []
+        self._frustum_fid_to_idx = {}
+        self._frustum_all_pts = []
         self._live_actor = None
         self._live_polydata = None
         self._simple_actor = None
@@ -1500,13 +1644,45 @@ class QtPointCloudViewer(QWidget):
     def _auto_fit_camera(self, positions: np.ndarray) -> None:
         if self._plotter is None:
             return
-        center = positions.mean(axis=0)
-        extent = float(np.linalg.norm(positions.max(axis=0) - positions.min(axis=0)))
-        self._plotter.camera.focal_point = tuple(center.tolist())
-        cam_pos = center + np.array([0.0, 0.0, extent * 1.5], dtype=np.float64)
-        self._plotter.camera.position = tuple(cam_pos.tolist())
-        self._plotter.camera.up = (0.0, 1.0, 0.0)
+        cam_origins: np.ndarray | None = None
+        if self._mapping_result is not None:
+            try:
+                poses = np.asarray(self._mapping_result.poses_w_c, dtype=np.float64)
+                if poses.ndim == 3 and poses.shape[0] >= 1 and poses.shape[1:] == (4, 4):
+                    cam_origins = poses[:, :3, 3]
+            except Exception:
+                logger.debug("Could not extract camera origins for fit", exc_info=True)
+                cam_origins = None
+        cam_pos, focal, up = _compute_transect_view(positions, cam_origins)
+        self._plotter.camera.position = cam_pos
+        self._plotter.camera.focal_point = focal
+        self._plotter.camera.up = up
         self._plotter.reset_camera()
+
+    def reset_view(self) -> None:
+        """Re-orient the camera to the default transect-lengthwise view.
+
+        Same algorithm as the initial fit-on-load: pulls camera origins out of
+        the current mapping result, computes the principal axis, and points
+        the camera so the transect runs left-to-right with frustums above.
+        """
+        if self._plotter is None or self._final_index is None:
+            return
+        all_xyz = [
+            self._final_index.xyz_by_class[c]
+            for c in self._final_index.class_ids
+            if c in self._final_index.xyz_by_class
+        ]
+        if not all_xyz:
+            return
+        combined = np.concatenate(all_xyz, axis=0)
+        if combined.shape[0] == 0:
+            return
+        self._auto_fit_camera(combined)
+        try:
+            self._plotter.render()
+        except Exception:
+            pass
 
     def view_from_frame_pose(self, t: int, backoff_m: float = 0.0) -> bool:
         """Snap the 3D camera to frame `t`'s pose, optionally pulled back."""
@@ -1739,6 +1915,21 @@ class QtPointCloudViewer(QWidget):
         if fi is not None and len(fi.frame_order) > 0:
             tt = int(np.clip(t, 0, len(fi.frame_order) - 1))
             current_frame = int(fi.frame_order[tt])
+
+        # Batched frustum path
+        if self._frustum_batch_actor is not None:
+            self._frustum_batch_actor.SetVisibility(bool(visible))
+            if self._frustum_highlight_actor is not None:
+                show_hl = visible and current_frame is not None and current_frame in self._frustum_fid_to_idx
+                self._frustum_highlight_actor.SetVisibility(bool(show_hl))
+                if show_hl:
+                    idx = self._frustum_fid_to_idx[current_frame]
+                    pts = self._frustum_all_pts[idx]
+                    new_pd = _make_line_segments_polydata(pts)
+                    self._frustum_highlight_pd.copy_from(new_pd)
+            return
+
+        # Legacy per-actor path
         for fid, actor in self._frustum_actors.items():
             actor.SetVisibility(bool(visible))
             if not visible:
