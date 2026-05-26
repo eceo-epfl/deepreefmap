@@ -449,9 +449,8 @@ class FormPanelMixin:
         self._accumulate_check.toggled.connect(self._on_viewer_control_changed)
         vc_layout.addWidget(self._accumulate_check)
 
-        self._hide_frustums_check = QCheckBox("Hide frustums")
-        self._hide_frustums_check.toggled.connect(self._on_viewer_control_changed)
-        vc_layout.addWidget(self._hide_frustums_check)
+        # The frustum visibility toggle lives inside the legend overlay (see
+        # LegendOverlay._frustum_check), alongside the other per-view controls.
 
         vc_layout.addWidget(QLabel("Point size"))
         self._point_size_spin = QDoubleSpinBox()
@@ -511,9 +510,13 @@ class FormPanelMixin:
         # is populated by _build_legend and queried by _enabled_class_set.
         self._legend_toggles: dict[int, QCheckBox] = {}
         self._legend_solo_buttons: dict[int, object] = {}
-        # Cache of the pinned "Selected" set (the currently-checked subset) so
-        # _refresh_pinned_selection can skip rebuilds when nothing changed.
-        self._pinned_selection_cache: frozenset[int] | None = None
+        # Legend sort state: column "selected" (visibility), "name", or "size",
+        # plus a direction. _legend_order_cache lets _apply_legend_sort skip
+        # reflows when the resulting order is unchanged.
+        self._legend_sort_mode: str = "selected"
+        self._legend_sort_ascending: bool = False
+        self._legend_order_cache: list[int] | None = None
+        self._legend_sort_connected: bool = False
 
         self._results_group = QGroupBox("Results")
         self._results_group.setVisible(False)

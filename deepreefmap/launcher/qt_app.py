@@ -110,6 +110,7 @@ class DeepReefMapWindow(
         self._pick_card = None
         self._last_pick_payload = None
         self._pick_card_pinned_pos: tuple[int, int] | None = None
+        self._build_pick_mode_overlay()
 
         # Build the form first so widgets it references (status_label, etc.)
         # are constructed before we wire them into the top toolbar.

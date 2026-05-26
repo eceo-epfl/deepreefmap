@@ -44,6 +44,11 @@ class SunburstWidget(QWidget):
         self._coarse_slices: tuple[_Slice, ...] = ()
         self._title: str = ""
         self._hover_ids: frozenset[int] = frozenset()
+        # Persistent selection highlight: slices outside the selection are
+        # dimmed so the donut mirrors the legend's current query. Inactive when
+        # everything is selected (nothing to distinguish).
+        self._selected_ids: frozenset[int] = frozenset()
+        self._selection_active: bool = False
         self.setMinimumHeight(220)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
@@ -62,6 +67,18 @@ class SunburstWidget(QWidget):
 
     def has_data(self) -> bool:
         return bool(self._fine_slices)
+
+    def set_selection(self, selected_ids: frozenset[int], active: bool) -> None:
+        """Highlight the selected slices; dim the rest when `active`.
+
+        `active` is False when the whole cloud is selected (nothing to
+        distinguish), so the donut paints at full colour.
+        """
+        if (selected_ids, active) == (self._selected_ids, self._selection_active):
+            return
+        self._selected_ids = frozenset(selected_ids)
+        self._selection_active = active
+        self.update()
 
     def set_title(self, title: str) -> None:
         self._title = title
@@ -222,14 +239,26 @@ class SunburstWidget(QWidget):
 
     # ----- hover + click -----
 
+    @staticmethod
+    def _dim(color: QColor, alpha: int) -> QColor:
+        out = QColor(color)
+        out.setAlpha(alpha)
+        return out
+
     def _slice_brush(self, slc: _Slice) -> QColor:
-        if not self._hover_ids:
-            return slc.color
-        if any(cid in self._hover_ids for cid in slc.class_ids):
-            return slc.color
-        dimmed = QColor(slc.color)
-        dimmed.setAlpha(70)
-        return dimmed
+        # Hover preview takes precedence over the persistent selection state.
+        if self._hover_ids:
+            if any(cid in self._hover_ids for cid in slc.class_ids):
+                return slc.color
+            return self._dim(slc.color, 70)
+        if self._selection_active:
+            in_sel = sum(1 for cid in slc.class_ids if cid in self._selected_ids)
+            if in_sel == 0:
+                return self._dim(slc.color, 55)
+            if in_sel == len(slc.class_ids):
+                return slc.color
+            return self._dim(slc.color, 140)  # group only partly selected
+        return slc.color
 
     def _slice_at(self, pos: QPointF) -> _Slice | None:
         from math import atan2, degrees, hypot

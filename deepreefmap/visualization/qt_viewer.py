@@ -145,11 +145,22 @@ class LegendOverlay(QWidget):
     """Floating semi-transparent legend pinned to the top-right of the 3D canvas.
 
     Populated by `rebuild()` with one row per class (swatch + checkbox + optional
-    count + solo button). A header strip carries a minimize/expand toggle so the
-    user can shrink the overlay to just its title bar when it covers too much of
-    the canvas. `reposition()` anchors the overlay to its parent's top-right
-    corner and clamps the height to 60% of the parent.
+    count + solo button). A header strip carries a sort selector and a
+    minimize/expand toggle. Rows can be re-ordered in place via `reorder()`
+    without recreating them. `reposition()` anchors the overlay to its parent's
+    top-right corner and clamps the height to a fraction of the parent.
+
+    `sort_clicked` fires with a column key ("name"/"size") when a sort header is
+    clicked; `master_clicked` fires when the header's tri-state checkbox is
+    clicked (the host decides select-all vs deselect-all). `repaint_requested`
+    fires whenever the layout changes, so the host can force a redraw of the
+    OpenGL canvas underneath (otherwise stale pixels ghost through the
+    translucent panel until the camera moves).
     """
+
+    sort_clicked = Signal(str)
+    master_clicked = Signal()
+    repaint_requested = Signal()
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
@@ -176,11 +187,14 @@ class LegendOverlay(QWidget):
                 color: #b8b8b8;
                 font-size: 10px;
             }
-            LegendOverlay QLabel#legend_pinned_name {
-                color: #ffffff;
-                font-size: 11px;
-                font-weight: bold;
+            LegendOverlay QToolButton#sort_header {
+                color: #cfd6dd;
+                background: transparent;
+                border: none;
+                font-size: 10px;
+                padding: 0px 2px;
             }
+            LegendOverlay QToolButton#sort_header:hover { color: #ffffff; }
             LegendOverlay QCheckBox { color: #e8e8e8; font-size: 11px; spacing: 4px; }
             LegendOverlay QCheckBox::indicator { width: 12px; height: 12px; }
             LegendOverlay QScrollArea { background: transparent; border: none; }
@@ -215,36 +229,43 @@ class LegendOverlay(QWidget):
         header.addWidget(self._minimize_btn, 0)
         outer.addLayout(header)
 
-        # Pinned "Selected" section: the classes the user focused via a pie
-        # click or "Only" surface here at the top, above the fixed main list,
-        # so the main list never has to reorder. Hidden until there's a focus.
-        self._pinned_container = QWidget()
-        self._pinned_container.setObjectName("legend_pinned")
-        pinned_layout = QVBoxLayout(self._pinned_container)
-        pinned_layout.setContentsMargins(0, 0, 0, 2)
-        pinned_layout.setSpacing(2)
-        self._pinned_title = QLabel("Selected")
-        self._pinned_title.setObjectName("legend_title")
-        pinned_layout.addWidget(self._pinned_title)
-        self._pinned_scroll = QScrollArea(self)
-        self._pinned_scroll.setWidgetResizable(True)
-        self._pinned_scroll.setFrameShape(QFrame.NoFrame)
-        self._pinned_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._pinned_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        # Cap the pinned list so selecting a coarse group (many member classes)
-        # scrolls here instead of pushing the main list off the canvas.
-        self._pinned_scroll.setMaximumHeight(120)
-        self._pinned_inner = QWidget()
-        self._pinned_inner.setObjectName("legend_inner")
-        self._pinned_grid = QGridLayout(self._pinned_inner)
-        self._pinned_grid.setContentsMargins(0, 0, 0, 0)
-        self._pinned_grid.setHorizontalSpacing(6)
-        self._pinned_grid.setVerticalSpacing(2)
-        self._pinned_grid.setColumnStretch(1, 1)
-        self._pinned_scroll.setWidget(self._pinned_inner)
-        pinned_layout.addWidget(self._pinned_scroll)
-        self._pinned_container.setVisible(False)
-        outer.addWidget(self._pinned_container, 0)
+        # Column headers above the list, laid out on the same grid as the rows
+        # so they line up: [master checkbox + Name] | Points (over the counts).
+        # The master checkbox toggles select-all/deselect-all (tri-state). Name
+        # and Points are clickable sort headers (click again flips asc/desc;
+        # active one is underlined with a ▲/▼ arrow).
+        self._sort_row = QWidget()
+        self._sort_grid = QGridLayout(self._sort_row)
+        self._sort_grid.setContentsMargins(0, 0, 0, 0)
+        self._sort_grid.setHorizontalSpacing(6)
+        self._sort_grid.setColumnStretch(1, 1)
+        self._sort_headers: dict[str, tuple[QToolButton, str]] = {}
+        # Fixed 12px spacer matching the row swatch column so col 1 (the master
+        # checkbox) lines up exactly with the row checkboxes below.
+        col0_spacer = QWidget()
+        col0_spacer.setFixedWidth(12)
+        self._sort_grid.addWidget(col0_spacer, 0, 0)
+        name_cell = QWidget()
+        name_cell_layout = QHBoxLayout(name_cell)
+        name_cell_layout.setContentsMargins(0, 0, 0, 0)
+        name_cell_layout.setSpacing(4)
+        self._master_check = QCheckBox()
+        self._master_check.setTristate(True)
+        self._master_check.setToolTip("Show all / hide all classes")
+        self._master_check.clicked.connect(lambda _checked=False: self.master_clicked.emit())
+        name_cell_layout.addWidget(self._master_check, 0)
+        name_cell_layout.addWidget(self._make_sort_header("name", "Name"), 0)
+        name_cell_layout.addStretch(1)
+        self._sort_grid.addWidget(name_cell, 0, 1)
+        self._sort_grid.addWidget(
+            self._make_sort_header("size", "Points"), 0, 2, Qt.AlignRight | Qt.AlignVCenter
+        )
+        # Empty col-3 cell mirroring the row "Only" button column so "Points"
+        # lines up over the counts; its width is set from a real button in
+        # rebuild(). Without a widget here the grid wouldn't reserve the column.
+        self._sort_only_spacer = QWidget()
+        self._sort_grid.addWidget(self._sort_only_spacer, 0, 3)
+        outer.addWidget(self._sort_row, 0)
 
         self._scroll = QScrollArea(self)
         self._scroll.setWidgetResizable(True)
@@ -262,9 +283,18 @@ class LegendOverlay(QWidget):
         self._scroll.setWidget(self._inner)
         outer.addWidget(self._scroll, 1)
 
+        # Footer: per-view toggle for the camera frustums, kept with the legend
+        # so all visibility controls live in one box. Checked = frustums shown.
+        self._frustum_check = QCheckBox("Show frustums")
+        self._frustum_check.setChecked(True)
+        outer.addWidget(self._frustum_check, 0)
+
         self._sunburst: QWidget | None = None
         self._sunburst_was_visible = False
         self._minimized = False
+        # Per-class row widgets (swatch, checkbox, count, solo) so reorder() can
+        # re-lay them out without recreating — preserves checkbox state.
+        self._rows: dict[int, tuple[QWidget, QCheckBox, QLabel, QToolButton]] = {}
         self.hide()
 
     def set_sunburst(self, widget: QWidget) -> None:
@@ -283,6 +313,32 @@ class LegendOverlay(QWidget):
         self.layout().insertWidget(1, widget, 0)
         self._sunburst = widget
 
+    def _make_sort_header(self, key: str, label: str) -> QToolButton:
+        btn = QToolButton()
+        btn.setObjectName("sort_header")
+        btn.setText(label)
+        btn.setToolTip(f"Sort by {label.lower()} (click again to reverse)")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.clicked.connect(lambda _checked=False, k=key: self.sort_clicked.emit(k))
+        self._sort_headers[key] = (btn, label)
+        return btn
+
+    def set_master_check_state(self, state: Qt.CheckState) -> None:
+        """Set the header checkbox display state (blocked so it doesn't re-emit)."""
+        self._master_check.blockSignals(True)
+        self._master_check.setCheckState(state)
+        self._master_check.blockSignals(False)
+
+    def set_sort_indicator(self, key: str, ascending: bool) -> None:
+        """Underline the active sort header and show its ▲/▼ direction arrow."""
+        arrow = "▲" if ascending else "▼"
+        for k, (btn, label) in self._sort_headers.items():
+            font = btn.font()
+            active = k == key
+            btn.setText(f"{label} {arrow}" if active else label)
+            font.setUnderline(active)
+            btn.setFont(font)
+
     def _toggle_minimized(self) -> None:
         self._minimized = not self._minimized
         if self._minimized:
@@ -291,11 +347,13 @@ class LegendOverlay(QWidget):
             if self._sunburst is not None:
                 self._sunburst_was_visible = self._sunburst.isVisibleTo(self)
                 self._sunburst.setVisible(False)
-            self._pinned_container.setVisible(False)
+            self._sort_row.setVisible(False)
             self._scroll.setVisible(False)
+            self._frustum_check.setVisible(False)
         else:
             self._scroll.setVisible(True)
-            self._pinned_container.setVisible(self._pinned_grid.count() > 0)
+            self._sort_row.setVisible(True)
+            self._frustum_check.setVisible(True)
             if self._sunburst is not None:
                 self._sunburst.setVisible(self._sunburst_was_visible)
         self._minimize_btn.setText("+" if self._minimized else "−")
@@ -304,49 +362,21 @@ class LegendOverlay(QWidget):
         )
         self.reposition()
 
-    def set_pinned(
-        self,
-        rows: list[tuple[int, str, tuple[int, int, int], int | None]],
-        on_remove: Callable[[int], None],
-    ) -> None:
-        """Populate the pinned "Selected" section (swatch + name + count + ✕).
-
-        `rows` are (class_id, name, rgb, count). An empty list hides the
-        section. Each ✕ button calls `on_remove(class_id)`.
-        """
-        self._purge_grid(self._pinned_grid)
-        if not rows:
-            self._pinned_container.setVisible(False)
-            return
-        for row, (cid, name, color, count) in enumerate(rows):
-            r, g, b = color
-            swatch = QLabel()
-            swatch.setFixedSize(12, 12)
-            swatch.setStyleSheet(
-                f"background-color: rgb({r},{g},{b}); "
-                "border: 1px solid rgba(255,255,255,80);"
-            )
-            name_label = QLabel(name)
-            name_label.setObjectName("legend_pinned_name")
-            count_label = QLabel()
-            count_label.setObjectName("legend_count")
-            count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            if count is not None:
-                count_label.setText(_format_point_count(int(count)))
-                count_label.setToolTip(f"{int(count):,} points")
-            remove = QToolButton()
-            remove.setText("✕")
-            remove.setFixedHeight(18)
-            remove.setMinimumWidth(24)
-            remove.setToolTip("Remove from selection")
-            remove.clicked.connect(lambda _checked=False, c=cid: on_remove(c))
-            self._pinned_grid.addWidget(swatch, row, 0)
-            self._pinned_grid.addWidget(name_label, row, 1)
-            self._pinned_grid.addWidget(count_label, row, 2)
-            self._pinned_grid.addWidget(remove, row, 3)
-        self._pinned_container.setVisible(not self._minimized)
-        self._pinned_inner.update()
-        self.update()
+    def reorder(self, ordered_ids: list[int]) -> None:
+        """Re-lay out the existing rows in `ordered_ids` order, no recreation."""
+        for widgets in self._rows.values():
+            for w in widgets:
+                self._grid.removeWidget(w)
+        row = 0
+        for cid in ordered_ids:
+            widgets = self._rows.get(cid)
+            if widgets is None:
+                continue
+            for col, w in enumerate(widgets):
+                self._grid.addWidget(w, row, col)
+            row += 1
+        self._inner.update()
+        self.reposition()
 
     @staticmethod
     def _purge_grid(grid: QGridLayout) -> None:
@@ -384,6 +414,7 @@ class LegendOverlay(QWidget):
         classes actually present in the loaded cloud.
         """
         self.clear()
+        self._rows = {}
         toggles: dict[int, QCheckBox] = {}
         solo_buttons: dict[int, QToolButton] = {}
         if class_counts is not None:
@@ -420,6 +451,7 @@ class LegendOverlay(QWidget):
             self._grid.addWidget(cb, row, 1)
             self._grid.addWidget(count_label, row, 2)
             self._grid.addWidget(solo, row, 3)
+            self._rows[cid] = (swatch, cb, count_label, solo)
             toggles[cid] = cb
             solo_buttons[cid] = solo
 
@@ -428,6 +460,14 @@ class LegendOverlay(QWidget):
         # collapsing to QScrollArea's tiny default size hint.
         sb_w = self._scroll.verticalScrollBar().sizeHint().width()
         self._scroll.setMinimumWidth(self._inner.sizeHint().width() + sb_w + 4)
+
+        # Align the column headers to the rows: reserve the "Only" column width
+        # so "Points" sits over the counts, and reserve the scrollbar width on
+        # the right so the header doesn't drift when the list scrolls.
+        if visible_ids:
+            first_solo = next(iter(solo_buttons.values()))
+            self._sort_grid.setColumnMinimumWidth(3, first_solo.sizeHint().width())
+        self._sort_grid.setContentsMargins(0, 0, sb_w, 0)
 
         # Record the full content height so reposition() can grow the scroll
         # area up to it when there's room, and give the scroll a small minimum
@@ -449,18 +489,20 @@ class LegendOverlay(QWidget):
         self.setMaximumHeight(cap_h)
         self.setMaximumWidth(max(140, int(parent.width() * 0.5)))
         # Budget the main list's height to whatever remains under the cap once
-        # the header, sunburst and pinned section have taken their (bounded)
-        # space. This keeps the stack from overflowing the cap and overlapping.
+        # the header and sunburst have taken their (bounded) space, so the stack
+        # can't overflow the cap and overlap.
         if not self._minimized:
             chrome = 12 + 4  # outer top/bottom margins + a little spacing slack
             header_h = max(
                 self._minimize_btn.sizeHint().height(), self._title_label.sizeHint().height()
             )
             used = chrome + header_h
+            if self._sort_row.isVisibleTo(self):
+                used += self._sort_row.sizeHint().height() + 4
+            if self._frustum_check.isVisibleTo(self):
+                used += self._frustum_check.sizeHint().height() + 4
             if self._sunburst is not None and self._sunburst.isVisibleTo(self):
                 used += self._sunburst.height() + 4
-            if self._pinned_container.isVisibleTo(self):
-                used += self._pinned_container.sizeHint().height() + 4
             content_h = getattr(self, "_list_content_h", cap_h)
             floor = 2 * getattr(self, "_list_row_h", 18)
             scroll_h = max(floor, min(content_h, cap_h - used))
@@ -469,6 +511,9 @@ class LegendOverlay(QWidget):
         margin = 8
         self.move(parent.width() - self.width() - margin, margin)
         self.raise_()
+        # The overlay is translucent over the GL canvas; nudge the host to
+        # re-render so a shrunk/regrouped layout doesn't ghost stale pixels.
+        self.repaint_requested.emit()
 
     def showEvent(self, event):  # type: ignore[override]
         super().showEvent(event)
@@ -488,6 +533,7 @@ class QtPointCloudViewer(QWidget):
     point_picked_clear = Signal()
     canvas_resized = Signal()
     frustum_picked = Signal(int)
+    pick_mode_changed = Signal(bool)
 
     def __init__(
         self,
@@ -600,6 +646,7 @@ class QtPointCloudViewer(QWidget):
         # Floating legend pinned to the canvas's top-right corner. Hidden until
         # _build_legend in the launcher populates it after a run loads.
         self.legend_overlay = LegendOverlay(self._canvas_container)
+        self.legend_overlay.repaint_requested.connect(self._render_canvas_safe)
         self._canvas_container.installEventFilter(self)
 
         self._plotter: QtInteractor | None = None
@@ -630,10 +677,14 @@ class QtPointCloudViewer(QWidget):
         self._picked_actor_inner = None
         self._picked_actor_outer = None
         self._pick_2d_actors: list[object] = []
+        self._pick_line_sources: list[object] = []
+        self._pick_ring_sources: list[object] = []
         self._picked_xyz: tuple[float, float, float] | None = None
         self._picked_color: tuple[int, int, int] = (255, 220, 60)
         self._picked_leader_target: tuple[float, float] | None = None
         self._pick_camera_obs_id: int | None = None
+        self._pick_mode_enabled: bool = False
+        self._prev_interactor_style: object | None = None
 
         self._frame_panel_cache: dict[int, np.ndarray] = {}
 
@@ -695,23 +746,87 @@ class QtPointCloudViewer(QWidget):
         if self._picking_enabled or self._plotter is None:
             return
         try:
-            # tolerance is in normalised viewport units (default 0.025). At
-            # the default the picker often snaps to a neighbour of the point
-            # under the cursor in dense clouds; doubling it makes the click
-            # land on the visually-closest point reliably.
+            # tolerance is in normalised viewport units. A larger value
+            # widens the search radius around the click ray, which in dense
+            # multi-class clouds lets the picker snap to a point that's
+            # *near the ray* but visually far from the cursor — picks feel
+            # random. Keep this tight so picks land on the point under the
+            # crosshair.
             self._plotter.enable_point_picking(
                 callback=self._on_point_picked,
                 show_message=False,
                 show_point=False,
                 left_clicking=True,
                 use_mesh=True,
-                tolerance=0.05,
+                tolerance=0.012,
             )
             self._picking_enabled = True
         except Exception:
             logger.debug("enable_point_picking unavailable", exc_info=True)
 
+    def _render_canvas_safe(self) -> None:
+        """Force a GL re-render (e.g. after the legend overlay relayouts).
+
+        Without this, the translucent overlay leaves stale pixels ghosting on
+        the GL surface until the camera moves and triggers a redraw.
+        """
+        if self._plotter is None:
+            return
+        try:
+            self._plotter.render()
+        except Exception:
+            pass
+
+    def set_pick_mode(self, enabled: bool) -> None:
+        """Toggle modal pick mode.
+
+        While enabled: left-click picks a point and orbit is suspended (we
+        swap to vtkInteractorStyleUser, a passive style that doesn't drive
+        the camera). Cursor turns into a crosshair. While disabled: trackball
+        is restored and left-click manipulates the camera as usual.
+        """
+        enabled = bool(enabled)
+        if enabled == self._pick_mode_enabled:
+            return
+        plotter = self._plotter
+        if enabled:
+            if plotter is not None:
+                try:
+                    import vtkmodules.vtkInteractionStyle  # noqa: F401  (registers styles)
+                    from vtkmodules.vtkInteractionStyle import vtkInteractorStyleUser
+
+                    iren = plotter.iren
+                    self._prev_interactor_style = iren.GetInteractorStyle()
+                    iren.SetInteractorStyle(vtkInteractorStyleUser())
+                except Exception:
+                    logger.debug("Could not swap interactor style for pick mode", exc_info=True)
+                    self._prev_interactor_style = None
+            try:
+                self._canvas_container.setCursor(Qt.CrossCursor)
+            except Exception:
+                pass
+            self._pick_mode_enabled = True
+        else:
+            if plotter is not None and self._prev_interactor_style is not None:
+                try:
+                    plotter.iren.SetInteractorStyle(self._prev_interactor_style)
+                except Exception:
+                    logger.debug("Could not restore interactor style", exc_info=True)
+            self._prev_interactor_style = None
+            try:
+                self._canvas_container.unsetCursor()
+            except Exception:
+                pass
+            self._pick_mode_enabled = False
+        self.pick_mode_changed.emit(self._pick_mode_enabled)
+
     def _on_point_picked(self, mesh, point_id) -> None:
+        # Picks only count while in pick mode. Outside of it the picker may
+        # still fire (pyvista's left-click observer stays installed for
+        # performance simplicity), but we silently ignore the event so the
+        # user can left-drag to orbit without phantom picks.
+        if not self._pick_mode_enabled:
+            return
         if self._final_index is None or self._plotter is None:
             self.point_picked_clear.emit()
             return
@@ -814,7 +929,36 @@ class QtPointCloudViewer(QWidget):
         sphere to a screen-space tooltip card. The world XYZ + leader target
         are cached so a camera-modified observer can redraw the 2D overlay
         with a recomputed anchor as the user orbits.
+
+        On repeated calls with the same picked XYZ this only mutates the
+        cached 2D source geometry — no actor allocation, no sphere recreate,
+        no flicker.
         """
+        if self._plotter is None:
+            return
+        new_xyz = (float(xyz[0]), float(xyz[1]), float(xyz[2]))
+        actors_present = (
+            self._picked_actor_inner is not None
+            or self._pick_line_sources
+            or self._pick_ring_sources
+        )
+        if (
+            actors_present
+            and self._picked_xyz is not None
+            and self._picked_xyz == new_xyz
+        ):
+            if anchor_display is not None:
+                self.update_pick_anchor(anchor_display, leader_target_display)
+            return
+        self._build_pick_actors(new_xyz, color, anchor_display, leader_target_display)
+
+    def _build_pick_actors(
+        self,
+        xyz: tuple[float, float, float],
+        color: tuple[int, int, int],
+        anchor_display: tuple[float, float] | None,
+        leader_target_display: tuple[float, float] | None,
+    ) -> None:
         if self._plotter is None:
             return
         import pyvista as pv
@@ -869,6 +1013,45 @@ class QtPointCloudViewer(QWidget):
             # Some pyvistaqt builds need an extra render-window flush before
             # the 2D actors actually appear on screen.
             self._plotter.iren.GetRenderWindow().Render()
+        except Exception:
+            pass
+
+    def update_pick_anchor(
+        self,
+        anchor_display: tuple[float, float],
+        leader_target_display: tuple[float, float] | None,
+    ) -> None:
+        """Light update path: mutate cached 2D source geometry in place.
+
+        Used on every camera-modified / canvas-resize event while a pick is
+        active. Skips the full actor teardown + recreate that
+        ``_build_pick_actors`` does, so an orbit stays smooth.
+        """
+        if self._plotter is None:
+            return
+        if not self._pick_line_sources and not self._pick_ring_sources:
+            return
+        ax, ay = float(anchor_display[0]), float(anchor_display[1])
+        if leader_target_display is not None:
+            tx, ty = float(leader_target_display[0]), float(leader_target_display[1])
+        else:
+            tx, ty = ax, ay
+        self._picked_leader_target = leader_target_display
+        for src in self._pick_line_sources:
+            try:
+                src.SetPoint1(ax, ay, 0.0)
+                src.SetPoint2(tx, ty, 0.0)
+                src.Modified()
+            except Exception:
+                continue
+        for src in self._pick_ring_sources:
+            try:
+                src.SetCenter(ax, ay, 0.0)
+                src.Modified()
+            except Exception:
+                continue
+        try:
+            self._plotter.render()
         except Exception:
             pass
 
@@ -961,6 +1144,9 @@ class QtPointCloudViewer(QWidget):
             line_actor.GetProperty().SetOpacity(opacity)
             renderer.AddActor2D(line_actor)
             self._pick_2d_actors.append(line_actor)
+            # Cache the source so `update_pick_anchor` can move the line
+            # without reallocating the actor each camera frame.
+            self._pick_line_sources.append(line_src)
 
         def _add_ring(radius, rgb, width, opacity=1.0):
             src = vtk.vtkRegularPolygonSource()
@@ -978,6 +1164,7 @@ class QtPointCloudViewer(QWidget):
             ring_actor.GetProperty().SetOpacity(opacity)
             renderer.AddActor2D(ring_actor)
             self._pick_2d_actors.append(ring_actor)
+            self._pick_ring_sources.append(src)
 
         if leader_target_display is not None:
             tgt = (float(leader_target_display[0]), float(leader_target_display[1]))
@@ -997,7 +1184,20 @@ class QtPointCloudViewer(QWidget):
             self._picked_actor_inner = None
             self._picked_actor_outer = None
             self._pick_2d_actors = []
+            self._pick_line_sources = []
+            self._pick_ring_sources = []
+            self._pick_camera_obs_id = None
             return
+        # Detach the camera observer first so a mid-clear ModifiedEvent can't
+        # re-emit canvas_resized into a half-torn-down state.
+        if self._pick_camera_obs_id is not None:
+            try:
+                cam = self._plotter.renderer.GetActiveCamera()
+                if cam is not None:
+                    cam.RemoveObserver(self._pick_camera_obs_id)
+            except Exception:
+                logger.debug("Could not remove pick camera observer", exc_info=True)
+            self._pick_camera_obs_id = None
         for attr in ("_picked_actor_outer", "_picked_actor_inner"):
             actor = getattr(self, attr, None)
             if actor is None:
@@ -1019,6 +1219,8 @@ class QtPointCloudViewer(QWidget):
             except Exception:
                 pass
         self._pick_2d_actors = []
+        self._pick_line_sources = []
+        self._pick_ring_sources = []
         try:
             self._plotter.render()
         except Exception:

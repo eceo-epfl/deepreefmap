@@ -515,6 +515,132 @@ def test_window_creates(qapp):
     assert window.windowTitle() == "DeepReefMap"
 
 
+def test_legend_overlay_reorder_places_rows(qapp):
+    from PySide6.QtWidgets import QWidget
+
+    from deepreefmap.visualization.qt_viewer import LegendOverlay
+
+    parent = QWidget()
+    ov = LegendOverlay(parent)
+    names = {1: "alpha", 2: "beta", 3: "gamma"}
+    colors = {1: (1, 1, 1), 2: (2, 2, 2), 3: (3, 3, 3)}
+    ov.rebuild([1, 2, 3], names, colors, on_toggle=lambda: None, class_counts={1: 10, 2: 20, 3: 30})
+    ov.reorder([3, 1, 2])
+
+    def row_of(cid: int) -> int:
+        cb = ov._rows[cid][1]
+        return ov._grid.getItemPosition(ov._grid.indexOf(cb))[0]
+
+    assert row_of(3) < row_of(1) < row_of(2)
+
+
+def test_legend_sort_selected_first_puts_checked_above_unchecked(qapp):
+    pytest.importorskip("torch", reason="torch not loadable on this machine")
+    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+
+    cc = load_classes(DEFAULT_CLASSES_PATH)
+    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    window._build_legend()
+    cids = list(window._legend_toggles.keys())
+    assert len(cids) >= 3
+    window._legend_toggles[cids[0]].setChecked(False)
+    window._legend_toggles[cids[1]].setChecked(False)
+
+    order = window._legend_sort_order()
+    enabled = window._enabled_class_set()
+    last_visible = max(i for i, c in enumerate(order) if c in enabled)
+    first_hidden = min(i for i, c in enumerate(order) if c not in enabled)
+    assert last_visible < first_hidden
+
+
+def test_legend_sort_header_click_toggles_direction(qapp):
+    pytest.importorskip("torch", reason="torch not loadable on this machine")
+    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+
+    cc = load_classes(DEFAULT_CLASSES_PATH)
+    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    window._build_legend()
+    assert (window._legend_sort_mode, window._legend_sort_ascending) == ("selected", False)
+
+    window._on_legend_sort_clicked("name")  # new column adopts its default (A–Z)
+    assert (window._legend_sort_mode, window._legend_sort_ascending) == ("name", True)
+    window._on_legend_sort_clicked("name")  # same column flips direction
+    assert window._legend_sort_ascending is False
+    window._on_legend_sort_clicked("size")  # new column adopts default (largest first)
+    assert (window._legend_sort_mode, window._legend_sort_ascending) == ("size", False)
+
+
+def test_pie_click_toggles_selection(qapp):
+    pytest.importorskip("torch", reason="torch not loadable on this machine")
+    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+
+    cc = load_classes(DEFAULT_CLASSES_PATH)
+    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    window._build_legend()
+    cids = list(window._legend_toggles.keys())
+    assert len(cids) >= 2
+
+    window._on_deselect_all_classes()
+    assert window._enabled_class_set() == frozenset()
+    window._on_sunburst_selection([cids[0]])  # add
+    assert window._enabled_class_set() == frozenset({cids[0]})
+    window._on_sunburst_selection([cids[1]])  # additive, keeps the first
+    assert window._enabled_class_set() == frozenset({cids[0], cids[1]})
+    window._on_sunburst_selection([cids[0]])  # re-click removes it
+    assert window._enabled_class_set() == frozenset({cids[1]})
+
+
+def test_master_checkbox_select_deselect_and_partial(qapp):
+    pytest.importorskip("torch", reason="torch not loadable on this machine")
+    from PySide6.QtCore import Qt
+
+    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+
+    cc = load_classes(DEFAULT_CLASSES_PATH)
+    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    window._build_legend()
+    present = frozenset(window._legend_toggles.keys())
+    master = window._viewer.legend_overlay._master_check
+
+    assert window._enabled_class_set() == present  # all on at build
+    window._on_master_clicked()  # all -> none
+    assert window._enabled_class_set() == frozenset()
+    window._on_master_clicked()  # none -> all
+    assert window._enabled_class_set() == present
+
+    next(iter(window._legend_toggles.values())).setChecked(False)
+    window._update_master_check()
+    assert master.checkState() == Qt.CheckState.PartiallyChecked
+
+
+def test_sunburst_reflects_selection(qapp):
+    pytest.importorskip("torch", reason="torch not loadable on this machine")
+    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+
+    cc = load_classes(DEFAULT_CLASSES_PATH)
+    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    # The sunburst sync runs through _on_viewer_control_changed, which only acts
+    # once the viewer has scene data (as when a run is loaded).
+    window._viewer.apply_state = lambda **k: None
+    type(window._viewer).has_scene_data = property(lambda self: True)
+    window._build_legend()
+    sb = window._cover_sunburst
+
+    assert sb._selection_active is False  # all selected at build -> no dimming
+    window._on_deselect_all_classes()
+    assert sb._selection_active is True and sb._selected_ids == frozenset()
+    cids = list(window._legend_toggles.keys())
+    window._on_sunburst_selection([cids[0]])
+    assert sb._selected_ids == frozenset({cids[0]}) and sb._selection_active is True
+    window._on_show_all_classes()
+    assert sb._selection_active is False
+
+
 # --- Batch CSV parser ---
 
 def test_parse_timestamp_range_full():

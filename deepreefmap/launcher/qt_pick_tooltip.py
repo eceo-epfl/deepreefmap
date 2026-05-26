@@ -3,7 +3,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -27,10 +28,13 @@ class PickCard(QFrame):
     isolate_requested = Signal(int)
     show_all_requested = Signal()
     close_requested = Signal()
+    moved = Signal(int, int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setCursor(Qt.SizeAllCursor)
+        self._drag_offset: QPoint | None = None
         self.setStyleSheet(
             """
             PickCard {
@@ -76,6 +80,7 @@ class PickCard(QFrame):
         close_btn.setText("×")
         close_btn.setFixedSize(16, 16)
         close_btn.setToolTip("Close")
+        close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.clicked.connect(self.close_requested.emit)
         header.addWidget(self._swatch)
         header.addWidget(self._name_label, 1)
@@ -92,8 +97,10 @@ class PickCard(QFrame):
         actions = QHBoxLayout()
         actions.setSpacing(6)
         self._isolate_btn = QPushButton("Isolate this class")
+        self._isolate_btn.setCursor(Qt.PointingHandCursor)
         self._isolate_btn.clicked.connect(self._emit_isolate)
         self._show_all_btn = QPushButton("Show all")
+        self._show_all_btn.setCursor(Qt.PointingHandCursor)
         self._show_all_btn.clicked.connect(self.show_all_requested.emit)
         actions.addWidget(self._isolate_btn)
         actions.addWidget(self._show_all_btn)
@@ -127,3 +134,38 @@ class PickCard(QFrame):
         else:
             self._conf_label.setText(f"confidence: {conf:.3f}")
         self.adjustSize()
+
+    def mousePressEvent(self, ev: QMouseEvent) -> None:
+        # Clicks on child buttons are routed to the button (it consumes them),
+        # so this only fires when the user grabs the card background, header,
+        # or one of the read-only labels — exactly the "draggable" surface.
+        if ev.button() == Qt.LeftButton:
+            self._drag_offset = ev.position().toPoint()
+            self.setCursor(Qt.ClosedHandCursor)
+            ev.accept()
+            return
+        super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev: QMouseEvent) -> None:
+        if self._drag_offset is None or not (ev.buttons() & Qt.LeftButton):
+            super().mouseMoveEvent(ev)
+            return
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        global_pt = ev.globalPosition().toPoint()
+        new_top_left = parent.mapFromGlobal(global_pt) - self._drag_offset
+        margin = 0
+        nx = max(margin, min(new_top_left.x(), parent.width() - self.width() - margin))
+        ny = max(margin, min(new_top_left.y(), parent.height() - self.height() - margin))
+        self.move(nx, ny)
+        self.moved.emit(nx, ny)
+        ev.accept()
+
+    def mouseReleaseEvent(self, ev: QMouseEvent) -> None:
+        if ev.button() == Qt.LeftButton and self._drag_offset is not None:
+            self._drag_offset = None
+            self.setCursor(Qt.SizeAllCursor)
+            ev.accept()
+            return
+        super().mouseReleaseEvent(ev)
