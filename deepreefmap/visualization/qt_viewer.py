@@ -384,10 +384,68 @@ class QtPointCloudViewer(QWidget):
         frames_layout.addWidget(self._rgb_label, 1)
         frames_layout.addWidget(self._seg_label, 1)
         frames_outer.addWidget(frames_row, 1)
+
+        # Slider bar: a fat, hard-to-miss timeline control with a Frame N / N
+        # readout to the right. The slider is the primary way the user scrubs
+        # through the reconstruction, so we give it a tall handle, a clear
+        # groove, and tick marks.
+        slider_row = QWidget()
+        slider_row.setStyleSheet("background-color: #202020;")
+        slider_layout = QHBoxLayout(slider_row)
+        slider_layout.setContentsMargins(8, 4, 8, 6)
+        slider_layout.setSpacing(8)
+        slider_label = QLabel("Frame")
+        slider_label.setStyleSheet("color: #ccc; font-weight: bold;")
+        slider_layout.addWidget(slider_label)
         self.frame_slider = QSlider(Qt.Horizontal)
         self.frame_slider.setRange(0, 0)
         self.frame_slider.setValue(0)
-        frames_outer.addWidget(self.frame_slider)
+        self.frame_slider.setMinimumHeight(34)
+        self.frame_slider.setTickPosition(QSlider.TicksBelow)
+        self.frame_slider.setTickInterval(0)
+        self.frame_slider.setStyleSheet(
+            """
+            QSlider::groove:horizontal {
+                height: 10px;
+                background: #3a3a3a;
+                border: 1px solid #555;
+                border-radius: 5px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #4aa3ff;
+                border: 1px solid #2a78c8;
+                border-radius: 5px;
+            }
+            QSlider::add-page:horizontal {
+                background: #2a2a2a;
+                border: 1px solid #555;
+                border-radius: 5px;
+            }
+            QSlider::handle:horizontal {
+                background: #f0f0f0;
+                border: 2px solid #2a78c8;
+                width: 18px;
+                height: 26px;
+                margin: -10px 0;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal:hover { background: #ffffff; }
+            QSlider::tick:horizontal { background: #777; }
+            """
+        )
+        slider_layout.addWidget(self.frame_slider, 1)
+        self._frame_readout = QLabel("0 / 0")
+        self._frame_readout.setStyleSheet(
+            "color: #e8e8e8; font-family: monospace; min-width: 80px;"
+        )
+        self._frame_readout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        slider_layout.addWidget(self._frame_readout)
+        # Keep the readout in sync with the slider regardless of who moves it.
+        self.frame_slider.valueChanged.connect(self._update_frame_readout)
+        self.frame_slider.rangeChanged.connect(
+            lambda _lo, _hi: self._update_frame_readout(self.frame_slider.value())
+        )
+        frames_outer.addWidget(slider_row)
 
         self._main_splitter = QSplitter(Qt.Vertical)
         self._canvas_container = QWidget()
@@ -437,6 +495,10 @@ class QtPointCloudViewer(QWidget):
         self._picked_actor_inner = None
         self._picked_actor_outer = None
         self._pick_2d_actors: list[object] = []
+        self._picked_xyz: tuple[float, float, float] | None = None
+        self._picked_color: tuple[int, int, int] = (255, 220, 60)
+        self._picked_leader_target: tuple[float, float] | None = None
+        self._pick_camera_obs_id: int | None = None
 
         self._frame_panel_cache: dict[int, np.ndarray] = {}
 
@@ -449,6 +511,15 @@ class QtPointCloudViewer(QWidget):
         self._sig_close.connect(self._on_close)
 
         self._status_callback: Callable[..., None] | None = None
+
+    def _update_frame_readout(self, value: int) -> None:
+        total = max(0, self.frame_slider.maximum())
+        # Display 1-indexed (matches video-frame numbering users expect) but
+        # only when a range is available; otherwise show 0 / 0.
+        if total <= 0:
+            self._frame_readout.setText("0 / 0")
+        else:
+            self._frame_readout.setText(f"{int(value) + 1} / {total + 1}")
 
     def set_status_callback(self, cb: Callable[..., None]) -> None:
         self._status_callback = cb
@@ -489,12 +560,17 @@ class QtPointCloudViewer(QWidget):
         if self._picking_enabled or self._plotter is None:
             return
         try:
+            # tolerance is in normalised viewport units (default 0.025). At
+            # the default the picker often snaps to a neighbour of the point
+            # under the cursor in dense clouds; doubling it makes the click
+            # land on the visually-closest point reliably.
             self._plotter.enable_point_picking(
                 callback=self._on_point_picked,
                 show_message=False,
                 show_point=False,
                 left_clicking=True,
                 use_mesh=True,
+                tolerance=0.05,
             )
             self._picking_enabled = True
         except Exception:
@@ -597,10 +673,12 @@ class QtPointCloudViewer(QWidget):
         anchor_display: tuple[float, float] | None = None,
         leader_target_display: tuple[float, float] | None = None,
     ) -> None:
-        """Mark the picked point with a small translucent class-coloured sphere.
+        """Mark the picked point with a big translucent class-coloured sphere.
 
         Optional 2D leader line and outline ring in display coords connect the
-        sphere to a screen-space tooltip card.
+        sphere to a screen-space tooltip card. The world XYZ + leader target
+        are cached so a camera-modified observer can redraw the 2D overlay
+        with a recomputed anchor as the user orbits.
         """
         if self._plotter is None:
             return
@@ -614,8 +692,8 @@ class QtPointCloudViewer(QWidget):
             actor = self._plotter.add_mesh(
                 pd,
                 color=(r / 255.0, g / 255.0, b / 255.0),
-                point_size=14.0,
-                opacity=0.55,
+                point_size=26.0,
+                opacity=0.75,
                 render_points_as_spheres=True,
                 style="points",
                 name="picked_marker",
@@ -625,8 +703,8 @@ class QtPointCloudViewer(QWidget):
             actor = self._plotter.add_mesh(
                 pd,
                 color=(r / 255.0, g / 255.0, b / 255.0),
-                point_size=14.0,
-                opacity=0.55,
+                point_size=26.0,
+                opacity=0.75,
                 render_points_as_spheres=True,
                 style="points",
                 name="picked_marker",
@@ -641,12 +719,16 @@ class QtPointCloudViewer(QWidget):
             except Exception:
                 pass
 
+        self._picked_xyz = (float(xyz[0]), float(xyz[1]), float(xyz[2]))
+        self._picked_color = (int(r), int(g), int(b))
+        self._picked_leader_target = leader_target_display
         if anchor_display is not None:
             self._add_pick_2d_overlay(
                 anchor_display,
                 leader_target_display,
                 (r, g, b),
             )
+        self._install_pick_camera_observer()
         try:
             self._plotter.render()
             # Some pyvistaqt builds need an extra render-window flush before
@@ -654,6 +736,54 @@ class QtPointCloudViewer(QWidget):
             self._plotter.iren.GetRenderWindow().Render()
         except Exception:
             pass
+
+    def _install_pick_camera_observer(self) -> None:
+        """Re-emit canvas_resized whenever the camera moves while a pick is active.
+
+        The launcher's refresh handler then recomputes the anchor from the
+        picked world XYZ and redraws the 2D leader line + ring, so the line
+        stays visually connected to the moving point instead of floating at
+        its original click position.
+        """
+        if self._plotter is None or self._pick_camera_obs_id is not None:
+            return
+        try:
+            cam = self._plotter.renderer.GetActiveCamera()
+        except Exception:
+            return
+        if cam is None:
+            return
+
+        def _on_camera_modified(_caller, _event):
+            if self._picked_xyz is None:
+                return
+            self.canvas_resized.emit()
+
+        try:
+            self._pick_camera_obs_id = cam.AddObserver(
+                "ModifiedEvent", _on_camera_modified
+            )
+        except Exception:
+            logger.debug("Could not attach camera observer for pick marker", exc_info=True)
+
+    def world_to_display(
+        self, xyz: tuple[float, float, float]
+    ) -> tuple[float, float] | None:
+        """Project a world-space point to plotter display coords (bottom-origin)."""
+        if self._plotter is None:
+            return None
+        try:
+            renderer = self._plotter.renderer
+            renderer.SetWorldPoint(float(xyz[0]), float(xyz[1]), float(xyz[2]), 1.0)
+            renderer.WorldToDisplay()
+            dx, dy, _dz = renderer.GetDisplayPoint()
+            return (float(dx), float(dy))
+        except Exception:
+            return None
+
+    @property
+    def picked_xyz(self) -> tuple[float, float, float] | None:
+        return self._picked_xyz
 
     def _add_pick_2d_overlay(
         self,
@@ -717,14 +847,17 @@ class QtPointCloudViewer(QWidget):
         if leader_target_display is not None:
             tgt = (float(leader_target_display[0]), float(leader_target_display[1]))
             # Black stroke under, white over: stays readable against any background.
-            _add_line((ax, ay), tgt, (0.0, 0.0, 0.0), 3.0, 0.95)
-            _add_line((ax, ay), tgt, (1.0, 1.0, 1.0), 1.2, 0.95)
+            _add_line((ax, ay), tgt, (0.0, 0.0, 0.0), 4.0, 0.95)
+            _add_line((ax, ay), tgt, (1.0, 1.0, 1.0), 1.8, 0.95)
 
-        # Sphere is point_size 14 (~14px diameter); a 10/8 ring frames it.
-        _add_ring(10.0, (0.0, 0.0, 0.0), 2.5, 0.95)
-        _add_ring(8.5, (r / 255.0, g / 255.0, b / 255.0), 1.5, 1.0)
+        # Sphere is point_size 26 (~26px diameter); ring radii frame it with a
+        # heavy black outline for contrast against any cloud colour.
+        _add_ring(18.0, (0.0, 0.0, 0.0), 3.5, 0.95)
+        _add_ring(15.5, (r / 255.0, g / 255.0, b / 255.0), 2.0, 1.0)
 
     def clear_picked_marker(self) -> None:
+        self._picked_xyz = None
+        self._picked_leader_target = None
         if self._plotter is None:
             self._picked_actor_inner = None
             self._picked_actor_outer = None

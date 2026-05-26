@@ -195,6 +195,9 @@ class ViewerControlsMixin:
 
         self._pick_card.set_payload(payload)
         self._last_pick_payload = dict(payload)
+        # Fresh pick — let _refresh_pick_marker place the card next to this
+        # click rather than reuse the previous pin.
+        self._pick_card_pinned_pos = None
         self._refresh_pick_marker()
 
     def _on_point_picked_clear(self) -> None:
@@ -204,6 +207,7 @@ class ViewerControlsMixin:
         if self._pick_card is not None:
             self._pick_card.hide()
         self._last_pick_payload = None
+        self._pick_card_pinned_pos = None
         try:
             self._viewer.clear_picked_marker()
         except Exception:
@@ -217,10 +221,11 @@ class ViewerControlsMixin:
     def _refresh_pick_marker(self) -> None:
         """Place the pick card and tell the viewer where to draw line/ring.
 
-        `screen_xy` arrives in plotter-local Qt pixels (top-origin from
-        `_on_point_picked` in the viewer). We position the card in
-        canvas-container coords, then compute display-space (bottom-origin)
-        endpoints for the VTK 2D ring + leader line.
+        Card position is pinned to the screen at the moment of the initial
+        click and stays there for subsequent refreshes. The leader line's
+        anchor end is re-projected from the picked world XYZ on every
+        refresh (initial pick, canvas resize, camera-modified) so the line
+        stays visually attached to the 3D point as the user orbits.
         """
         from PySide6.QtCore import QPoint
 
@@ -231,14 +236,34 @@ class ViewerControlsMixin:
             return
         canvas = self._viewer._canvas_container
         plotter = getattr(self._viewer, "_plotter", None)
+
+        # Live anchor: project the picked world XYZ to plotter-local Qt pixels
+        # (top-origin). Falls back to the click-time screen_xy when no plotter
+        # exists yet.
+        xyz_world = payload.get("xyz")
         screen_xy = payload.get("screen_xy", (0, 0))
-        plotter_x_qt = int(screen_xy[0])
-        plotter_y_qt = int(screen_xy[1])
-        if plotter is not None:
-            canvas_pt = plotter.mapTo(canvas, QPoint(plotter_x_qt, plotter_y_qt))
-            cx, cy = canvas_pt.x(), canvas_pt.y()
+        if xyz_world is not None and plotter is not None:
+            disp = self._viewer.world_to_display(
+                (float(xyz_world[0]), float(xyz_world[1]), float(xyz_world[2]))
+            )
+            if disp is not None:
+                plotter_h = max(1, plotter.height())
+                anchor_plotter_x = int(round(disp[0]))
+                anchor_plotter_y = int(round(plotter_h - disp[1]))
+            else:
+                anchor_plotter_x = int(screen_xy[0])
+                anchor_plotter_y = int(screen_xy[1])
         else:
-            cx, cy = plotter_x_qt, plotter_y_qt
+            anchor_plotter_x = int(screen_xy[0])
+            anchor_plotter_y = int(screen_xy[1])
+
+        if plotter is not None:
+            anchor_canvas = plotter.mapTo(
+                canvas, QPoint(anchor_plotter_x, anchor_plotter_y)
+            )
+            anchor_cx, anchor_cy = anchor_canvas.x(), anchor_canvas.y()
+        else:
+            anchor_cx, anchor_cy = anchor_plotter_x, anchor_plotter_y
 
         self._pick_card.adjustSize()
         card_w = self._pick_card.width()
@@ -246,16 +271,28 @@ class ViewerControlsMixin:
         margin = 8
         offset = 18
 
-        x = cx + offset
-        if x + card_w > canvas.width() - margin:
-            x = cx - offset - card_w
-        x = max(margin, min(x, max(margin, canvas.width() - card_w - margin)))
+        # First-time placement: position the card near the click. On
+        # subsequent refreshes (camera-modified, canvas-resize) keep the card
+        # where it already is so it doesn't chase the cursor or jitter.
+        if self._pick_card_pinned_pos is None:
+            init_cx, init_cy = anchor_cx, anchor_cy
+            x = init_cx + offset
+            if x + card_w > canvas.width() - margin:
+                x = init_cx - offset - card_w
+            y = init_cy + offset
+            if y + card_h > canvas.height() - margin:
+                y = init_cy - offset - card_h
+            x = max(margin, min(x, max(margin, canvas.width() - card_w - margin)))
+            y = max(margin, min(y, max(margin, canvas.height() - card_h - margin)))
+            self._pick_card_pinned_pos = (x, y)
+        else:
+            # Reclamp in case the canvas shrank since the card was placed.
+            px, py = self._pick_card_pinned_pos
+            px = max(margin, min(px, max(margin, canvas.width() - card_w - margin)))
+            py = max(margin, min(py, max(margin, canvas.height() - card_h - margin)))
+            self._pick_card_pinned_pos = (px, py)
 
-        y = cy + offset
-        if y + card_h > canvas.height() - margin:
-            y = cy - offset - card_h
-        y = max(margin, min(y, max(margin, canvas.height() - card_h - margin)))
-
+        x, y = self._pick_card_pinned_pos
         self._pick_card.move(x, y)
         self._pick_card.show()
         self._pick_card.raise_()
@@ -266,11 +303,15 @@ class ViewerControlsMixin:
         leader_display = None
         if plotter is not None:
             plotter_h = max(1, plotter.height())
-            anchor_display = (float(plotter_x_qt), float(plotter_h - plotter_y_qt))
-            # Closest point on the card edge, then map back to plotter coords.
+            anchor_display = (
+                float(anchor_plotter_x),
+                float(plotter_h - anchor_plotter_y),
+            )
+            # Closest point on the (pinned) card edge to the live anchor,
+            # mapped back to plotter coords.
             card_rect = self._pick_card.geometry()
-            cx_target = max(card_rect.left(), min(cx, card_rect.right()))
-            cy_target = max(card_rect.top(), min(cy, card_rect.bottom()))
+            cx_target = max(card_rect.left(), min(anchor_cx, card_rect.right()))
+            cy_target = max(card_rect.top(), min(anchor_cy, card_rect.bottom()))
             plotter_origin_in_canvas = plotter.mapTo(canvas, QPoint(0, 0))
             tx_plotter = cx_target - plotter_origin_in_canvas.x()
             ty_plotter = cy_target - plotter_origin_in_canvas.y()

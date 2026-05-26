@@ -152,10 +152,13 @@ class FormPanelMixin:
         # system DPI / font size (Windows scaling, Linux Hi-DPI, etc.).
         em = max(1, view.fontMetrics().height())
         view.setMinimumWidth(em * 36)
-        # Auto-resize horizontally if needed so long fact strings have room.
+        # Adjust on first show only so a freshly-selected long path doesn't
+        # widen the combo (and through it the top bar, and through it the whole
+        # window) past a comfortable size. Long entries are elided instead.
         self._past_runs_combo.setSizeAdjustPolicy(
-            QComboBox.SizeAdjustPolicy.AdjustToContents
+            QComboBox.SizeAdjustPolicy.AdjustToContentsOnFirstShow
         )
+        self._past_runs_combo.setMaximumWidth(360)
 
         # "+" icon button on the far left of the top bar starts a fresh
         # reconstruction (clears the viewer + resets the past-run selection).

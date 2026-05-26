@@ -90,6 +90,11 @@ class DeepReefMapWindow(
 
         self.setWindowTitle("DeepReefMap")
         self.resize(1400, 900)
+        # Explicit floor so the window can always be shrunk back after the user
+        # enlarges it. Without this, Qt's computed minimumSize follows whichever
+        # child currently sizes the widest (e.g. the past-runs combo after it
+        # adopts a long path string), and the window gets stuck at that width.
+        self.setMinimumSize(720, 480)
 
         from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
 
@@ -104,6 +109,7 @@ class DeepReefMapWindow(
         self._viewer.frustum_picked.connect(self._on_frustum_picked)
         self._pick_card = None
         self._last_pick_payload = None
+        self._pick_card_pinned_pos: tuple[int, int] | None = None
 
         # Build the form first so widgets it references (status_label, etc.)
         # are constructed before we wire them into the top toolbar.
