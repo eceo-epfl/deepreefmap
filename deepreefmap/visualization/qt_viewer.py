@@ -1342,6 +1342,62 @@ class QtPointCloudViewer(QWidget):
         self._reveal_canvas()
         self._notify_status("scene_loaded")
 
+    def load_scene_data_indexed(
+        self,
+        frame_batch: object,
+        mapping_result: object,
+        final_cloud_index: FinalCloudIndex,
+        classes_config: object,
+    ) -> None:
+        """Like load_scene_data but accepts a pre-built FinalCloudIndex."""
+        import pyvista as pv
+
+        self._clear_scene_data()
+        plotter = self._ensure_plotter()
+        self._frame_batch = frame_batch
+        self._mapping_result = mapping_result
+
+        self._final_index = final_cloud_index
+        self._live_cache = LiveFrameCloudCache(
+            frame_batch, mapping_result, self._final_index.frame_order,
+        )
+        self._max_label_id = max(
+            (max(self._class_colors.keys(), default=0)),
+            max(self._final_index.class_ids, default=0),
+        )
+
+        n_classes = len(self._final_index.class_ids)
+        for i, cid in enumerate(self._final_index.class_ids):
+            if i == 0 or (i & 0x3) == 0 or i == n_classes - 1:
+                self._emit_setup("Preparing class actors", i, n_classes)
+            empty = pv.PolyData(np.zeros((1, 3), dtype=np.float32))
+            empty["colors"] = np.zeros((1, 3), dtype=np.uint8)
+            actor = plotter.add_mesh(
+                empty, scalars="colors", rgb=True, point_size=2.0,
+                style="points", name=f"class_{cid}",
+            )
+            actor.SetVisibility(False)
+            self._class_actors[cid] = actor
+            self._class_polydata[cid] = empty
+        self._emit_setup("Preparing class actors", n_classes, n_classes)
+
+        self._build_frustums(frame_batch, mapping_result)
+
+        if self._final_index.class_ids:
+            self._emit_setup("Fitting camera", 0, 0)
+            all_xyz = [
+                self._final_index.xyz_by_class[c]
+                for c in self._final_index.class_ids
+                if c in self._final_index.xyz_by_class
+            ]
+            if all_xyz:
+                combined = np.concatenate(all_xyz, axis=0)
+                if combined.shape[0] > 0:
+                    self._auto_fit_camera(combined)
+
+        self._reveal_canvas()
+        self._notify_status("scene_loaded")
+
     def _emit_setup(self, message: str, current: int, total: int) -> None:
         """Forward a one-off setup-progress event to the GUI status callback.
 

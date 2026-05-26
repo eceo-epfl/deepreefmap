@@ -190,6 +190,53 @@ def reconstruct(
     )
 
 
+@app.command("gen-scene")
+def gen_scene(
+    run_dir: Path = typer.Argument(..., exists=True, file_okay=False, help="Run output directory."),
+    force: bool = typer.Option(False, "--force", help="Regenerate even if the scene file already exists."),
+) -> None:
+    """Generate a quick-load scene file from an existing run directory."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    from deepreefmap.io.scene_file import SCENE_FILE_NAME, save_scene_file
+    from deepreefmap.pipeline.run_loader import load_cached_run
+    from deepreefmap.visualization.final_cloud_index import build_final_cloud_index
+
+    scene_path = run_dir / SCENE_FILE_NAME
+    if scene_path.exists() and not force:
+        typer.echo(f"Scene file already exists: {scene_path}")
+        typer.echo("Use --force to regenerate.")
+        raise typer.Exit(code=0)
+
+    typer.echo(f"Loading run from {run_dir}…")
+    result = load_cached_run(run_dir)
+
+    if result.mode == "geometry_only":
+        typer.echo("Geometry-only runs do not produce scene files.")
+        raise typer.Exit(code=0)
+
+    typer.echo("Building cloud index…")
+    frame_order = [int(f.frame_index) for f in result.frame_batch.frames]
+    fci = build_final_cloud_index(
+        result.reference_cloud, frame_order, result.classes_config.id_to_color,
+    )
+
+    typer.echo("Saving scene file…")
+    save_scene_file(
+        scene_path,
+        manifest=result.manifest,
+        classes_config=result.classes_config,
+        mapping_result=result.mapping_result,
+        frame_batch=result.frame_batch,
+        final_cloud_index=fci,
+        run_dir=run_dir,
+    )
+    typer.echo(f"Done: {scene_path}")
+
+
 @app.command("calibrate")
 def calibrate(
     video: Path = typer.Argument(..., exists=True),

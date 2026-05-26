@@ -470,7 +470,7 @@ def run_reconstruction(
 
         if viewer is not None:
             viewer.set_stage("outputs", "running", "Writing run manifest")
-        save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
+        manifest_dict = _build_manifest(
             output_dir=output_dir,
             frame_batch=frame_batch,
             mapping_result=mapping_result,
@@ -487,7 +487,34 @@ def run_reconstruction(
             mode="semantic",
             run_name=run_name,
             input_videos=video_paths,
-        ))
+        )
+        save_run_manifest(output_dir / "run_manifest.json", manifest_dict)
+
+        # Generate the quick-load scene file for instant re-opening.
+        try:
+            if viewer is not None:
+                viewer.set_stage("outputs", "running", "Saving scene file")
+            from deepreefmap.io.scene_file import SCENE_FILE_NAME, save_scene_file
+            from deepreefmap.visualization.final_cloud_index import build_final_cloud_index
+
+            frame_order = [int(f.frame_index) for f in frame_batch.frames]
+            fci = build_final_cloud_index(
+                reference_cloud, frame_order, classes_config.id_to_color,
+            )
+            save_scene_file(
+                output_dir / SCENE_FILE_NAME,
+                manifest=manifest_dict,
+                classes_config=classes_config,
+                mapping_result=mapping_result,
+                frame_batch=frame_batch,
+                final_cloud_index=fci,
+                run_dir=output_dir,
+            )
+            output_files.append(SCENE_FILE_NAME)
+            logger.info("Scene file saved: %s", output_dir / SCENE_FILE_NAME)
+        except Exception:
+            logger.warning("Failed to generate scene file", exc_info=True)
+
         if viewer is not None:
             viewer.mark_outputs_ready(str(output_dir), output_files)
         logger.info("Done. Outputs in %s", output_dir)

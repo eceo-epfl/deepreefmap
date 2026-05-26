@@ -197,6 +197,14 @@ class RunLoadingMixin:
         "cloud_replacing_select": "Replacement radius: selecting representatives",
         "cloud_voxelizing": "Reducing by voxel size",
         "geometry": "Loading geometry cloud",
+        "scene_open": "Opening scene file",
+        "scene_classes": "Reading class config",
+        "scene_cloud_index": "Reading point cloud index",
+        "scene_mapping": "Reading mapping data",
+        "scene_meta": "Reading metadata",
+        "scene_frames": "Reading frames",
+        "scene_fci": "Reading cloud index",
+        "scene_done": "Scene file loaded",
     }
 
     def _on_load_progress(self, stage: str, cur: int, tot: int) -> None:
@@ -213,6 +221,9 @@ class RunLoadingMixin:
 
         if self._load_cancelled:
             self._reset_progress_bars()
+            # Close scene accessor if the load was from a scene file
+            if hasattr(result, "scene_accessor") and result.scene_accessor is not None:
+                result.scene_accessor.close()
             return
 
         run_dir = Path(run_dir_str)
@@ -221,6 +232,14 @@ class RunLoadingMixin:
             self._reset_progress_bars()
             return
 
+        # Close any previous scene accessor before opening a new one.
+        if hasattr(self, "_scene_accessor") and self._scene_accessor is not None:
+            self._scene_accessor.close()
+            self._scene_accessor = None
+
+        # Track the new scene accessor (if any) for lifecycle management.
+        self._scene_accessor = getattr(result, "scene_accessor", None)
+
         # The post-cloud work below all runs on the GUI thread (PyVista actor
         # creation must); the viewer emits setup_progress events that drive
         # both the per-step and the total bar via _apply_progress.
@@ -228,6 +247,16 @@ class RunLoadingMixin:
 
         if result.mode == GEOMETRY_ONLY_MODE:
             self._viewer.show_point_cloud(result.geometry_xyz, result.geometry_rgb)
+        elif getattr(result, "from_scene_file", False) and result.final_cloud_index is not None:
+            fb = result.frame_batch
+            mr = result.mapping_result
+            if fb is not None and mr is not None:
+                self._viewer.load_scene_data_indexed(
+                    fb, mr, result.final_cloud_index, self._classes_config,
+                )
+                self._build_legend()
+                self._show_viewer_controls()
+                self._on_viewer_control_changed()
         else:
             cloud = result.reference_cloud
             fb = result.frame_batch

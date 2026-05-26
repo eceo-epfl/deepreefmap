@@ -43,6 +43,8 @@ dependencies = [
   "pyvista>=0.44",
   "pyvistaqt>=0.11",
   "tqdm>=4.67.3",
+  "zarr>=2.18,<3",
+  "numcodecs>=0.12,<0.16",
 ]
 
 [project.optional-dependencies]

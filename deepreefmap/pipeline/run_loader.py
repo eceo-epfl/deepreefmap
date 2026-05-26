@@ -3,17 +3,26 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import json
+import logging
 from pathlib import Path
+import threading
 from typing import Any
 
 import numpy as np
 
 from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, ClassConfig, load_classes
 from deepreefmap.io.exports import load_geometry_cloud
+from deepreefmap.io.scene_file import (
+    SCENE_FILE_NAME,
+    LazyFrameBatch,
+    SceneFrameAccessor,
+    load_scene_file,
+)
 from deepreefmap.pipeline import resume as resume_mod
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, SemanticPointCloud
 from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_reference_cloud
 
+logger = logging.getLogger(__name__)
 
 GEOMETRY_ONLY_MODE = "geometry_only"
 SEMANTIC_MODE = "semantic"
@@ -24,13 +33,16 @@ class LoadedRun:
     run_dir: Path
     manifest: dict[str, Any]
     classes_config: ClassConfig
-    frame_batch: FrameBatch
+    frame_batch: FrameBatch | LazyFrameBatch
     mapping_result: MappingSequenceResult
     output_files: list[str]
     mode: str = SEMANTIC_MODE
     reference_cloud: SemanticPointCloud = field(default_factory=SemanticPointCloud.empty)
     geometry_xyz: np.ndarray | None = None
     geometry_rgb: np.ndarray | None = None
+    from_scene_file: bool = False
+    scene_accessor: SceneFrameAccessor | None = None
+    final_cloud_index: object | None = None
 
 
 def load_cached_run(
@@ -39,13 +51,68 @@ def load_cached_run(
     point_filter_config: PointFilterConfig | None = None,
     progress_cb: Callable[[str, int, int], None] | None = None,
 ) -> LoadedRun:
-    """Load a completed reconstruction folder into the objects expected by Viser."""
+    """Load a completed reconstruction folder.
+
+    If a scene file exists and is up-to-date, loads from it (fast path).
+    Otherwise falls back to the original slow path and generates the scene
+    file in the background for next time.
+    """
 
     def _step(stage: str, cur: int, tot: int) -> None:
         if progress_cb is not None:
             progress_cb(stage, cur, tot)
 
     run_dir = Path(run_dir)
+
+    # --- Fast path: try scene file ---
+    scene_path = run_dir / SCENE_FILE_NAME
+    if scene_path.exists():
+        loaded = _load_from_scene_file(scene_path, run_dir, _step)
+        if loaded is not None:
+            return loaded
+        logger.info("Scene file stale or incompatible, falling back to slow path")
+
+    # --- Slow path ---
+    result = _load_slow_path(run_dir, point_filter_config, _step)
+
+    # Generate scene file in background for next time
+    if result.mode == SEMANTIC_MODE and len(result.reference_cloud) > 0:
+        _generate_scene_file_async(run_dir, result)
+
+    return result
+
+
+def _load_from_scene_file(
+    scene_path: Path,
+    run_dir: Path,
+    step: Callable[[str, int, int], None],
+) -> LoadedRun | None:
+    scene = load_scene_file(scene_path, run_dir=run_dir, progress_cb=step)
+    if scene is None:
+        return None
+
+    fb = LazyFrameBatch(scene.frame_accessor, scene.mapping_result.intrinsics)
+    output_files = scene.manifest.get("output_files", [])
+
+    return LoadedRun(
+        run_dir=run_dir,
+        manifest=scene.manifest,
+        classes_config=scene.classes_config,
+        frame_batch=fb,
+        mapping_result=scene.mapping_result,
+        output_files=output_files,
+        mode=scene.run_mode,
+        from_scene_file=True,
+        scene_accessor=scene.frame_accessor,
+        final_cloud_index=scene.final_cloud_index,
+    )
+
+
+def _load_slow_path(
+    run_dir: Path,
+    point_filter_config: PointFilterConfig | None,
+    _step: Callable[[str, int, int], None],
+) -> LoadedRun:
     _step("manifest", 0, 1)
     manifest = _load_manifest(run_dir)
     _step("manifest", 1, 1)
@@ -116,6 +183,35 @@ def load_cached_run(
         mode=mode,
         reference_cloud=reference_cloud,
     )
+
+
+def _generate_scene_file_async(run_dir: Path, result: LoadedRun) -> None:
+    """Build and save a scene file on a daemon thread so the next load is fast."""
+
+    def _worker() -> None:
+        try:
+            from deepreefmap.io.scene_file import save_scene_file
+            from deepreefmap.visualization.final_cloud_index import build_final_cloud_index
+
+            frame_order = [int(f.frame_index) for f in result.frame_batch.frames]
+            class_colors = result.classes_config.id_to_color
+            fci = build_final_cloud_index(result.reference_cloud, frame_order, class_colors)
+
+            save_scene_file(
+                run_dir / SCENE_FILE_NAME,
+                manifest=result.manifest,
+                classes_config=result.classes_config,
+                mapping_result=result.mapping_result,
+                frame_batch=result.frame_batch,
+                final_cloud_index=fci,
+                run_dir=run_dir,
+            )
+            logger.info("Scene file generated for next load: %s", run_dir / SCENE_FILE_NAME)
+        except Exception:
+            logger.warning("Background scene file generation failed", exc_info=True)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
 
 
 def _resolve_mode(manifest: dict[str, Any]) -> str:
