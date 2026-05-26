@@ -511,15 +511,13 @@ class FormPanelMixin:
         # is populated by _build_legend and queried by _enabled_class_set.
         self._legend_toggles: dict[int, QCheckBox] = {}
         self._legend_solo_buttons: dict[int, object] = {}
+        # Cache of the pinned "Selected" set (the currently-checked subset) so
+        # _refresh_pinned_selection can skip rebuilds when nothing changed.
+        self._pinned_selection_cache: frozenset[int] | None = None
 
         self._results_group = QGroupBox("Results")
         self._results_group.setVisible(False)
         res_layout = QVBoxLayout(self._results_group)
-        self._metadata_label = QLabel("")
-        self._metadata_label.setStyleSheet("color: #aaa; font-size: 11px;")
-        self._metadata_label.setWordWrap(True)
-        self._metadata_label.setTextFormat(Qt.TextFormat.RichText)
-        res_layout.addWidget(self._metadata_label)
 
         ortho_row = QHBoxLayout()
         ortho_row.setSpacing(4)
@@ -566,12 +564,13 @@ class FormPanelMixin:
         self._results_transect_slider.valueChanged.connect(self._on_results_transect_slider_changed)
         self._results_crop_slider.valueChanged.connect(self._on_results_crop_slider_changed)
 
-        # Two-ring sunburst (outer = fine classes, inner = coarse groups)
-        # appears above the HTML cover table so the user gets a visual sense of
-        # composition at a glance. Updates live with the transect crop.
+        # Two-ring sunburst (outer = fine classes, inner = coarse groups) docks
+        # above the legend rows in the canvas overlay so the user can show/hide
+        # classes from either the pie or the rows. Updates live with the crop.
         self._cover_sunburst = SunburstWidget()
         self._cover_sunburst.selection_clicked.connect(self._on_sunburst_selection)
-        res_layout.addWidget(self._cover_sunburst, 1)
+        self._cover_sunburst.setVisible(False)
+        self._viewer.legend_overlay.set_sunburst(self._cover_sunburst)
 
         self._cover_label = QLabel()
         self._cover_label.setWordWrap(True)

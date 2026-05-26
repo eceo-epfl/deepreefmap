@@ -23,13 +23,9 @@ class ResultsMixin:
         if manifest_path.exists():
             try:
                 manifest = json.loads(manifest_path.read_text())
-                self._metadata_label.setText(
-                    self._format_run_metadata(manifest, out, include_disk_size=True)
-                )
+                self._show_run_meta_banner(manifest, out, include_disk_size=True)
             except Exception:
-                self._metadata_label.setText("")
-        else:
-            self._metadata_label.setText("")
+                pass
 
         cover_path = out / "benthic_cover.json"
         if cover_path.exists():
@@ -38,10 +34,12 @@ class ResultsMixin:
                     cover = json.load(f)
                 self._cover_label.setText(self._format_cover_html(cover))
                 self._cover_sunburst.set_cover(cover, self._classes_config)
+                self._cover_sunburst.setVisible(self._cover_sunburst.has_data())
             except Exception:
                 pass
 
         self._results_group.setVisible(True)
+        self._reveal_legend_overlay()
         self._set_app_mode("VIEWING")
 
     @staticmethod
@@ -130,6 +128,9 @@ class ResultsMixin:
         self._refresh_ortho_preview(outputs.grid)
         self._cover_label.setText(self._format_cover_html(outputs.cover))
         self._cover_sunburst.set_cover(outputs.cover, self._classes_config)
+        if self._cover_sunburst.isVisible() != self._cover_sunburst.has_data():
+            self._cover_sunburst.setVisible(self._cover_sunburst.has_data())
+            self._viewer.legend_overlay.reposition()
         self._apply_viewer_crop_filter(crop)
 
     def _apply_viewer_crop_filter(self, crop: object | None) -> None:

@@ -60,6 +60,9 @@ class SunburstWidget(QWidget):
         self._coarse_slices = self._build_coarse_slices(cover, classes_config)
         self.update()
 
+    def has_data(self) -> bool:
+        return bool(self._fine_slices)
+
     def set_title(self, title: str) -> None:
         self._title = title
         self.update()
@@ -168,28 +171,30 @@ class SunburstWidget(QWidget):
         painter.drawEllipse(coarse_inner_rect)
 
         # Slice labels for the largest fine slices (anything below 4% is too
-        # narrow to read without overlap).
+        # narrow to read without overlap). Drawn as light text with a dark
+        # halo so they stay legible over any slice colour, dark or light.
+        from math import cos, radians, sin
+
         font = QFont(painter.font())
-        font.setPointSize(max(7, int(side * 0.018)))
+        font.setPointSizeF(max(8.0, side * 0.020))
+        font.setWeight(QFont.Weight.Medium)
         painter.setFont(font)
-        painter.setPen(QPen(QColor(20, 20, 20)))
+        metrics = painter.fontMetrics()
         for slc in self._fine_slices:
             if slc.fraction < _LABEL_MIN_FRACTION:
                 continue
             mid_deg = slc.start_deg + slc.span_deg / 2
-            label_radius = (
-                side * (_FINE_RING_OUTER + _FINE_RING_INNER) / 2 / 2
-            )
-            from math import cos, radians, sin
-
+            label_radius = side * (_FINE_RING_OUTER + _FINE_RING_INNER) / 2 / 2
             theta = radians(mid_deg)
             lx = cx + label_radius * cos(theta)
             ly = cy - label_radius * sin(theta)
             text = f"{slc.name} {slc.fraction * 100:.1f}%"
-            metrics = painter.fontMetrics()
             tw = metrics.horizontalAdvance(text)
             th = metrics.height()
-            painter.drawText(QPointF(lx - tw / 2, ly + th / 4), text)
+            dimmed = bool(self._hover_ids) and not any(
+                cid in self._hover_ids for cid in slc.class_ids
+            )
+            self._draw_halo_text(painter, lx - tw / 2, ly + th / 4, text, dimmed=dimmed)
 
         if self._title:
             painter.setPen(QPen(self.palette().text().color()))
@@ -201,6 +206,19 @@ class SunburstWidget(QWidget):
                 int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom),
                 self._title,
             )
+
+    @staticmethod
+    def _draw_halo_text(
+        painter: QPainter, x: float, y: float, text: str, *, dimmed: bool = False
+    ) -> None:
+        """Draw `text` as light glyphs ringed by a dark halo for legibility."""
+        fg = QColor(235, 238, 242, 130 if dimmed else 255)
+        halo = QColor(0, 0, 0, 90 if dimmed else 200)
+        painter.setPen(QPen(halo))
+        for dx, dy in ((-1, -1), (-1, 1), (1, -1), (1, 1), (-1, 0), (1, 0), (0, -1), (0, 1)):
+            painter.drawText(QPointF(x + dx, y + dy), text)
+        painter.setPen(QPen(fg))
+        painter.drawText(QPointF(x, y), text)
 
     # ----- hover + click -----
 

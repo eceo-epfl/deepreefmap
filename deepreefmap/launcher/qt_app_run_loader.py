@@ -284,12 +284,11 @@ class RunLoadingMixin:
         if ortho_path.exists():
             self._show_results(str(run_dir))
         else:
-            # No ortho (e.g. geometry-only run) — still surface the metadata
-            # block by showing the Results group with just the details.
-            self._metadata_label.setText(
-                self._format_run_metadata(result.manifest, run_dir, include_disk_size=True)
-            )
+            # No ortho (e.g. geometry-only run) — metadata is already in the
+            # banner shown above; just track the output dir. Still reveal the
+            # legend if this run built one (semantic run without an ortho).
             self._results_output_dir = run_dir
+            self._reveal_legend_overlay()
 
         # Make the run.log from this past run openable.
         log_path = run_dir / "run.log"

@@ -176,6 +176,11 @@ class LegendOverlay(QWidget):
                 color: #b8b8b8;
                 font-size: 10px;
             }
+            LegendOverlay QLabel#legend_pinned_name {
+                color: #ffffff;
+                font-size: 11px;
+                font-weight: bold;
+            }
             LegendOverlay QCheckBox { color: #e8e8e8; font-size: 11px; spacing: 4px; }
             LegendOverlay QCheckBox::indicator { width: 12px; height: 12px; }
             LegendOverlay QScrollArea { background: transparent; border: none; }
@@ -210,6 +215,37 @@ class LegendOverlay(QWidget):
         header.addWidget(self._minimize_btn, 0)
         outer.addLayout(header)
 
+        # Pinned "Selected" section: the classes the user focused via a pie
+        # click or "Only" surface here at the top, above the fixed main list,
+        # so the main list never has to reorder. Hidden until there's a focus.
+        self._pinned_container = QWidget()
+        self._pinned_container.setObjectName("legend_pinned")
+        pinned_layout = QVBoxLayout(self._pinned_container)
+        pinned_layout.setContentsMargins(0, 0, 0, 2)
+        pinned_layout.setSpacing(2)
+        self._pinned_title = QLabel("Selected")
+        self._pinned_title.setObjectName("legend_title")
+        pinned_layout.addWidget(self._pinned_title)
+        self._pinned_scroll = QScrollArea(self)
+        self._pinned_scroll.setWidgetResizable(True)
+        self._pinned_scroll.setFrameShape(QFrame.NoFrame)
+        self._pinned_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._pinned_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # Cap the pinned list so selecting a coarse group (many member classes)
+        # scrolls here instead of pushing the main list off the canvas.
+        self._pinned_scroll.setMaximumHeight(120)
+        self._pinned_inner = QWidget()
+        self._pinned_inner.setObjectName("legend_inner")
+        self._pinned_grid = QGridLayout(self._pinned_inner)
+        self._pinned_grid.setContentsMargins(0, 0, 0, 0)
+        self._pinned_grid.setHorizontalSpacing(6)
+        self._pinned_grid.setVerticalSpacing(2)
+        self._pinned_grid.setColumnStretch(1, 1)
+        self._pinned_scroll.setWidget(self._pinned_inner)
+        pinned_layout.addWidget(self._pinned_scroll)
+        self._pinned_container.setVisible(False)
+        outer.addWidget(self._pinned_container, 0)
+
         self._scroll = QScrollArea(self)
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.NoFrame)
@@ -226,24 +262,110 @@ class LegendOverlay(QWidget):
         self._scroll.setWidget(self._inner)
         outer.addWidget(self._scroll, 1)
 
+        self._sunburst: QWidget | None = None
+        self._sunburst_was_visible = False
         self._minimized = False
         self.hide()
 
+    def set_sunburst(self, widget: QWidget) -> None:
+        """Dock a cover sunburst above the legend rows, inside this overlay.
+
+        Stacked between the header (index 0) and the scroll area so clicking a
+        pie slice and toggling a legend row share one panel. The donut is
+        height-bounded so it stays compact and the scroll area keeps the rest.
+        """
+        if self._sunburst is widget:
+            return
+        widget.setParent(self)
+        # Fixed height keeps the donut compact and makes the height budgeting in
+        # reposition() deterministic, so it can never overlap the rows below.
+        widget.setFixedHeight(170)
+        self.layout().insertWidget(1, widget, 0)
+        self._sunburst = widget
+
     def _toggle_minimized(self) -> None:
         self._minimized = not self._minimized
-        self._scroll.setVisible(not self._minimized)
+        if self._minimized:
+            # Remember whether the sunburst was showing (it's hidden on
+            # geometry-only runs) so expanding restores that, not a blank donut.
+            if self._sunburst is not None:
+                self._sunburst_was_visible = self._sunburst.isVisibleTo(self)
+                self._sunburst.setVisible(False)
+            self._pinned_container.setVisible(False)
+            self._scroll.setVisible(False)
+        else:
+            self._scroll.setVisible(True)
+            self._pinned_container.setVisible(self._pinned_grid.count() > 0)
+            if self._sunburst is not None:
+                self._sunburst.setVisible(self._sunburst_was_visible)
         self._minimize_btn.setText("+" if self._minimized else "−")
         self._minimize_btn.setToolTip(
             "Expand legend" if self._minimized else "Collapse legend"
         )
         self.reposition()
 
-    def clear(self) -> None:
-        while self._grid.count():
-            item = self._grid.takeAt(0)
+    def set_pinned(
+        self,
+        rows: list[tuple[int, str, tuple[int, int, int], int | None]],
+        on_remove: Callable[[int], None],
+    ) -> None:
+        """Populate the pinned "Selected" section (swatch + name + count + ✕).
+
+        `rows` are (class_id, name, rgb, count). An empty list hides the
+        section. Each ✕ button calls `on_remove(class_id)`.
+        """
+        self._purge_grid(self._pinned_grid)
+        if not rows:
+            self._pinned_container.setVisible(False)
+            return
+        for row, (cid, name, color, count) in enumerate(rows):
+            r, g, b = color
+            swatch = QLabel()
+            swatch.setFixedSize(12, 12)
+            swatch.setStyleSheet(
+                f"background-color: rgb({r},{g},{b}); "
+                "border: 1px solid rgba(255,255,255,80);"
+            )
+            name_label = QLabel(name)
+            name_label.setObjectName("legend_pinned_name")
+            count_label = QLabel()
+            count_label.setObjectName("legend_count")
+            count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            if count is not None:
+                count_label.setText(_format_point_count(int(count)))
+                count_label.setToolTip(f"{int(count):,} points")
+            remove = QToolButton()
+            remove.setText("✕")
+            remove.setFixedHeight(18)
+            remove.setMinimumWidth(24)
+            remove.setToolTip("Remove from selection")
+            remove.clicked.connect(lambda _checked=False, c=cid: on_remove(c))
+            self._pinned_grid.addWidget(swatch, row, 0)
+            self._pinned_grid.addWidget(name_label, row, 1)
+            self._pinned_grid.addWidget(count_label, row, 2)
+            self._pinned_grid.addWidget(remove, row, 3)
+        self._pinned_container.setVisible(not self._minimized)
+        self._pinned_inner.update()
+        self.update()
+
+    @staticmethod
+    def _purge_grid(grid: QGridLayout) -> None:
+        """Empty a grid, detaching widgets from the view *now*.
+
+        ``deleteLater`` alone leaves the old rows painted at their previous
+        spots until the event loop deletes them, so a freshly rebuilt (smaller)
+        list ghosts on top of them. Reparenting to None removes them from the
+        display immediately; deleteLater then frees them.
+        """
+        while grid.count():
+            item = grid.takeAt(0)
             w = item.widget()
             if w is not None:
+                w.setParent(None)
                 w.deleteLater()
+
+    def clear(self) -> None:
+        self._purge_grid(self._grid)
 
     def rebuild(
         self,
@@ -307,29 +429,42 @@ class LegendOverlay(QWidget):
         sb_w = self._scroll.verticalScrollBar().sizeHint().width()
         self._scroll.setMinimumWidth(self._inner.sizeHint().width() + sb_w + 4)
 
-        # Reserve space for ~10 rows by default so the legend doesn't collapse
-        # to the first handful of classes. If there are fewer classes, the
-        # scroll area sizes to its content; if more, the user scrolls.
+        # Record the full content height so reposition() can grow the scroll
+        # area up to it when there's room, and give the scroll a small minimum
+        # so it always yields under the height cap (scrolls instead of
+        # overlapping the sunburst/pinned section above it).
         n_rows = len(visible_ids)
-        if n_rows:
-            self._grid.activate()
-            inner_h = max(1, self._inner.sizeHint().height())
-            row_h = max(18, inner_h // n_rows)
-            visible_rows = min(10, n_rows)
-            target_h = visible_rows * row_h + 4
-            self._scroll.setMinimumHeight(target_h)
+        self._grid.activate()
+        inner_h = max(1, self._inner.sizeHint().height())
+        self._list_content_h = inner_h + 4
+        self._list_row_h = max(18, inner_h // n_rows) if n_rows else 18
+        self._scroll.setMinimumHeight(min(self._list_content_h, 2 * self._list_row_h))
         return toggles, solo_buttons
 
     def reposition(self) -> None:
         parent = self.parentWidget()
         if parent is None:
             return
-        # Height capped so the overlay scrolls internally rather than
-        # overflowing the canvas. Width is allowed to grow to fit the longest
-        # class name, but capped at half the canvas so it can't swallow the
-        # whole view.
-        self.setMaximumHeight(max(60, int(parent.height() * 0.6)))
+        cap_h = max(60, int(parent.height() * 0.85))
+        self.setMaximumHeight(cap_h)
         self.setMaximumWidth(max(140, int(parent.width() * 0.5)))
+        # Budget the main list's height to whatever remains under the cap once
+        # the header, sunburst and pinned section have taken their (bounded)
+        # space. This keeps the stack from overflowing the cap and overlapping.
+        if not self._minimized:
+            chrome = 12 + 4  # outer top/bottom margins + a little spacing slack
+            header_h = max(
+                self._minimize_btn.sizeHint().height(), self._title_label.sizeHint().height()
+            )
+            used = chrome + header_h
+            if self._sunburst is not None and self._sunburst.isVisibleTo(self):
+                used += self._sunburst.height() + 4
+            if self._pinned_container.isVisibleTo(self):
+                used += self._pinned_container.sizeHint().height() + 4
+            content_h = getattr(self, "_list_content_h", cap_h)
+            floor = 2 * getattr(self, "_list_row_h", 18)
+            scroll_h = max(floor, min(content_h, cap_h - used))
+            self._scroll.setFixedHeight(scroll_h)
         self.adjustSize()
         margin = 8
         self.move(parent.width() - self.width() - margin, margin)

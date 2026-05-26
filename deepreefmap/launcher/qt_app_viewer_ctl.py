@@ -69,6 +69,7 @@ class ViewerControlsMixin:
         )
         if getattr(self, "_follow_camera_check", None) and self._follow_camera_check.isChecked():
             self._snap_camera_to_current_frame()
+        self._refresh_pinned_selection()
 
     def _enabled_class_set(self) -> frozenset[int]:
         return frozenset(int(cid) for cid, cb in self._legend_toggles.items() if cb.isChecked())
@@ -101,8 +102,13 @@ class ViewerControlsMixin:
 
     def _build_legend(self) -> None:
         cc = self._classes_config
-        class_ids = sorted(cc.id_to_name.keys())
         counts = self._viewer.class_point_counts()
+        # Order the rows by point count (largest first) so the legend mirrors
+        # the pie's visual weight; fall back to name for ties / no counts.
+        class_ids = sorted(
+            cc.id_to_name.keys(),
+            key=lambda cid: (-int((counts or {}).get(cid, 0)), cc.id_to_name.get(cid, str(cid)).lower()),
+        )
         self._legend_toggles, self._legend_solo_buttons = self._viewer.legend_overlay.rebuild(
             class_ids,
             cc.id_to_name,
@@ -111,8 +117,58 @@ class ViewerControlsMixin:
             self._on_solo_class,
             class_counts=counts or None,
         )
-        self._viewer.legend_overlay.setVisible(True)
-        self._viewer.legend_overlay.reposition()
+        self._pinned_selection_cache = None
+        # Built hidden; _reveal_legend_overlay shows it once the sunburst cover
+        # is ready too, so the list and chart appear together without a flash.
+        self._refresh_pinned_selection()
+
+    def _reveal_legend_overlay(self) -> None:
+        """Show the legend overlay once its contents are fully prepared.
+
+        Positioning is computed while still hidden, so revealing presents a
+        settled layout rather than briefly overlapping the sunburst and rows.
+        """
+        overlay = getattr(self._viewer, "legend_overlay", None)
+        if overlay is None or not self._legend_toggles:
+            return
+        overlay.reposition()
+        overlay.setVisible(True)
+
+    def _refresh_pinned_selection(self) -> None:
+        """Sync the overlay's pinned "Selected" section to the checked classes.
+
+        Selected mirrors whatever is currently shown, surfaced at the top
+        whenever that's a narrowed subset — so a pie click, an "Only", and a
+        row checkbox all feed it uniformly. Hidden when everything (or nothing)
+        is shown. No-op (and no reposition) when unchanged, so frame scrubbing
+        stays cheap.
+        """
+        overlay = getattr(self._viewer, "legend_overlay", None)
+        if overlay is None:
+            return
+        enabled = self._enabled_class_set()
+        present = frozenset(self._legend_toggles.keys())
+        selected = enabled if (enabled and enabled != present) else frozenset()
+        if selected == self._pinned_selection_cache:
+            return
+        self._pinned_selection_cache = selected
+        cc = self._classes_config
+        counts = self._viewer.class_point_counts()
+        ordered = sorted(
+            selected,
+            key=lambda c: (-int(counts.get(c, 0)), cc.id_to_name.get(c, str(c)).lower()),
+        )
+        rows = [
+            (cid, cc.id_to_name.get(cid, str(cid)), cc.id_to_color.get(cid, (128, 128, 128)), counts.get(cid))
+            for cid in ordered
+        ]
+        overlay.set_pinned(rows, self._remove_from_selection)
+        overlay.reposition()
+
+    def _remove_from_selection(self, cid: int) -> None:
+        cb = self._legend_toggles.get(cid)
+        if cb is not None:
+            cb.setChecked(False)  # toggled → _on_viewer_control_changed prunes focus
 
     def _on_isolate_class(self, cid: int) -> None:
         if not self._legend_toggles:
