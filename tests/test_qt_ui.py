@@ -467,6 +467,68 @@ def test_build_frustum_lines_origin_at_pose_position():
     assert abs(lines[0, 2] - 30.0) < 0.01
 
 
+def test_estimate_world_up_points_toward_cameras():
+    from deepreefmap.visualization.qt_viewer import _estimate_world_up
+
+    rng = np.random.default_rng(0)
+    # Flat substrate in the XY plane; cameras hover above it along +Z.
+    ground = np.column_stack(
+        [rng.uniform(-5, 5, 400), rng.uniform(-5, 5, 400), rng.normal(0, 0.02, 400)]
+    )
+    cams_above = np.column_stack([rng.uniform(-5, 5, 30), rng.uniform(-5, 5, 30), np.full(30, 2.0)])
+    up = _estimate_world_up(ground, cams_above)
+    assert up[2] > 0.99  # ~ +Z, toward the cameras
+
+    cams_below = cams_above.copy()
+    cams_below[:, 2] = -2.0
+    down = _estimate_world_up(ground, cams_below)
+    assert down[2] < -0.99  # flips to -Z when cameras are on the other side
+
+    assert _estimate_world_up(ground, None) == (0.0, 1.0, 0.0)  # fallback
+
+
+def test_compute_transect_view_aligns_along_camera_path():
+    from deepreefmap.visualization.qt_viewer import _compute_transect_view
+
+    # Cameras drift along world +X from -5 to +5; points scatter around the line.
+    cam_origins = np.stack([
+        np.linspace(-5.0, 5.0, 11),
+        np.full(11, 0.3),
+        np.zeros(11),
+    ], axis=1)
+    rng = np.random.default_rng(0)
+    pts = rng.uniform(-1.0, 1.0, size=(500, 3))
+    pts[:, 0] *= 5.0  # spread along X to match transect
+
+    cam_pos, focal, up = _compute_transect_view(pts, cam_origins)
+    cam_pos_a = np.asarray(cam_pos)
+    focal_a = np.asarray(focal)
+    up_a = np.asarray(up)
+
+    assert up_a == pytest.approx(np.array([0.0, 1.0, 0.0]))
+    forward = focal_a - cam_pos_a
+    forward /= np.linalg.norm(forward)
+    # Camera looks roughly along world Z (perpendicular to both X-transect and Y-up).
+    assert abs(forward[0]) < 0.05
+    assert abs(forward[1]) < 0.05
+    assert abs(abs(forward[2]) - 1.0) < 0.05
+    # Screen-right is cross(forward, up); end-minus-start must project positive.
+    right = np.cross(forward, up_a)
+    travel = cam_origins[-1] - cam_origins[0]
+    assert float(travel @ right) > 0.0
+
+
+def test_compute_transect_view_falls_back_for_degenerate_data():
+    from deepreefmap.visualization.qt_viewer import _compute_transect_view
+
+    # Single point — PCA degenerates; helper must still return finite numbers.
+    pts = np.array([[1.0, 2.0, 3.0]], dtype=np.float64)
+    cam_pos, focal, up = _compute_transect_view(pts, None)
+    assert focal == pytest.approx((1.0, 2.0, 3.0))
+    assert up == pytest.approx((0.0, 1.0, 0.0))
+    assert all(np.isfinite(cam_pos))
+
+
 # --- Qt widget tests (offscreen) ---
 
 @pytest.fixture(scope="module")
@@ -513,6 +575,38 @@ def test_window_creates(qapp):
     cc = load_classes(DEFAULT_CLASSES_PATH)
     window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
     assert window.windowTitle() == "DeepReefMap"
+
+
+def test_overlay_has_reset_button_and_r_shortcut_triggers_view_reset(qapp):
+    pytest.importorskip("torch", reason="torch not loadable on this machine")
+    from PySide6.QtGui import QKeySequence, QShortcut
+
+    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+
+    cc = load_classes(DEFAULT_CLASSES_PATH)
+    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    assert window._reset_view_button is not None
+    assert window._reset_view_button.text().strip().endswith("Reset")
+
+    calls: list[int] = []
+    window._viewer.reset_view = lambda: calls.append(1)  # type: ignore[method-assign]
+
+    window._reset_view_button.click()
+    assert calls == [1]
+
+    # QShortcut registered for R must exist and, when activated, fire the
+    # same reset_view path. We trigger it via `activated.emit()` rather than
+    # synthesising a key event — offscreen windows aren't "active", which
+    # would suppress the natural shortcut dispatch.
+    r_seq = QKeySequence("R")
+    r_shortcuts = [
+        s for s in window.findChildren(QShortcut)
+        if s.key() == r_seq
+    ]
+    assert r_shortcuts, "expected an R shortcut on the window"
+    r_shortcuts[0].activated.emit()
+    assert len(calls) == 2
 
 
 def test_legend_overlay_reorder_places_rows(qapp):

@@ -96,6 +96,42 @@ def _build_frustum_lines(pose_w_c: np.ndarray, fov_y: float, aspect: float, scal
     return np.array(lines, dtype=np.float32)
 
 
+def _estimate_world_up(
+    positions: np.ndarray, cam_origins: np.ndarray | None
+) -> tuple[float, float, float]:
+    """Estimate the world "up" axis so camera frustums sit above the reef.
+
+    The substrate is a roughly planar sheet, so its least-variance PCA axis is
+    the surface normal. The recording cameras are physically above it, so we
+    sign the normal to point from the cloud toward the camera origins. This is
+    convention-independent: it works whether or not the poses were
+    gravity-aligned, and is what keeps frustums on top in the default view.
+    Falls back to +Y when there's not enough to infer a direction.
+    """
+    fallback = (0.0, 1.0, 0.0)
+    if cam_origins is None:
+        return fallback
+    pts = np.asarray(positions, dtype=np.float64).reshape(-1, 3)
+    cams = np.asarray(cam_origins, dtype=np.float64).reshape(-1, 3)
+    if pts.shape[0] < 3 or cams.shape[0] < 1:
+        return fallback
+    if pts.shape[0] > 50000:  # subsample huge clouds for a cheap SVD
+        pts = pts[:: pts.shape[0] // 50000]
+    centred = pts - pts.mean(axis=0)
+    try:
+        _, _, vh = np.linalg.svd(centred, full_matrices=False)
+    except np.linalg.LinAlgError:
+        return fallback
+    normal = vh[-1]
+    n = float(np.linalg.norm(normal))
+    if n < 1e-9:
+        return fallback
+    normal = normal / n
+    if float((cams.mean(axis=0) - pts.mean(axis=0)) @ normal) < 0.0:
+        normal = -normal  # point toward the cameras (up)
+    return (float(normal[0]), float(normal[1]), float(normal[2]))
+
+
 def _compute_transect_view(
     positions: np.ndarray,
     cam_origins: np.ndarray | None,
@@ -1653,7 +1689,8 @@ class QtPointCloudViewer(QWidget):
             except Exception:
                 logger.debug("Could not extract camera origins for fit", exc_info=True)
                 cam_origins = None
-        cam_pos, focal, up = _compute_transect_view(positions, cam_origins)
+        world_up = _estimate_world_up(positions, cam_origins)
+        cam_pos, focal, up = _compute_transect_view(positions, cam_origins, world_up)
         self._plotter.camera.position = cam_pos
         self._plotter.camera.focal_point = focal
         self._plotter.camera.up = up

@@ -352,17 +352,19 @@ class ViewerControlsMixin:
         self._refresh_pick_marker()
 
     def _build_pick_mode_overlay(self) -> None:
-        """Floating "Pick" tool button + shortcut hint on the canvas.
+        """Floating canvas overlay: Pick + Reset tool buttons with shortcuts.
 
-        Toggling the button switches the viewer between Navigate mode (default,
-        left-drag orbits) and Pick mode (left-click selects a point). Pinned
-        to the top-left of the canvas, mirroring the LegendOverlay on the
-        right. Always visible — clicking "Pick" before a run is loaded simply
-        does nothing, no separate enable/disable plumbing.
+        Pick toggles between Navigate mode (default, left-drag orbits) and
+        Pick mode (left-click selects a point). Reset re-orients the camera
+        to the default transect-lengthwise view (start-left / end-right /
+        frustums above the cloud). Pinned to the top-left of the canvas,
+        mirroring the LegendOverlay on the right. Always visible — clicking
+        before a run is loaded simply does nothing.
         """
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QKeySequence, QShortcut
         from PySide6.QtWidgets import (
+            QHBoxLayout,
             QLabel,
             QToolButton,
             QVBoxLayout,
@@ -407,6 +409,10 @@ class ViewerControlsMixin:
         layout.setContentsMargins(6, 6, 6, 4)
         layout.setSpacing(2)
 
+        buttons_row = QHBoxLayout()
+        buttons_row.setSpacing(6)
+        buttons_row.setContentsMargins(0, 0, 0, 0)
+
         btn = QToolButton(overlay)
         btn.setText("⊕  Pick")
         btn.setCheckable(True)
@@ -414,15 +420,34 @@ class ViewerControlsMixin:
             "Enter pick mode. In pick mode, left-click a point to inspect it.\n"
             "P toggles, Esc exits."
         )
-        layout.addWidget(btn, 0, Qt.AlignHCenter)
+        buttons_row.addWidget(btn)
 
+        reset_btn = QToolButton(overlay)
+        reset_btn.setText("↺  Reset")
+        reset_btn.setToolTip(
+            "Reset the 3D view to the default transect-lengthwise orientation.\n"
+            "R triggers."
+        )
+        buttons_row.addWidget(reset_btn)
+
+        layout.addLayout(buttons_row)
+
+        hints_row = QHBoxLayout()
+        hints_row.setSpacing(6)
+        hints_row.setContentsMargins(0, 0, 0, 0)
         hint = QLabel("P  ·  Esc", overlay)
         hint.setObjectName("pick_mode_shortcut")
         hint.setAlignment(Qt.AlignHCenter)
-        layout.addWidget(hint, 0, Qt.AlignHCenter)
+        hints_row.addWidget(hint, 1)
+        reset_hint = QLabel("R", overlay)
+        reset_hint.setObjectName("pick_mode_shortcut")
+        reset_hint.setAlignment(Qt.AlignHCenter)
+        hints_row.addWidget(reset_hint, 1)
+        layout.addLayout(hints_row)
 
         self._pick_mode_overlay = overlay
         self._pick_mode_button = btn
+        self._reset_view_button = reset_btn
 
         def _on_button_toggled(checked: bool) -> None:
             try:
@@ -437,10 +462,18 @@ class ViewerControlsMixin:
             btn.setChecked(enabled)
             btn.blockSignals(False)
 
+        def _on_reset_clicked() -> None:
+            try:
+                self._viewer.reset_view()
+            except Exception:
+                logger.debug("Failed to reset view", exc_info=True)
+
         btn.toggled.connect(_on_button_toggled)
         self._viewer.pick_mode_changed.connect(_on_viewer_pick_mode_changed)
+        reset_btn.clicked.connect(_on_reset_clicked)
 
         QShortcut(QKeySequence("P"), self, activated=lambda: btn.toggle())
+        QShortcut(QKeySequence("R"), self, activated=_on_reset_clicked)
         QShortcut(
             QKeySequence(Qt.Key_Escape),
             self,
