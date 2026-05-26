@@ -494,15 +494,16 @@ def run_reconstruction(
         try:
             if viewer is not None:
                 viewer.set_stage("outputs", "running", "Saving scene file")
-            from deepreefmap.io.scene_file import SCENE_FILE_NAME, save_scene_file
+            from deepreefmap.io.scene_file import save_scene_file, scene_file_name
             from deepreefmap.visualization.final_cloud_index import build_final_cloud_index
 
             frame_order = [int(f.frame_index) for f in frame_batch.frames]
             fci = build_final_cloud_index(
                 reference_cloud, frame_order, classes_config.id_to_color,
             )
+            sfn = scene_file_name(manifest_dict, output_dir)
             save_scene_file(
-                output_dir / SCENE_FILE_NAME,
+                output_dir / sfn,
                 manifest=manifest_dict,
                 classes_config=classes_config,
                 mapping_result=mapping_result,
@@ -510,8 +511,8 @@ def run_reconstruction(
                 final_cloud_index=fci,
                 run_dir=output_dir,
             )
-            output_files.append(SCENE_FILE_NAME)
-            logger.info("Scene file saved: %s", output_dir / SCENE_FILE_NAME)
+            output_files.append(sfn)
+            logger.info("Scene file saved: %s", output_dir / sfn)
         except Exception:
             logger.warning("Failed to generate scene file", exc_info=True)
 

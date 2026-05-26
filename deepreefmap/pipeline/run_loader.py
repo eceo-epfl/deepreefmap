@@ -13,10 +13,12 @@ import numpy as np
 from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, ClassConfig, load_classes
 from deepreefmap.io.exports import load_geometry_cloud
 from deepreefmap.io.scene_file import (
-    SCENE_FILE_NAME,
+    SCENE_FILE_SUFFIX,
     LazyFrameBatch,
     SceneFrameAccessor,
+    find_scene_file,
     load_scene_file,
+    scene_file_name,
 )
 from deepreefmap.pipeline import resume as resume_mod
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, SemanticPointCloud
@@ -65,12 +67,24 @@ def load_cached_run(
     run_dir = Path(run_dir)
 
     # --- Fast path: try scene file ---
-    scene_path = run_dir / SCENE_FILE_NAME
-    if scene_path.exists():
-        loaded = _load_from_scene_file(scene_path, run_dir, _step)
-        if loaded is not None:
-            return loaded
-        logger.info("Scene file stale or incompatible, falling back to slow path")
+    scene_path = find_scene_file(run_dir)
+    if scene_path is not None:
+        try:
+            loaded = _load_from_scene_file(scene_path, run_dir, _step)
+            if loaded is not None:
+                logger.info("Loaded from scene file (fast path): %s", scene_path)
+                return loaded
+            logger.info("Scene file stale or incompatible, falling back to slow path")
+        except Exception:
+            logger.warning("Scene file load failed, falling back to slow path", exc_info=True)
+
+    # Clean up stale .tmp files from interrupted background generation
+    for tmp in run_dir.glob("*" + SCENE_FILE_SUFFIX + ".tmp"):
+        try:
+            tmp.unlink()
+            logger.info("Cleaned up stale temp file: %s", tmp)
+        except OSError:
+            pass
 
     # --- Slow path ---
     result = _load_slow_path(run_dir, point_filter_config, _step)
@@ -197,8 +211,10 @@ def _generate_scene_file_async(run_dir: Path, result: LoadedRun) -> None:
             class_colors = result.classes_config.id_to_color
             fci = build_final_cloud_index(result.reference_cloud, frame_order, class_colors)
 
+            fname = scene_file_name(result.manifest, run_dir)
+            out = run_dir / fname
             save_scene_file(
-                run_dir / SCENE_FILE_NAME,
+                out,
                 manifest=result.manifest,
                 classes_config=result.classes_config,
                 mapping_result=result.mapping_result,
@@ -206,7 +222,7 @@ def _generate_scene_file_async(run_dir: Path, result: LoadedRun) -> None:
                 final_cloud_index=fci,
                 run_dir=run_dir,
             )
-            logger.info("Scene file generated for next load: %s", run_dir / SCENE_FILE_NAME)
+            logger.info("Scene file generated for next load: %s", out)
         except Exception:
             logger.warning("Background scene file generation failed", exc_info=True)
 

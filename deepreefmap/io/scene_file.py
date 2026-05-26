@@ -25,12 +25,42 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCENE_FILE_NAME = "scene.drm.zarr.zip"
+SCENE_FILE_SUFFIX = ".scene.zarr.zip"
 SCHEMA_VERSION = 1
 MIN_SCHEMA = 1
 MAX_SCHEMA = 1
 
 ProgressCB = Callable[[str, int, int], None]
+
+
+def scene_file_name(manifest: dict[str, Any] | None = None, run_dir: Path | None = None) -> str:
+    """Build a descriptive scene filename from run metadata."""
+    name = ""
+    if manifest:
+        name = str(manifest.get("name", "")).strip()
+    if not name and run_dir is not None:
+        name = run_dir.name
+    if not name:
+        name = "scene"
+    safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in name).strip("_")
+    if not safe:
+        safe = "scene"
+    return safe + SCENE_FILE_SUFFIX
+
+
+_LEGACY_SUFFIXES = (".drm.zarr.zip",)
+
+
+def find_scene_file(run_dir: Path) -> Path | None:
+    """Find a scene file in a run directory, or None."""
+    candidates = sorted(run_dir.glob("*" + SCENE_FILE_SUFFIX))
+    if candidates:
+        return candidates[0]
+    for suffix in _LEGACY_SUFFIXES:
+        legacy = sorted(run_dir.glob("*" + suffix))
+        if legacy:
+            return legacy[0]
+    return None
 
 # ---------------------------------------------------------------------------
 # Blosc compressor shared across all datasets

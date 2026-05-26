@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from deepreefmap.config.classes import ClassConfig, SemanticClass
 from deepreefmap.io.scene_file import (
-    SCHEMA_VERSION,
+    SCENE_FILE_SUFFIX,
     LazyFrameBatch,
     LazyPreparedFrame,
-    SceneFrameAccessor,
     compute_source_fingerprint,
+    find_scene_file,
     fingerprint_matches,
     load_scene_file,
     save_scene_file,
+    scene_file_name,
 )
 from deepreefmap.pipeline.artifacts import (
     FrameBatch,
@@ -117,7 +116,8 @@ class TestRoundTrip:
         fci = _make_fci(cloud, fb, classes)
         manifest = _make_manifest()
 
-        scene_path = tmp_path / "scene.drm.zarr.zip"
+        sfn = scene_file_name(manifest, tmp_path)
+        scene_path = tmp_path / sfn
         save_scene_file(
             scene_path,
             manifest=manifest,
@@ -127,7 +127,11 @@ class TestRoundTrip:
             final_cloud_index=fci,
         )
         assert scene_path.exists()
+        assert scene_path.name.endswith(SCENE_FILE_SUFFIX)
         assert scene_path.stat().st_size > 0
+
+        found = find_scene_file(tmp_path)
+        assert found == scene_path
 
         loaded = load_scene_file(scene_path)
         assert loaded is not None
@@ -196,7 +200,7 @@ class TestRoundTrip:
         empty_cloud = SemanticPointCloud.empty()
         fci = build_final_cloud_index(empty_cloud, [0, 2], classes.id_to_color)
 
-        scene_path = tmp_path / "empty.drm.zarr.zip"
+        scene_path = tmp_path / scene_file_name(_make_manifest())
         save_scene_file(
             scene_path,
             manifest=_make_manifest(),
@@ -223,7 +227,7 @@ class TestLazyFrameBatch:
         cloud = _make_cloud(n_points=100)
         fci = _make_fci(cloud, fb, classes)
 
-        scene_path = tmp_path / "lazy.drm.zarr.zip"
+        scene_path = tmp_path / scene_file_name(_make_manifest())
         save_scene_file(
             scene_path,
             manifest=_make_manifest(),
@@ -257,7 +261,7 @@ class TestSchemaValidation:
     def test_future_schema_returns_none(self, tmp_path: Path) -> None:
         import zarr
 
-        scene_path = tmp_path / "future.drm.zarr.zip"
+        scene_path = tmp_path / "future.scene.zarr.zip"
         store = zarr.ZipStore(str(scene_path), mode="w")
         root = zarr.group(store=store, overwrite=True)
         root.attrs["schema_version"] = 999
@@ -269,7 +273,7 @@ class TestSchemaValidation:
     def test_old_schema_returns_none(self, tmp_path: Path) -> None:
         import zarr
 
-        scene_path = tmp_path / "old.drm.zarr.zip"
+        scene_path = tmp_path / "old.scene.zarr.zip"
         store = zarr.ZipStore(str(scene_path), mode="w")
         root = zarr.group(store=store, overwrite=True)
         root.attrs["schema_version"] = 0
@@ -322,7 +326,7 @@ class TestFingerprint:
         (run_dir / "run_manifest.json").write_text('{"original": true}')
         (run_dir / "mapping_outputs.npz").write_bytes(b"data")
 
-        scene_path = run_dir / "scene.drm.zarr.zip"
+        scene_path = run_dir / scene_file_name(_make_manifest())
         save_scene_file(
             scene_path,
             manifest=_make_manifest(),
@@ -350,7 +354,8 @@ class TestAtomicWrite:
         cloud = _make_cloud(n_points=10)
         fci = _make_fci(cloud, fb, classes)
 
-        scene_path = tmp_path / "scene.drm.zarr.zip"
+        sfn = scene_file_name(_make_manifest())
+        scene_path = tmp_path / sfn
         save_scene_file(
             scene_path,
             manifest=_make_manifest(),
@@ -360,6 +365,6 @@ class TestAtomicWrite:
             final_cloud_index=fci,
         )
 
-        tmp_file = tmp_path / "scene.drm.zarr.zip.tmp"
+        tmp_file = tmp_path / (sfn + ".tmp")
         assert not tmp_file.exists()
         assert scene_path.exists()

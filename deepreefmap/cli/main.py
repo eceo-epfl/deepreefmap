@@ -201,13 +201,13 @@ def gen_scene(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    from deepreefmap.io.scene_file import SCENE_FILE_NAME, save_scene_file
+    from deepreefmap.io.scene_file import find_scene_file, save_scene_file, scene_file_name
     from deepreefmap.pipeline.run_loader import load_cached_run
     from deepreefmap.visualization.final_cloud_index import build_final_cloud_index
 
-    scene_path = run_dir / SCENE_FILE_NAME
-    if scene_path.exists() and not force:
-        typer.echo(f"Scene file already exists: {scene_path}")
+    existing = find_scene_file(run_dir)
+    if existing is not None and not force:
+        typer.echo(f"Scene file already exists: {existing}")
         typer.echo("Use --force to regenerate.")
         raise typer.Exit(code=0)
 
@@ -224,7 +224,9 @@ def gen_scene(
         result.reference_cloud, frame_order, result.classes_config.id_to_color,
     )
 
-    typer.echo("Saving scene file…")
+    sfn = scene_file_name(result.manifest, run_dir)
+    scene_path = run_dir / sfn
+    typer.echo(f"Saving scene file as {sfn}…")
     save_scene_file(
         scene_path,
         manifest=result.manifest,
