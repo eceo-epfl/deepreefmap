@@ -100,6 +100,35 @@ def _release_version(record: dict) -> str:
     return tag[1:] if tag.startswith("v") else tag
 
 
+def _parse_version(value: str):
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        return Version(value)
+    except InvalidVersion:
+        return None
+
+
+def _newer_releases(releases: list[dict], current: str) -> list[dict]:
+    """Releases strictly newer than `current`, newest first.
+
+    Comparison is semantic (packaging.version), so a current build ahead of
+    the newest published release reports nothing to install. Falls back to
+    string inequality only when `current` itself can't be parsed, so an
+    unparseable version still surfaces differing releases.
+    """
+    current_v = _parse_version(current)
+    if current_v is None:
+        return [r for r in releases if _release_version(r) != current]
+    newer = []
+    for rel in releases:
+        rv = _parse_version(_release_version(rel))
+        if rv is not None and rv > current_v:
+            newer.append((rv, rel))
+    newer.sort(key=lambda pair: pair[0], reverse=True)
+    return [rel for _, rel in newer]
+
+
 def _current_version() -> str:
     import importlib.metadata
 
@@ -144,14 +173,14 @@ class VersionCheckMixin:
             self._update_status_label.setText("No releases found.")
             return
         self._available_releases = list(releases)
-        latest = _release_version(releases[0])
-        installable = [r for r in releases if _release_version(r) != current]
+        installable = _newer_releases(releases, current)
         if not installable:
             self._update_status_label.setText("Up to date.")
             return
+        latest = _release_version(installable[0])
         self._set_updates_tab_alert(latest)
         if not pyapp_bin:
-            versions_summary = ", ".join(_release_version(r) for r in releases[:5])
+            versions_summary = ", ".join(_release_version(r) for r in installable[:5])
             self._update_status_label.setText(
                 f"Latest: <b>{latest}</b><br>"
                 f"<i>(not running from installer — can't update in place)</i><br>"

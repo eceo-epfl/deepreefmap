@@ -156,6 +156,30 @@ def test_fetch_versions_mock_empty(monkeypatch):
     assert versions == []
 
 
+def test_newer_releases_ignores_older_and_equal():
+    from deepreefmap.launcher.qt_app import _newer_releases
+
+    releases = [{"tag_name": "v1.0.0"}, {"tag_name": "v0.9.0"}]
+    assert _newer_releases(releases, "1.0.1") == []
+    assert _newer_releases(releases, "1.0.0") == []
+
+
+def test_newer_releases_returns_newer_first():
+    from deepreefmap.launcher.qt_app import _newer_releases
+
+    releases = [{"tag_name": "v1.5.0"}, {"tag_name": "v2.0.0"}, {"tag_name": "v1.0.0"}]
+    newer = _newer_releases(releases, "1.0.0")
+    assert [r["tag_name"] for r in newer] == ["v2.0.0", "v1.5.0"]
+
+
+def test_newer_releases_unparseable_current_falls_back_to_inequality():
+    from deepreefmap.launcher.qt_app import _newer_releases
+
+    releases = [{"tag_name": "v1.0.0"}, {"tag_name": "v1.0.1"}]
+    newer = _newer_releases(releases, "dev")
+    assert {r["tag_name"] for r in newer} == {"v1.0.0", "v1.0.1"}
+
+
 def test_fetch_versions_real_404(monkeypatch):
     from deepreefmap.launcher.qt_app import _fetch_release_versions
 

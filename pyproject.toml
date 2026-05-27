@@ -1,6 +1,6 @@
 [project]
 name = "deepreefmap"
-version = "1.0.1"
+version = "1.1.0"
 description = "Modular framework for semantic 3D mapping of coral reefs from videos"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"

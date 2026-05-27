@@ -39,6 +39,7 @@ from deepreefmap.launcher.qt_app_version import (  # noqa: F401  re-exported for
     _current_version,
     _fetch_release_versions,
     _fetch_releases,
+    _newer_releases,
     _pyapp_binary_path,
 )
 
