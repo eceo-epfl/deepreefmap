@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt
@@ -17,6 +18,32 @@ logger = logging.getLogger(__name__)
 
 
 _PAST_RUN_META_ROLE = Qt.ItemDataRole.UserRole + 1
+
+_GEOMETRY_LABELS = {
+    "world_points": "world points (full)",
+    "depth_unprojection": "depth-unprojection",
+}
+
+
+def _format_timestamp(value: object) -> str:
+    """Render an ISO-8601 run_timestamp as a short local date/time, else passthrough."""
+    if not isinstance(value, str):
+        return ""
+    try:
+        return datetime.fromisoformat(value).astimezone().strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return value
+
+
+def _run_sort_key(manifest: dict, mtime: float) -> float:
+    """Prefer the recorded run timestamp; fall back to the manifest file mtime."""
+    ts = manifest.get("run_timestamp")
+    if isinstance(ts, str):
+        try:
+            return datetime.fromisoformat(ts).timestamp()
+        except ValueError:
+            pass
+    return mtime
 
 
 def _format_disk_size(run_dir: Path) -> str | None:
@@ -221,7 +248,7 @@ class PastRunsMixin:
                 except Exception:
                     pass
                 entries.append((child, display, manifest.stat().st_mtime, data))
-        entries.sort(key=lambda e: e[2], reverse=True)
+        entries.sort(key=lambda e: _run_sort_key(e[3], e[2]), reverse=True)
 
         # Block signals to avoid triggering _on_past_run_selected during repopulation.
         self._past_runs_combo.blockSignals(True)
@@ -261,12 +288,26 @@ class PastRunsMixin:
         mapping = manifest.get("mapping_backend")
         if mapping:
             lines.append(f"Mapping: {mapping}")
+        mopts = manifest.get("mapping_options") or {}
+        if mopts.get("window_size") is not None:
+            lines.append(
+                f"LoGeR window/overlap: {mopts.get('window_size')}/{mopts.get('overlap_size')}"
+            )
+        if manifest.get("refine_intrinsics_from_mapper"):
+            lines.append("Intrinsics: refined from mapper")
+        geom = manifest.get("geometry_source")
+        if geom:
+            lines.append(f"Geometry: {_GEOMETRY_LABELS.get(geom, geom)}")
         profile = manifest.get("camera_profile")
         if profile:
             lines.append(f"Camera profile: {profile}")
         frames = manifest.get("frames_processed")
         if frames is not None:
-            lines.append(f"Frames: {frames}")
+            fps = manifest.get("fps")
+            lines.append(f"Frames: {frames}" + (f" @ {fps} fps" if fps else ""))
+        pw, ph = manifest.get("processing_width"), manifest.get("processing_height")
+        if pw and ph:
+            lines.append(f"Processing size: {pw}×{ph}")
         sem_pts = manifest.get("semantic_reference_points")
         if sem_pts:
             lines.append(f"Semantic points: {int(sem_pts):,}")
@@ -276,6 +317,9 @@ class PastRunsMixin:
         videos = manifest.get("input_videos") or []
         if videos:
             lines.append(f"Input: {', '.join(Path(v).name for v in videos)}")
+        created = _format_timestamp(manifest.get("run_timestamp"))
+        if created:
+            lines.append(f"Created: {created}")
         if include_disk_size:
             disk = _format_disk_size(run_dir)
             if disk:
@@ -299,6 +343,9 @@ class PastRunsMixin:
         mapping = manifest.get("mapping_backend")
         if mapping:
             facts.append(str(mapping))
+        geom = manifest.get("geometry_source")
+        if str(mapping) in {"loger", "loger_star"} and geom:
+            facts.append("world-pts" if geom == "world_points" else "⚠ depth")
         sem_pts = manifest.get("semantic_reference_points")
         if sem_pts:
             n = int(sem_pts)
@@ -337,10 +384,12 @@ class PastRunsMixin:
             ("Frames", "frames_processed", str),
             ("Segmentation", "segmentation_model", str),
             ("Mapping", "mapping_backend", str),
+            ("Geometry", "geometry_source", lambda v: _GEOMETRY_LABELS.get(v, str(v))),
             ("Camera", "camera_profile", str),
             ("Semantic pts", "semantic_reference_points", lambda v: f"{int(v):,}"),
             ("Metric pts", "metric_points", lambda v: f"{int(v):,}"),
             ("Input", "input_videos", lambda v: ", ".join(Path(p).name for p in v) if v else ""),
+            ("Created", "run_timestamp", _format_timestamp),
         ):
             v = manifest.get(key)
             if v is not None and v != "" and v != []:

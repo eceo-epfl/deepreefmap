@@ -361,6 +361,42 @@ class FormPanelMixin:
         adv_layout.addWidget(self._tsdf_check)
         self._skip_seg_check = QCheckBox("Skip segmentation")
         adv_layout.addWidget(self._skip_seg_check)
+
+        # LoGeR-specific knobs — only shown when a LoGeR backend is selected.
+        self._loger_panel = QWidget()
+        loger_layout = QVBoxLayout(self._loger_panel)
+        loger_layout.setContentsMargins(0, 6, 0, 0)
+        loger_layout.setSpacing(2)
+        loger_layout.addWidget(QLabel("LoGeR window size"))
+        self._loger_window_spin = QSpinBox()
+        self._loger_window_spin.setRange(1, 256)
+        self._loger_window_spin.setValue(32)
+        loger_layout.addWidget(self._loger_window_spin)
+        loger_layout.addWidget(QLabel("LoGeR overlap size"))
+        self._loger_overlap_spin = QSpinBox()
+        self._loger_overlap_spin.setRange(0, 64)
+        self._loger_overlap_spin.setValue(3)
+        loger_layout.addWidget(self._loger_overlap_spin)
+        loger_layout.addWidget(QLabel("LoGeR checkpoint (optional override)"))
+        loger_ckpt_row = QHBoxLayout()
+        loger_ckpt_row.setContentsMargins(0, 0, 0, 0)
+        loger_ckpt_row.setSpacing(4)
+        self._loger_model_path_input = QLineEdit()
+        self._loger_model_path_input.setPlaceholderText("Default: vendored checkpoint")
+        loger_ckpt_row.addWidget(self._loger_model_path_input, 1)
+        loger_ckpt_btn = QPushButton()
+        loger_ckpt_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        loger_ckpt_btn.setIconSize(QSize(18, 18))
+        loger_ckpt_btn.setFixedSize(28, 28)
+        loger_ckpt_btn.setToolTip("Browse for a LoGeR .pt checkpoint…")
+        loger_ckpt_btn.clicked.connect(self._browse_loger_checkpoint)
+        loger_ckpt_row.addWidget(loger_ckpt_btn)
+        loger_layout.addLayout(loger_ckpt_row)
+        self._refine_intrinsics_check = QCheckBox("Refine intrinsics from mapper")
+        loger_layout.addWidget(self._refine_intrinsics_check)
+        self._loger_panel.setVisible(False)
+        adv_layout.addWidget(self._loger_panel)
+
         self._advanced_panel.setVisible(False)
         setup_layout.addWidget(self._advanced_panel)
 
@@ -460,12 +496,16 @@ class FormPanelMixin:
         self._point_size_spin.valueChanged.connect(self._on_viewer_control_changed)
         vc_layout.addWidget(self._point_size_spin)
 
-        vc_layout.addWidget(QLabel("Min confidence (%)"))
+        self._confidence_box = QWidget()
+        conf_layout = QVBoxLayout(self._confidence_box)
+        conf_layout.setContentsMargins(0, 0, 0, 0)
+        conf_layout.addWidget(QLabel("Min confidence (%)"))
         self._confidence_slider = QSlider(Qt.Horizontal)
         self._confidence_slider.setRange(0, 100)
         self._confidence_slider.setValue(0)
         self._confidence_slider.valueChanged.connect(self._on_viewer_control_changed)
-        vc_layout.addWidget(self._confidence_slider)
+        conf_layout.addWidget(self._confidence_slider)
+        vc_layout.addWidget(self._confidence_box)
 
         self._frame_slider = self._viewer.frame_slider
         self._frame_slider.valueChanged.connect(self._on_viewer_control_changed)
@@ -676,6 +716,7 @@ class FormPanelMixin:
 
         self._seg_combo.currentTextChanged.connect(self._on_required_models_changed)
         self._map_combo.currentTextChanged.connect(self._on_required_models_changed)
+        self._map_combo.currentTextChanged.connect(self._on_mapping_backend_changed)
         self._skip_seg_check.toggled.connect(self._on_required_models_changed)
         self._video_input.textChanged.connect(self._recompute_submit_state)
         self._video_input.editingFinished.connect(self._on_video_input_committed)
@@ -857,6 +898,44 @@ class FormPanelMixin:
     def _on_advanced_toggled(self, checked: bool) -> None:
         self._advanced_panel.setVisible(checked)
 
+    def _on_mapping_backend_changed(self, _value: object = "") -> None:
+        self._loger_panel.setVisible(self._map_combo.currentText() in ("loger", "loger_star"))
+
+    def _collect_loger_options(self, mapping_name: str) -> dict | None:
+        """Build the LoGeR mapping_options dict from the form, or None for other backends."""
+        if mapping_name not in ("loger", "loger_star"):
+            return None
+        model_path = self._loger_model_path_input.text().strip()
+        return {
+            "window_size": self._loger_window_spin.value(),
+            "overlap_size": self._loger_overlap_spin.value(),
+            "model_path": model_path or None,
+        }
+
+    def _browse_loger_checkpoint(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select LoGeR checkpoint", "", "Checkpoints (*.pt *.pth);;All files (*)"
+        )
+        if path:
+            self._loger_model_path_input.setText(path)
+
+    def _cuda_available(self) -> bool:
+        """Cached GPU check. torch import is deferred and only paid once.
+
+        A ROCm torch build reports cuda as available too, so this gates both
+        NVIDIA and AMD GPUs without any backend-specific branch.
+        """
+        cached = getattr(self, "_cuda_available_cache", None)
+        if cached is None:
+            try:
+                import torch
+
+                cached = bool(torch.cuda.is_available())
+            except Exception:
+                cached = False
+            self._cuda_available_cache = cached
+        return cached
+
     def _recompute_submit_state(self) -> None:
         reasons: list[str] = []
         video = self._video_input.text().strip()
@@ -873,6 +952,9 @@ class FormPanelMixin:
         missing = [m for m in sorted(self._required_model_names()) if m not in cached_names]
         if missing and self._last_model_states:
             reasons.append(f"download required model{'s' if len(missing) > 1 else ''}: {', '.join(missing)}")
+
+        if self._map_combo.currentText() in ("loger", "loger_star") and not self._cuda_available():
+            reasons.append("LoGeR needs a CUDA/ROCm GPU (none detected)")
 
         ok = not reasons
         self._submit_btn.setEnabled(ok)

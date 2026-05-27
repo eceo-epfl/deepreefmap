@@ -45,6 +45,33 @@ class LoadedRun:
     from_scene_file: bool = False
     scene_accessor: SceneFrameAccessor | None = None
     final_cloud_index: object | None = None
+    world_points_warning: str | None = None
+
+
+def _world_points_fallback_warning(
+    manifest: dict[str, Any], mapping_result: MappingSequenceResult
+) -> str | None:
+    """Detect a LoGeR run whose cloud silently fell back to depth-unprojection.
+
+    LoGeR emits per-point ``world_points``; before they were persisted to
+    ``mapping_outputs.npz`` (commit 8f4d41d) a resumed run lost them and rebuilt
+    geometry from depth+pose — degraded, not failed. A recorded
+    ``geometry_source == "depth_unprojection"`` (e.g. intrinsics refinement) is
+    intentional and not flagged.
+    """
+    if str(manifest.get("mapping_backend", "")) not in {"loger", "loger_star"}:
+        return None
+    if getattr(mapping_result, "world_points", None) is not None:
+        return None
+    if manifest.get("geometry_source") == "depth_unprojection":
+        return None
+    msg = (
+        "LoGeR run loaded without per-point world geometry (mapping_outputs.npz "
+        "predates world_points persistence); the cloud uses the depth-unprojection "
+        "fallback. Re-run the reconstruction for full LoGeR geometry."
+    )
+    logger.warning(msg)
+    return msg
 
 
 def load_cached_run(
@@ -119,6 +146,7 @@ def _load_from_scene_file(
         from_scene_file=True,
         scene_accessor=scene.frame_accessor,
         final_cloud_index=scene.final_cloud_index,
+        world_points_warning=_world_points_fallback_warning(scene.manifest, scene.mapping_result),
     )
 
 
@@ -176,6 +204,7 @@ def _load_slow_path(
             mode=mode,
             geometry_xyz=geometry_xyz,
             geometry_rgb=geometry_rgb,
+            world_points_warning=_world_points_fallback_warning(manifest, mapping_result),
         )
 
     reference_cloud = build_semantic_reference_cloud(
@@ -196,6 +225,7 @@ def _load_slow_path(
         output_files=output_files,
         mode=mode,
         reference_cloud=reference_cloud,
+        world_points_warning=_world_points_fallback_warning(manifest, mapping_result),
     )
 
 

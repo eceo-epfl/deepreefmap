@@ -670,6 +670,10 @@ class QtPointCloudViewer(QWidget):
         self._seg_label.setAlignment(Qt.AlignCenter)
         self._seg_label.setMinimumHeight(120)
         self._seg_label.setStyleSheet("background-color: #1a1a1a;")
+        self._depth_label = QLabel()
+        self._depth_label.setAlignment(Qt.AlignCenter)
+        self._depth_label.setMinimumHeight(120)
+        self._depth_label.setStyleSheet("background-color: #1a1a1a;")
         self._frames_panel = QWidget()
         frames_outer = QVBoxLayout(self._frames_panel)
         frames_outer.setContentsMargins(0, 0, 0, 0)
@@ -680,6 +684,7 @@ class QtPointCloudViewer(QWidget):
         frames_layout.setSpacing(2)
         frames_layout.addWidget(self._rgb_label, 1)
         frames_layout.addWidget(self._seg_label, 1)
+        frames_layout.addWidget(self._depth_label, 1)
         frames_outer.addWidget(frames_row, 1)
 
         # Slider bar: a fat, hard-to-miss timeline control with a Frame N / N
@@ -787,6 +792,11 @@ class QtPointCloudViewer(QWidget):
         self._frame_batch = None
         self._mapping_result = None
         self._max_label_id = 0
+        # Geometry-only mode: a single static RGB cloud with a frustum/image
+        # timeline but no semantic per-class partitioning (no FinalCloudIndex).
+        self._geometry_mode = False
+        self._geometry_frame_order: list[int] = []
+        self._geometry_xyz: np.ndarray | None = None
 
         self._last_t: int | None = None
         self._last_accumulate: bool | None = None
@@ -856,6 +866,15 @@ class QtPointCloudViewer(QWidget):
 
         self._plotter = QtInteractor(self._canvas_container)
         self._plotter.set_background("#141414")
+        self._plotter.iren.enable_custom_trackball_style(
+            left="rotate",
+            shift_left="pan",
+            control_left="dolly",
+            middle="pan",
+            right="pan",
+            shift_right="pan",
+            control_right="dolly",
+        )
         try:
             self._plotter.enable_eye_dome_lighting()
         except Exception:
@@ -1395,13 +1414,25 @@ class QtPointCloudViewer(QWidget):
 
     @property
     def has_scene_data(self) -> bool:
-        return self._final_index is not None
+        return self._final_index is not None or self._geometry_mode
+
+    @property
+    def is_geometry_mode(self) -> bool:
+        return self._geometry_mode
 
     @property
     def n_frames(self) -> int:
         if self._final_index is not None:
             return len(self._final_index.frame_order)
+        if self._geometry_mode:
+            return len(self._geometry_frame_order)
         return 0
+
+    def _timeline_frame_order(self) -> "tuple[int, ...] | list[int]":
+        """Frame indices in timeline order for whichever mode is active."""
+        if self._final_index is not None:
+            return self._final_index.frame_order
+        return self._geometry_frame_order
 
     def class_point_counts(self) -> dict[int, int]:
         """Point counts per class in the loaded semantic cloud (empty if none)."""
@@ -1445,6 +1476,7 @@ class QtPointCloudViewer(QWidget):
         import pyvista as pv
 
         self._clear_scene_data()
+        self._seg_label.setVisible(True)
         plotter = self._ensure_plotter()
         self._frame_batch = frame_batch
         self._mapping_result = mapping_result
@@ -1506,6 +1538,7 @@ class QtPointCloudViewer(QWidget):
         import pyvista as pv
 
         self._clear_scene_data()
+        self._seg_label.setVisible(True)
         plotter = self._ensure_plotter()
         self._frame_batch = frame_batch
         self._mapping_result = mapping_result
@@ -1550,6 +1583,113 @@ class QtPointCloudViewer(QWidget):
 
         self._reveal_canvas()
         self._notify_status("scene_loaded")
+
+    def load_geometry_scene(
+        self,
+        frame_batch: object,
+        mapping_result: object,
+        geometry_xyz: np.ndarray,
+        geometry_rgb: np.ndarray,
+    ) -> None:
+        """Open a geometry-only (``--skip-segmentation``) run as a real timeline.
+
+        Shows the full RGB geometry cloud plus camera frustums and drives a
+        frame slider / playback over an RGB + depth image panel. There are no
+        labels, so there is no FinalCloudIndex and no per-class legend; the
+        cloud itself is static while the slider moves the frustum highlight and
+        image panel.
+        """
+        self._clear_scene_data()
+        self._seg_label.setVisible(False)
+        plotter = self._ensure_plotter()
+        self._frame_batch = frame_batch
+        self._mapping_result = mapping_result
+        self._geometry_mode = True
+        self._geometry_frame_order = [int(f.frame_index) for f in frame_batch.frames]
+        self._geometry_xyz = np.asarray(geometry_xyz, dtype=np.float32)
+
+        if self._geometry_xyz.shape[0] > 0:
+            pd = _make_point_polydata(self._geometry_xyz, geometry_rgb)
+            self._simple_actor = plotter.add_mesh(
+                pd, scalars="colors", rgb=True, point_size=2.0,
+                style="points", name="geometry_cloud",
+            )
+
+        self._build_frustums(frame_batch, mapping_result)
+
+        if self._geometry_xyz.shape[0] > 0:
+            self._auto_fit_camera(self._geometry_xyz)
+
+        self._reveal_canvas()
+        self._notify_status("scene_loaded")
+
+    def apply_geometry_state(
+        self,
+        timeline_t: int,
+        point_size: float,
+        *,
+        frustums_visible: bool = True,
+    ) -> None:
+        """Timeline update for geometry mode: point size, frustum highlight, image panel."""
+        if not self._geometry_mode:
+            return
+        n = len(self._geometry_frame_order)
+        if n == 0:
+            return
+        t = int(np.clip(timeline_t, 0, n - 1))
+        self._last_t = t
+        if point_size != self._last_point_size:
+            self._update_point_sizes(point_size)
+        self._update_frustum_visibility(frustums_visible, t)
+        self._update_geometry_image_panel(t)
+        if self._plotter is not None:
+            try:
+                self._plotter.render()
+            except Exception:
+                pass
+
+    def _compose_geometry_frame_panel(self, t: int) -> "tuple[np.ndarray, np.ndarray] | None":
+        """RGB + colorized depth for geometry-only frame t (no segmentation labels)."""
+        import cv2
+
+        order = self._geometry_frame_order
+        if not order or self._frame_batch is None or self._mapping_result is None:
+            return None
+        tt = int(np.clip(t, 0, len(order) - 1))
+        frame_idx = int(order[tt])
+
+        frame = None
+        for f in self._frame_batch.frames:
+            if int(f.frame_index) == frame_idx:
+                frame = f
+                break
+        if frame is None:
+            return None
+
+        mapping_indices = np.asarray(self._mapping_result.frame_indices, dtype=np.int32).reshape(-1)
+        mi = None
+        for i, fid in enumerate(mapping_indices.tolist()):
+            if int(fid) == frame_idx:
+                mi = i
+                break
+        if mi is None:
+            return None
+
+        rgb = np.asarray(frame.image_rgb, dtype=np.uint8)
+        depth = np.asarray(self._mapping_result.depth_maps[mi], dtype=np.float32)
+        h, w = rgb.shape[:2]
+        depth_color = _colorize_depth(
+            cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST),
+        )
+        return rgb, depth_color
+
+    def _update_geometry_image_panel(self, t: int) -> None:
+        parts = self._compose_geometry_frame_panel(t)
+        if parts is None:
+            return
+        rgb, depth = parts
+        self._paint_label(self._rgb_label, rgb)
+        self._paint_label(self._depth_label, depth)
 
     def _emit_setup(self, message: str, current: int, total: int) -> None:
         """Forward a one-off setup-progress event to the GUI status callback.
@@ -1666,6 +1806,9 @@ class QtPointCloudViewer(QWidget):
         self._picked_actor_outer = None
         self._final_index = None
         self._live_cache = None
+        self._geometry_mode = False
+        self._geometry_frame_order = []
+        self._geometry_xyz = None
         self._frame_batch = None
         self._mapping_result = None
         self._frame_panel_cache.clear()
@@ -1703,17 +1846,20 @@ class QtPointCloudViewer(QWidget):
         the current mapping result, computes the principal axis, and points
         the camera so the transect runs left-to-right with frustums above.
         """
-        if self._plotter is None or self._final_index is None:
+        if self._plotter is None:
             return
-        all_xyz = [
-            self._final_index.xyz_by_class[c]
-            for c in self._final_index.class_ids
-            if c in self._final_index.xyz_by_class
-        ]
-        if not all_xyz:
+        if self._geometry_mode:
+            combined = self._geometry_xyz
+        elif self._final_index is not None:
+            all_xyz = [
+                self._final_index.xyz_by_class[c]
+                for c in self._final_index.class_ids
+                if c in self._final_index.xyz_by_class
+            ]
+            combined = np.concatenate(all_xyz, axis=0) if all_xyz else None
+        else:
             return
-        combined = np.concatenate(all_xyz, axis=0)
-        if combined.shape[0] == 0:
+        if combined is None or combined.shape[0] == 0:
             return
         self._auto_fit_camera(combined)
         try:
@@ -1723,9 +1869,9 @@ class QtPointCloudViewer(QWidget):
 
     def view_from_frame_pose(self, t: int, backoff_m: float = 0.0) -> bool:
         """Snap the 3D camera to frame `t`'s pose, optionally pulled back."""
-        if self._plotter is None or self._final_index is None or self._mapping_result is None:
+        if self._plotter is None or self._mapping_result is None:
             return False
-        frame_order = self._final_index.frame_order
+        frame_order = self._timeline_frame_order()
         if len(frame_order) == 0:
             return False
         tt = int(np.clip(t, 0, len(frame_order) - 1))
@@ -1947,11 +2093,11 @@ class QtPointCloudViewer(QWidget):
         self._last_point_size = point_size
 
     def _update_frustum_visibility(self, visible: bool, t: int) -> None:
-        fi = self._final_index
+        frame_order = self._timeline_frame_order()
         current_frame = None
-        if fi is not None and len(fi.frame_order) > 0:
-            tt = int(np.clip(t, 0, len(fi.frame_order) - 1))
-            current_frame = int(fi.frame_order[tt])
+        if len(frame_order) > 0:
+            tt = int(np.clip(t, 0, len(frame_order) - 1))
+            current_frame = int(frame_order[tt])
 
         # Batched frustum path
         if self._frustum_batch_actor is not None:
@@ -2014,9 +2160,10 @@ class QtPointCloudViewer(QWidget):
         if parts is None:
             return
 
-        rgb, seg, _depth = parts
+        rgb, seg, depth = parts
         self._paint_label(self._rgb_label, rgb)
         self._paint_label(self._seg_label, seg)
+        self._paint_label(self._depth_label, depth)
 
     @staticmethod
     def _paint_label(label: QLabel, image: np.ndarray) -> None:
@@ -2147,7 +2294,17 @@ class QtPointCloudViewer(QWidget):
                 classes_config=kwargs["classes_config"],
             )
         elif "geometry_xyz" in kwargs:
-            self.show_point_cloud(kwargs["geometry_xyz"], kwargs["geometry_rgb"])
+            fb = kwargs.get("frame_batch")
+            mr = kwargs.get("mapping_result")
+            if kwargs.get("geometry_only") and fb is not None and mr is not None:
+                self.load_geometry_scene(
+                    frame_batch=fb,
+                    mapping_result=mr,
+                    geometry_xyz=kwargs["geometry_xyz"],
+                    geometry_rgb=kwargs["geometry_rgb"],
+                )
+            else:
+                self.show_point_cloud(kwargs["geometry_xyz"], kwargs["geometry_rgb"])
         self._notify_status("data_ready", **kwargs)
 
     @Slot(str, object)

@@ -58,6 +58,15 @@ class ViewerControlsMixin:
     def _on_viewer_control_changed(self) -> None:
         if not self._viewer.has_scene_data:
             return
+        if self._viewer.is_geometry_mode:
+            self._viewer.apply_geometry_state(
+                timeline_t=self._frame_slider.value(),
+                point_size=self._point_size_spin.value(),
+                frustums_visible=self._viewer.legend_overlay._frustum_check.isChecked(),
+            )
+            if getattr(self, "_follow_camera_check", None) and self._follow_camera_check.isChecked():
+                self._snap_camera_to_current_frame()
+            return
         self._viewer.apply_state(
             timeline_t=self._frame_slider.value(),
             accumulate=self._accumulate_check.isChecked(),
@@ -100,7 +109,14 @@ class ViewerControlsMixin:
         self._frame_slider.setRange(0, max(0, n - 1))
         self._frame_slider.setValue(n - 1)
         self._viewer_controls_group.setVisible(True)
+        self._set_semantic_only_controls_visible(True)
         self._sidebar_tabs.setTabEnabled(self._TAB_RESULTS, True)
+
+    def _set_semantic_only_controls_visible(self, visible: bool) -> None:
+        """Hide per-class/semantic-only controls for geometry-only runs."""
+        self._semantic_check.setVisible(visible)
+        self._accumulate_check.setVisible(visible)
+        self._confidence_box.setVisible(visible)
 
     def _build_legend(self) -> None:
         cc = self._classes_config
@@ -640,8 +656,11 @@ class ViewerControlsMixin:
                 self._apply_progress(stage, label, current, total)
         elif event == "data_ready":
             if self._viewer.has_scene_data:
-                self._build_legend()
+                if not self._viewer.is_geometry_mode:
+                    self._build_legend()
                 self._show_viewer_controls()
+                if self._viewer.is_geometry_mode:
+                    self._set_semantic_only_controls_visible(False)
                 self._on_viewer_control_changed()
             self._apply_progress("viewer_finalise", "Reconstruction complete", 1, 1)
             ortho_cloud = kwargs.get("ortho_cloud")

@@ -73,6 +73,11 @@ class RunLoadingMixin:
             "end_s": end_s,
         }
 
+        loger_options = self._collect_loger_options(kwargs["mapping_name"])
+        if loger_options is not None:
+            kwargs["mapping_options"] = loger_options
+            kwargs["refine_intrinsics_from_mapper"] = self._refine_intrinsics_check.isChecked()
+
         self._set_form_enabled(False)
         self._begin_progress(self._recon_model)
         self._status_label.setText("Reconstruction starting…")
@@ -243,7 +248,17 @@ class RunLoadingMixin:
 
         _t1 = _time.monotonic()
         if result.mode == GEOMETRY_ONLY_MODE:
-            self._viewer.show_point_cloud(result.geometry_xyz, result.geometry_rgb)
+            fb = result.frame_batch
+            mr = result.mapping_result
+            if fb is not None and mr is not None and result.geometry_xyz is not None:
+                self._viewer.load_geometry_scene(
+                    fb, mr, result.geometry_xyz, result.geometry_rgb,
+                )
+                self._show_viewer_controls()
+                self._set_semantic_only_controls_visible(False)
+                self._on_viewer_control_changed()
+            else:
+                self._viewer.show_point_cloud(result.geometry_xyz, result.geometry_rgb)
         elif getattr(result, "from_scene_file", False) and result.final_cloud_index is not None:
             fb = result.frame_batch
             mr = result.mapping_result
@@ -329,7 +344,11 @@ class RunLoadingMixin:
         self._active_run_dir = run_dir
         self._active_run_manifest = result.manifest
         display = result.manifest.get("name") or run_dir.name
-        self._status_label.setText(f"Loaded run '{display}' from {run_dir}")
+        warning = getattr(result, "world_points_warning", None)
+        if warning:
+            self._status_label.setText(f"⚠ Loaded '{display}' — {warning}")
+        else:
+            self._status_label.setText(f"Loaded run '{display}' from {run_dir}")
         self._show_run_meta_banner(result.manifest, run_dir, include_disk_size=True)
 
         ortho_path = run_dir / "ortho.png"

@@ -711,7 +711,7 @@ def test_master_checkbox_select_deselect_and_partial(qapp):
     assert master.checkState() == Qt.CheckState.PartiallyChecked
 
 
-def test_sunburst_reflects_selection(qapp):
+def test_sunburst_reflects_selection(qapp, monkeypatch):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
     from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
     from deepreefmap.launcher.qt_app import DeepReefMapWindow
@@ -719,9 +719,11 @@ def test_sunburst_reflects_selection(qapp):
     cc = load_classes(DEFAULT_CLASSES_PATH)
     window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
     # The sunburst sync runs through _on_viewer_control_changed, which only acts
-    # once the viewer has scene data (as when a run is loaded).
+    # once the viewer has scene data (as when a run is loaded). Patch via
+    # monkeypatch so the class property is restored at teardown and later tests
+    # (which may assert has_scene_data is False) aren't affected.
     window._viewer.apply_state = lambda **k: None
-    type(window._viewer).has_scene_data = property(lambda self: True)
+    monkeypatch.setattr(type(window._viewer), "has_scene_data", property(lambda self: True))
     window._build_legend()
     sb = window._cover_sunburst
 
@@ -831,3 +833,88 @@ def test_load_batch_csv_rejects_excel(tmp_path):
     bogus.write_bytes(b"not actually excel")
     with pytest.raises(ValueError, match="Excel"):
         _load_batch_csv(bogus)
+
+
+# --- LoGeR GUI parity (WS2) ---
+
+def test_loger_options_collected_from_form(qapp):
+    pytest.importorskip("torch", reason="torch not loadable on this machine")
+    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+
+    cc = load_classes(DEFAULT_CLASSES_PATH)
+    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+
+    assert window._collect_loger_options("scsfmlearner") is None
+
+    window._loger_window_spin.setValue(16)
+    window._loger_overlap_spin.setValue(2)
+    window._loger_model_path_input.setText("")
+    assert window._collect_loger_options("loger") == {
+        "window_size": 16,
+        "overlap_size": 2,
+        "model_path": None,
+    }
+
+    window._loger_model_path_input.setText("/tmp/custom.pt")
+    assert window._collect_loger_options("loger_star")["model_path"] == "/tmp/custom.pt"
+
+
+def test_loger_panel_visibility_follows_backend(qapp):
+    pytest.importorskip("torch", reason="torch not loadable on this machine")
+    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+
+    cc = load_classes(DEFAULT_CLASSES_PATH)
+    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+
+    window._map_combo.setCurrentText("scsfmlearner")
+    assert window._loger_panel.isHidden()
+
+    window._map_combo.setCurrentText("loger")
+    assert not window._loger_panel.isHidden()
+
+
+# --- Geometry-only viewer parity (WS3) ---
+
+def _fake_geometry_scene():
+    from types import SimpleNamespace
+
+    frame = SimpleNamespace(frame_index=0, image_rgb=np.zeros((4, 4, 3), dtype=np.uint8))
+    fb = SimpleNamespace(frames=[frame], frame_indices=[0], clip_counts=[1])
+    mr = SimpleNamespace(
+        frame_indices=np.array([0], dtype=np.int32),
+        depth_maps=np.ones((1, 4, 4), dtype=np.float32),
+        poses_w_c=np.eye(4, dtype=np.float32)[None],
+        intrinsics=np.eye(3, dtype=np.float32),
+    )
+    xyz = np.random.rand(50, 3).astype(np.float32)
+    rgb = np.random.randint(0, 255, (50, 3), dtype=np.uint8)
+    return fb, mr, xyz, rgb
+
+
+def test_geometry_scene_enables_timeline(qapp):
+    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+
+    viewer = QtPointCloudViewer()
+    fb, mr, xyz, rgb = _fake_geometry_scene()
+    viewer.load_geometry_scene(fb, mr, xyz, rgb)
+
+    assert viewer.is_geometry_mode
+    assert viewer.has_scene_data
+    assert viewer.n_frames == 1
+    # The timeline update must work without a FinalCloudIndex (no semantic data).
+    viewer.apply_geometry_state(timeline_t=0, point_size=3.0, frustums_visible=True)
+
+
+def test_geometry_scene_clears_back_to_empty(qapp):
+    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+
+    viewer = QtPointCloudViewer()
+    fb, mr, xyz, rgb = _fake_geometry_scene()
+    viewer.load_geometry_scene(fb, mr, xyz, rgb)
+    viewer._clear_scene_data()
+
+    assert not viewer.is_geometry_mode
+    assert not viewer.has_scene_data
+    assert viewer.n_frames == 0

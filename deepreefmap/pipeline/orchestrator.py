@@ -4,6 +4,7 @@ import gc
 import logging
 import shutil
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -66,6 +67,7 @@ def run_reconstruction(
         datefmt="%H:%M:%S",
     )
     output_dir.mkdir(parents=True, exist_ok=True)
+    run_started_at = datetime.now(timezone.utc).isoformat()
 
     logger.info("Loading classes from %s", classes_path)
     classes_config = load_classes(classes_path)
@@ -300,6 +302,30 @@ def run_reconstruction(
             )
             mapping_result_for_cloud = _mapping_without_world_points(mapping_result)
 
+        geometry_source = (
+            "world_points"
+            if mapping_result_for_cloud.world_points is not None
+            else "depth_unprojection"
+        )
+        run_params: dict[str, object] = {
+            "fps": fps,
+            "begin_s": begin_s,
+            "end_s": end_s,
+            "processing_width": int(processing_image_size[0]),
+            "processing_height": int(processing_image_size[1]),
+            "grid_bins": grid_bins,
+            "replacement_radius_factor": replacement_radius_factor,
+            "replacement_radius_estimation_frames": replacement_radius_estimation_frames,
+            "replacement_radius_override": replacement_radius_override,
+            "enable_tsdf": enable_tsdf,
+            "mapping_options": dict(mapping_options) if mapping_options else {},
+            "refine_intrinsics_from_mapper": refine_intrinsics_from_mapper,
+            "geometry_source": geometry_source,
+            "scale_type": str(mapping_result.scale_type),
+            "deepreefmap_version": _package_version(),
+            "run_timestamp": run_started_at,
+        }
+
         if viewer is not None and not skip_segmentation:
             viewer.set_stage("outputs", "running", "Building preview point cloud")
             preview_xyz, preview_rgb = _build_geometry_cloud(
@@ -348,6 +374,14 @@ def run_reconstruction(
                 mode="geometry_only",
                 run_name=run_name,
                 input_videos=video_paths,
+                run_params={
+                    **run_params,
+                    "transect": {
+                        "length": transect_length,
+                        "crop_width": transect_crop_width,
+                        "applied": False,
+                    },
+                },
             ))
             if viewer is not None:
                 viewer.set_data(
@@ -355,6 +389,7 @@ def run_reconstruction(
                     mapping_result=mapping_result,
                     geometry_xyz=geometry_xyz,
                     geometry_rgb=geometry_rgb,
+                    geometry_only=True,
                 )
                 viewer.mark_outputs_ready(str(output_dir), output_files)
             logger.info("Done. Outputs in %s", output_dir)
@@ -487,6 +522,14 @@ def run_reconstruction(
             mode="semantic",
             run_name=run_name,
             input_videos=video_paths,
+            run_params={
+                **run_params,
+                "transect": {
+                    "length": transect_length,
+                    "crop_width": transect_crop_width,
+                    "applied": transect_length is not None and transect_crop_width is not None,
+                },
+            },
         )
         save_run_manifest(output_dir / "run_manifest.json", manifest_dict)
 
@@ -910,6 +953,15 @@ def _rel(output_dir: Path, path: Path | None) -> str | None:
         return str(path)
 
 
+def _package_version() -> str:
+    try:
+        import importlib.metadata
+
+        return importlib.metadata.version("deepreefmap")
+    except Exception:
+        return "0.0.0"
+
+
 def _build_manifest(
     output_dir: Path,
     frame_batch: FrameBatch,
@@ -927,9 +979,10 @@ def _build_manifest(
     mode: str,
     run_name: str | None = None,
     input_videos: list[str] | None = None,
+    run_params: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
-        "schema_version": 2,
+    manifest: dict[str, object] = {
+        "schema_version": 3,
         "name": run_name,
         "input_videos": list(input_videos) if input_videos else [],
         "mode": mode,
@@ -951,3 +1004,6 @@ def _build_manifest(
         "depth_maps": "mapping_outputs.npz",
         "mapping_frame_indices": mapping_result.frame_indices.tolist(),
     }
+    if run_params:
+        manifest.update(run_params)
+    return manifest
