@@ -93,10 +93,10 @@ class FormPanelMixin:
         self._TAB_RUN = 0
         self._TAB_RESULTS = 1
         self._TAB_MODELS = 2
-        self._TAB_TOOLS = 3
+        self._TAB_UPDATES = 3
         self._sidebar_tabs = QTabWidget()
         # Tabs expand to share the panel width equally so labels of different
-        # length (Run / Results / Models / Tools) end up the same visible width.
+        # length (Run / Results / Models / Updates) end up the same visible width.
         self._sidebar_tabs.tabBar().setExpanding(True)
         self._sidebar_tabs.setStyleSheet(
             "QTabBar::tab { min-width: 70px; padding: 6px 10px; }"
@@ -113,14 +113,17 @@ class FormPanelMixin:
         models_layout = QVBoxLayout(self._models_tab)
         models_layout.setContentsMargins(4, 6, 4, 4)
         models_layout.setAlignment(Qt.AlignTop)
-        self._tools_tab = QWidget()
-        tools_layout = QVBoxLayout(self._tools_tab)
-        tools_layout.setContentsMargins(4, 6, 4, 4)
-        tools_layout.setAlignment(Qt.AlignTop)
+        self._updates_tab = QWidget()
+        updates_layout = QVBoxLayout(self._updates_tab)
+        updates_layout.setContentsMargins(4, 6, 4, 4)
+        # No layout-level AlignTop here: it shrinks the layout to its size hint,
+        # which makes word-wrapped labels wrap at a narrow heuristic width. The
+        # trailing addStretch() keeps content top-aligned while letting labels
+        # use the full panel width.
         self._sidebar_tabs.addTab(self._run_tab, "Run")
         self._sidebar_tabs.addTab(self._viewer_tab, "Results")
         self._sidebar_tabs.addTab(self._models_tab, "Models")
-        self._sidebar_tabs.addTab(self._tools_tab, "Tools")
+        self._sidebar_tabs.addTab(self._updates_tab, "Updates")
         # Results tab has nothing to show until a run loads — disable it so
         # the tab is greyed out and unclickable until _show_viewer_controls
         # runs.
@@ -667,14 +670,6 @@ class FormPanelMixin:
         viewer_layout.addWidget(self._results_group)
         viewer_layout.addStretch()
 
-        tools_layout.addWidget(QLabel("<b>Tools</b>"))
-        test_btn = QPushButton("Render test cloud")
-        test_btn.clicked.connect(self._render_test_cloud)
-        tools_layout.addWidget(test_btn)
-        load_btn = QPushButton("Load cached run...")
-        load_btn.clicked.connect(self._load_cached_run)
-        tools_layout.addWidget(load_btn)
-
         models_group = QGroupBox("Models")
         self._models_layout = QVBoxLayout(models_group)
 
@@ -776,15 +771,13 @@ class FormPanelMixin:
         models_layout.addStretch()
         threading.Thread(target=self._refresh_model_status, daemon=True).start()
 
-
-        tools_layout.addWidget(_separator())
         self._update_version_label = QLabel(f"Version: <b>{_current_version()}</b>")
         self._update_version_label.setWordWrap(True)
-        tools_layout.addWidget(self._update_version_label)
+        updates_layout.addWidget(self._update_version_label)
         self._update_status_label = QLabel("Checking for updates…")
         self._update_status_label.setWordWrap(True)
         self._update_status_label.setStyleSheet("color: #aaa;")
-        tools_layout.addWidget(self._update_status_label)
+        updates_layout.addWidget(self._update_status_label)
         update_row = QHBoxLayout()
         self._update_version_combo = QComboBox()
         self._update_version_combo.setVisible(False)
@@ -793,12 +786,12 @@ class FormPanelMixin:
         self._update_btn.setVisible(False)
         self._update_btn.clicked.connect(self._on_update)
         update_row.addWidget(self._update_btn)
-        tools_layout.addLayout(update_row)
+        updates_layout.addLayout(update_row)
         self._available_releases: list[dict] = []
 
         threading.Thread(target=self._check_for_update, daemon=True).start()
 
-        tools_layout.addStretch()
+        updates_layout.addStretch()
 
         # Start in SETUP — no run loaded yet. The mode flips to RUNNING in
         # _begin_pipeline_run and to VIEWING when a past run is selected or a

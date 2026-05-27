@@ -4,8 +4,6 @@ import logging
 import threading
 from pathlib import Path
 
-from PySide6.QtWidgets import QFileDialog
-
 from deepreefmap.launcher.log_view import close_run_log_file, open_run_log_file
 from deepreefmap.launcher.qt_app_progress import _LOAD_STAGE_TO_PHASE, _STAGE_MESSAGE_TO_PHASE
 
@@ -145,27 +143,6 @@ class RunLoadingMixin:
             if abs(end_arg - self._video_duration_s) < 1e-3:
                 end_arg = None
         return begin_arg, end_arg
-
-    def _render_test_cloud(self) -> None:
-        import numpy as np
-
-        try:
-            n = 500_000
-            theta = np.random.uniform(0, 2 * np.pi, n).astype(np.float32)
-            phi = np.random.uniform(0, np.pi, n).astype(np.float32)
-            r = np.random.uniform(0.8, 1.0, n).astype(np.float32)
-            xyz = np.column_stack([r * np.sin(phi) * np.cos(theta), r * np.sin(phi) * np.sin(theta), r * np.cos(phi)])
-            rgb = ((xyz - xyz.min(axis=0)) / (xyz.max(axis=0) - xyz.min(axis=0)) * 255).astype(np.uint8)
-            self._viewer.show_point_cloud(xyz, rgb, point_size=2.0)
-        except Exception as exc:
-            self._status_label.setText(f"Test cloud error: {exc}")
-            logger.exception("Render test cloud failed")
-
-    def _load_cached_run(self) -> None:
-        run_dir = QFileDialog.getExistingDirectory(self, "Select cached run directory")
-        if not run_dir:
-            return
-        self._auto_load_run(Path(run_dir))
 
     def _auto_load_run(self, run_dir: Path) -> None:
         self._load_cancelled = False

@@ -5,7 +5,12 @@ import logging
 import os
 from pathlib import Path
 
+from PySide6.QtGui import QColor
+
 logger = logging.getLogger(__name__)
+
+# Amber accent used to flag the Updates tab when a newer release exists.
+_UPDATE_ACCENT = QColor("#e0a030")
 
 
 _DEFAULT_GH_REPO = "eceo-epfl/deepreefmap"
@@ -111,8 +116,25 @@ class VersionCheckMixin:
         pyapp_bin = _pyapp_binary_path()
         self._sig_update_check_done.emit(current, releases, pyapp_bin)
 
+    def _set_updates_tab_alert(self, latest: str | None) -> None:
+        """Flag the Updates tab amber with a dot when `latest` is available.
+
+        Passing None clears the alert and restores the default tab style.
+        """
+        bar = self._sidebar_tabs.tabBar()
+        idx = self._TAB_UPDATES
+        if latest is None:
+            bar.setTabText(idx, "Updates")
+            bar.setTabTextColor(idx, QColor())  # invalid colour → theme default
+            self._sidebar_tabs.setTabToolTip(idx, "")
+            return
+        bar.setTabText(idx, "Updates ●")
+        bar.setTabTextColor(idx, _UPDATE_ACCENT)
+        self._sidebar_tabs.setTabToolTip(idx, f"Version {latest} is available")
+
     def _apply_update_check(self, current: str, releases: list[dict] | None, pyapp_bin: str | None) -> None:
         self._update_version_label.setText(f"Version: <b>{current}</b>")
+        self._set_updates_tab_alert(None)
         if releases is None:
             self._update_status_label.setText("Couldn't reach GitHub.")
             return
@@ -125,6 +147,7 @@ class VersionCheckMixin:
         if not installable:
             self._update_status_label.setText("Up to date.")
             return
+        self._set_updates_tab_alert(latest)
         if not pyapp_bin:
             versions_summary = ", ".join(_release_version(r) for r in releases[:5])
             self._update_status_label.setText(
