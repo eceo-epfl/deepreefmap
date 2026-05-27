@@ -124,7 +124,7 @@ class ViewerControlsMixin:
                 dst.blockSignals(True)
                 dst.setChecked(checked)
                 dst.blockSignals(False)
-                callback()
+                callback(checked)
             return _fn
 
         # Point size: overlay slider (int ×10) ↔ sidebar spin (float)
@@ -150,7 +150,7 @@ class ViewerControlsMixin:
             _sync_bool(self._ov_sem_btn, self._semantic_check, self._on_viewer_control_changed)
         )
         self._semantic_check.toggled.connect(
-            _sync_bool(self._semantic_check, self._ov_sem_btn, lambda: None)
+            _sync_bool(self._semantic_check, self._ov_sem_btn, lambda _: None)
         )
 
         # Accumulate toggle
@@ -158,7 +158,7 @@ class ViewerControlsMixin:
             _sync_bool(self._ov_acc_btn, self._accumulate_check, self._on_viewer_control_changed)
         )
         self._accumulate_check.toggled.connect(
-            _sync_bool(self._accumulate_check, self._ov_acc_btn, lambda: None)
+            _sync_bool(self._accumulate_check, self._ov_acc_btn, lambda _: None)
         )
 
         # Confidence
@@ -187,7 +187,7 @@ class ViewerControlsMixin:
             _sync_bool(self._ov_play_btn, self._play_check, self._on_play_toggled)
         )
         self._play_check.toggled.connect(
-            _sync_bool(self._play_check, self._ov_play_btn, lambda: None)
+            _sync_bool(self._play_check, self._ov_play_btn, lambda _: None)
         )
 
         # FPS
@@ -213,7 +213,7 @@ class ViewerControlsMixin:
             _sync_bool(self._ov_follow_btn, self._follow_camera_check, self._on_follow_camera_changed)
         )
         self._follow_camera_check.toggled.connect(
-            _sync_bool(self._follow_camera_check, self._ov_follow_btn, lambda: None)
+            _sync_bool(self._follow_camera_check, self._ov_follow_btn, lambda _: None)
         )
 
         # Frustum visibility (overlay-only, no sidebar counterpart)
