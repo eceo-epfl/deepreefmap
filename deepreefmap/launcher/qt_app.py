@@ -68,6 +68,7 @@ class DeepReefMapWindow(
     _sig_batch_done = Signal(int, int, str)
     _sig_qc_render_progress = Signal(int, int)
     _sig_qc_render_done = Signal(bool, str)
+    _sig_discovery_done = Signal(object, object)
 
     def __init__(self, classes_config: object, classes_path: Path) -> None:
         super().__init__()
@@ -87,6 +88,7 @@ class DeepReefMapWindow(
         self._sig_load_progress.connect(self._on_load_progress)
         self._sig_batch_progress.connect(self._on_batch_progress)
         self._sig_batch_done.connect(self._on_batch_done)
+        self._sig_discovery_done.connect(self._on_discovery_done)
 
         self.setWindowTitle("DeepReefMap")
         self.resize(1400, 900)

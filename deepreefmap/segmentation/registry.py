@@ -17,6 +17,28 @@ _MODELS: dict[str, tuple[int, int]] = {
     "segformer-b5": (1024, 1024),
 }
 
+# name -> (repo_id, family) where family is "segformer" | "dpt". Parallel to
+# _MODELS so create_segmentation_model can dispatch by data instead of an
+# if-chain, which also lets HF-discovered models register themselves.
+_REPOS: dict[str, tuple[str, str]] = {
+    "segformer-b2": ("EPFL-ECEO/segformer-b2-finetuned-coralscapes-1024-1024", "segformer"),
+    "segformer-b5": ("EPFL-ECEO/segformer-b5-finetuned-coralscapes-1024-1024", "segformer"),
+    "coralscapes-vit-s-dpt": ("EPFL-ECEO/coralscapes-vit-s-dpt", "dpt"),
+    "coralscapes-vit-b-dpt": ("EPFL-ECEO/coralscapes-vit-b-dpt", "dpt"),
+    "coralscapes-vit-l-dpt": ("EPFL-ECEO/coralscapes-vit-l-dpt", "dpt"),
+}
+
+
+def register_segmentation_model(
+    name: str, repo_id: str, family: str, resolution: tuple[int, int]
+) -> None:
+    """Register a discovered model. Idempotent: a no-op if name is already
+    known, so the hardcoded entries above stay authoritative."""
+    if name in _MODELS:
+        return
+    _MODELS[name] = resolution
+    _REPOS[name] = (repo_id, family)
+
 
 def create_segmentation_model(name: str) -> SegmentationModel:
     from deepreefmap.segmentation.base import SegmentationModel, SegmentationOutput
@@ -38,16 +60,11 @@ def create_segmentation_model(name: str) -> SegmentationModel:
 
     if name not in _MODELS:
         raise ValueError(f"Unsupported segmentation model: {name}")
-    if name == "segformer-b2":
-        return SegformerWrapper("EPFL-ECEO/segformer-b2-finetuned-coralscapes-1024-1024", _MODELS[name])
-    if name == "segformer-b5":
-        return SegformerWrapper("EPFL-ECEO/segformer-b5-finetuned-coralscapes-1024-1024", _MODELS[name])
-    if name == "coralscapes-vit-l-dpt":
-        return DinoV3DPTWrapper("EPFL-ECEO/coralscapes-vit-l-dpt", _MODELS[name])
-    if name == "coralscapes-vit-b-dpt":
-        return DinoV3DPTWrapper("EPFL-ECEO/coralscapes-vit-b-dpt", _MODELS[name])
-    if name == "coralscapes-vit-s-dpt":
-        return DinoV3DPTWrapper("EPFL-ECEO/coralscapes-vit-s-dpt", _MODELS[name])
+    repo_id, family = _REPOS.get(name, ("", "dummy"))
+    if family == "segformer":
+        return SegformerWrapper(repo_id, _MODELS[name])
+    if family == "dpt":
+        return DinoV3DPTWrapper(repo_id, _MODELS[name])
     return _DummySegmentation(name=name, resolution=_MODELS[name])
 
 

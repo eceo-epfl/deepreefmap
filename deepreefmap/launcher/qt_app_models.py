@@ -180,11 +180,52 @@ class ModelManagementMixin:
             )
 
     def _refresh_model_status(self) -> None:
-        from deepreefmap.launcher.model_manager import ALL_MODELS, check_hf_auth, is_model_cached
+        from deepreefmap.launcher.model_manager import all_known_models, check_hf_auth, is_model_cached
 
         auth_user = check_hf_auth()
-        model_states = [(m, is_model_cached(m)) for m in ALL_MODELS]
+        model_states = [(m, is_model_cached(m)) for m in all_known_models()]
         self._sig_model_status_done.emit(auth_user, model_states)
+
+    def _on_discover_clicked(self) -> None:
+        self._discover_btn.setEnabled(False)
+        self._discover_btn.setText("Checking…")
+
+        def _work() -> None:
+            from deepreefmap.launcher.model_manager import discover_models
+
+            names, error = discover_models()
+            self._sig_discovery_done.emit(names, error)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_discovery_done(self, new_names: object, error: object) -> None:
+        self._discover_btn.setEnabled(True)
+        self._discover_btn.setText("Check Hugging Face for new models")
+        if error:
+            self._status_label.setText(f"Discovery failed: {error}")
+            return
+        names = new_names if isinstance(new_names, list) else []
+        if names:
+            self._status_label.setText(f"Found new models: {', '.join(names)}")
+            self._refresh_seg_combo_items()
+        else:
+            self._status_label.setText("No new models found.")
+        # Re-render the Models tab so newly registered models get cards.
+        threading.Thread(target=self._refresh_model_status, daemon=True).start()
+
+    def _refresh_seg_combo_items(self) -> None:
+        """Add any newly registered segmentation models to the dropdown without
+        disturbing the current selection (discovery is segmentation-only)."""
+        from deepreefmap.segmentation.registry import list_segmentation_models
+
+        existing = {self._seg_combo.itemText(i) for i in range(self._seg_combo.count())}
+        self._seg_combo.blockSignals(True)
+        try:
+            for name in list_segmentation_models():
+                if name not in existing:
+                    self._seg_combo.addItem(name)
+        finally:
+            self._seg_combo.blockSignals(False)
 
     def _apply_model_status(self, auth_user: str | None, model_states: list) -> None:
         self._hf_auth_user = auth_user
@@ -273,6 +314,23 @@ class ModelManagementMixin:
         self._recompute_submit_state()
 
     def _make_action_widget(self, info, cached: bool, auth_user: str | None) -> QWidget:
+        from deepreefmap.launcher.model_manager import model_available
+
+        if not model_available(info):
+            # Model needs an install extra that isn't present (LoGeR today).
+            # Show it greyed with a hint instead of a Download button.
+            container = QWidget()
+            hb = QHBoxLayout(container)
+            hb.setContentsMargins(0, 0, 0, 0)
+            label = QLabel('<span style="color:#888">install required</span>')
+            label.setToolTip(
+                "Install the LoGeR extra and submodule to enable:\n"
+                "    uv sync --extra loger\n"
+                "    git submodule update --init --recursive"
+            )
+            hb.addWidget(label)
+            return container
+
         if info.name in self._downloading:
             bar = QProgressBar()
             bar.setRange(0, 100)
@@ -396,9 +454,9 @@ class ModelManagementMixin:
         QTimer.singleShot(3000, _revert)
 
     def _execute_delete(self, model_name: str) -> None:
-        from deepreefmap.launcher.model_manager import ALL_MODELS, delete_model
+        from deepreefmap.launcher.model_manager import all_known_models, delete_model
 
-        info = next((m for m in ALL_MODELS if m.name == model_name), None)
+        info = next((m for m in all_known_models() if m.name == model_name), None)
         if info is None:
             return
         self._status_label.setText(f"Deleting {model_name}...")
@@ -454,12 +512,12 @@ class ModelManagementMixin:
 
     def _download_model(self, model_name: str) -> None:
         from deepreefmap.launcher.model_manager import (
-            ALL_MODELS,
             DownloadCancelled,
+            all_known_models,
             prefetch_model,
         )
 
-        info = next((m for m in ALL_MODELS if m.name == model_name), None)
+        info = next((m for m in all_known_models() if m.name == model_name), None)
         if info is None or model_name in self._downloading:
             return
         self._status_label.setText(f"Downloading model {model_name}...")

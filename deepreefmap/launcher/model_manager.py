@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +48,10 @@ class ModelInfo:
     # reads from. Used for LoGeR, which loads checkpoints from a fixed path
     # under third_party/LoGeR/ckpts rather than the HF cache.
     materialise_to: dict[str, Path] = field(default_factory=dict)
+    # Name of an optional install extra this model needs (e.g. "loger"). When
+    # the extra isn't installed the UI shows the model disabled with a hint
+    # rather than a Download button. See model_available().
+    requires_extra: str | None = None
 
 
 SEGMENTATION_MODELS: list[ModelInfo] = [
@@ -125,6 +130,7 @@ MAPPING_MODELS: list[ModelInfo] = [
             "LoGeR/latest.pt": _LOGER_CKPTS / "LoGeR" / "latest.pt",
             "LoGeR/original_config.yaml": _LOGER_CKPTS / "LoGeR" / "original_config.yaml",
         },
+        requires_extra="loger",
     ),
     ModelInfo(
         name="loger_star",
@@ -137,10 +143,82 @@ MAPPING_MODELS: list[ModelInfo] = [
             "LoGeR_star/latest.pt": _LOGER_CKPTS / "LoGeR_star" / "latest.pt",
             "LoGeR_star/original_config.yaml": _LOGER_CKPTS / "LoGeR_star" / "original_config.yaml",
         },
+        requires_extra="loger",
     ),
 ]
 
 ALL_MODELS = SEGMENTATION_MODELS + MAPPING_MODELS
+
+# Models discovered at run time via discover_models(). Session-scoped (not
+# persisted): re-running discovery is cheap and avoids a stale on-disk cache.
+_DISCOVERED_MODELS: list[ModelInfo] = []
+_DISCOVERED_LOCK = threading.Lock()
+
+
+def discovered_models() -> list[ModelInfo]:
+    with _DISCOVERED_LOCK:
+        return list(_DISCOVERED_MODELS)
+
+
+def all_known_models() -> list[ModelInfo]:
+    """Hardcoded catalogue plus anything discovered this session."""
+    return ALL_MODELS + discovered_models()
+
+
+def model_available(info: ModelInfo) -> bool:
+    """False when the model needs an install extra that isn't present.
+
+    Drives the UI's disabled-with-hint state. Only the LoGeR extra is gated
+    today; everything else is always available.
+    """
+    if info.requires_extra == "loger":
+        from deepreefmap.mapping.registry import loger_available
+        return loger_available()
+    return True
+
+
+def register_discovered(info: ModelInfo) -> bool:
+    """Add a discovered model to the session list. Returns True if it's new.
+
+    Dedups against the hardcoded catalogue and earlier discoveries so the
+    hardcoded entries stay authoritative and re-running discovery is idempotent.
+    """
+    with _DISCOVERED_LOCK:
+        known = {m.name for m in ALL_MODELS} | {m.name for m in _DISCOVERED_MODELS}
+        if info.name in known:
+            return False
+        _DISCOVERED_MODELS.append(info)
+        return True
+
+
+def discover_models() -> tuple[list[str], str | None]:
+    """Query the EPFL-ECEO org for known-loadable models and register them.
+
+    Returns (newly_registered_short_names, error_message_or_None). All network
+    failures are caught and returned as an error string so the caller (a worker
+    thread) never has to handle an exception across the thread boundary.
+    """
+    try:
+        from huggingface_hub import HfApi
+
+        from deepreefmap.launcher.model_families import synthesize_model_info
+        from deepreefmap.segmentation.registry import register_segmentation_model
+
+        repos = HfApi().list_models(author="EPFL-ECEO")
+    except Exception as exc:  # network, auth, or API errors
+        return [], str(exc)[:200]
+
+    new: list[str] = []
+    for repo in repos:
+        synth = synthesize_model_info(repo.id)
+        if synth is None:
+            continue
+        info, resolution, family = synth
+        if not register_discovered(info):
+            continue
+        register_segmentation_model(info.name, info.hf_repos[0], family, resolution)
+        new.append(info.name)
+    return new, None
 
 
 def _hf_cache_dir(repo_id: str) -> Path:

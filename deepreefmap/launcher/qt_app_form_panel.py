@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 
 from PySide6.QtCore import QFileSystemWatcher, QSettings, QSize, QStandardPaths, Qt, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -74,7 +74,7 @@ class FormPanelMixin:
 
     def _build_form_panel(self) -> QWidget:
         from deepreefmap.camera.intrinsics import available_profile_names
-        from deepreefmap.mapping.registry import list_mapping_backends
+        from deepreefmap.mapping.registry import list_mapping_backends, loger_available
         from deepreefmap.segmentation.registry import list_segmentation_models
 
         profiles = available_profile_names() or ["gopro_hero_10"]
@@ -274,6 +274,23 @@ class FormPanelMixin:
         idx = self._map_combo.findText("scsfmlearner")
         if idx >= 0:
             self._map_combo.setCurrentIndex(idx)
+        # LoGeR needs `--extra loger` + the vendored submodule. When either is
+        # missing, keep the options visible but disabled (greyed, unselectable)
+        # with a tooltip on how to enable them, rather than letting the user
+        # pick a backend that crashes at run time.
+        if not loger_available():
+            map_model = self._map_combo.model()
+            if isinstance(map_model, QStandardItemModel):
+                hint = (
+                    "Install the LoGeR extra and submodule to enable:\n"
+                    "    uv sync --extra loger\n"
+                    "    git submodule update --init --recursive"
+                )
+                for i in range(self._map_combo.count()):
+                    if self._map_combo.itemText(i) in ("loger", "loger_star"):
+                        item = map_model.item(i)
+                        item.setEnabled(False)
+                        item.setData(hint, Qt.ItemDataRole.ToolTipRole)
         map_row.addWidget(self._map_combo, 1)
         self._map_status_btn = self._build_model_status_button(self._map_combo)
         map_row.addWidget(self._map_status_btn)
@@ -700,6 +717,14 @@ class FormPanelMixin:
         self._models_grid.setColumnStretch(0, 1)
         self._models_grid.setColumnStretch(1, 0)
         self._models_layout.addWidget(self._models_grid_host)
+
+        self._discover_btn = QPushButton("Check Hugging Face for new models")
+        self._discover_btn.setToolTip(
+            "Query the EPFL-ECEO organisation on Hugging Face for newly published "
+            "models. Requires an internet connection."
+        )
+        self._discover_btn.clicked.connect(self._on_discover_clicked)
+        self._models_layout.addWidget(self._discover_btn)
 
         self._hf_auth_user: str | None = None
         self._model_rows: dict[str, QWidget] = {}
