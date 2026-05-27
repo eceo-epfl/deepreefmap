@@ -818,7 +818,9 @@ class QtPointCloudViewer(QWidget):
         self._picked_leader_target: tuple[float, float] | None = None
         self._pick_camera_obs_id: int | None = None
         self._pick_mode_enabled: bool = False
-        self._prev_interactor_style: object | None = None
+        self._pending_pick: tuple[object, object] | None = None
+        self._pick_press_pos: tuple[int, int] | None = None
+        self._pick_drag_detected: bool = False
 
         self._frame_panel_cache: dict[int, np.ndarray] = {}
 
@@ -853,11 +855,67 @@ class QtPointCloudViewer(QWidget):
         # every actor through the new filter.
         self._last_t = None
 
+    _PICK_DRAG_THRESHOLD = 4
+
     def eventFilter(self, obj, event):  # type: ignore[override]
         if obj is self._canvas_container and event.type() == QEvent.Type.Resize:
             self.legend_overlay.reposition()
             self.canvas_resized.emit()
+        if (
+            obj is self._canvas_container
+            and event.type() == QEvent.Type.MouseButtonDblClick
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            self._recenter_on_click(event)
+
+        # Pick-mode click-vs-drag detection on the plotter widget.
+        # Pyvista fires the pick callback on LeftButtonPressEvent (before any
+        # drag). We defer processing: _on_point_picked stores the result in
+        # _pending_pick, and we only commit it on release if the mouse didn't
+        # move more than _PICK_DRAG_THRESHOLD pixels.
+        if obj is self._plotter and self._pick_mode_enabled:
+            etype = event.type()
+            if etype == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                pos = event.position().toPoint()
+                self._pick_press_pos = (pos.x(), pos.y())
+                self._pick_drag_detected = False
+                self._pending_pick = None
+            elif etype == QEvent.Type.MouseMove and self._pick_press_pos is not None:
+                pos = event.position().toPoint()
+                dx = pos.x() - self._pick_press_pos[0]
+                dy = pos.y() - self._pick_press_pos[1]
+                if abs(dx) + abs(dy) > self._PICK_DRAG_THRESHOLD:
+                    self._pick_drag_detected = True
+                    self._pending_pick = None
+            elif etype == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                if not self._pick_drag_detected and self._pending_pick is not None:
+                    self._process_pick(*self._pending_pick)
+                elif not self._pick_drag_detected and self._pending_pick is None:
+                    self._on_pick_miss()
+                self._pick_press_pos = None
+                self._pending_pick = None
         return super().eventFilter(obj, event)
+
+    def _recenter_on_click(self, event) -> None:  # type: ignore[no-untyped-def]
+        """Re-center the orbit pivot on the world point under the cursor."""
+        if self._plotter is None:
+            return
+        try:
+            from vtkmodules.vtkRenderingCore import vtkWorldPointPicker
+
+            qt_x, qt_y = event.position().x(), event.position().y()
+            h = self._plotter.renderer.GetSize()[1]
+            vtk_x, vtk_y = float(qt_x), float(h - qt_y)
+            wp = vtkWorldPointPicker()
+            wp.Pick(vtk_x, vtk_y, 0.0, self._plotter.renderer)
+            picked = np.asarray(wp.GetPickPosition(), dtype=np.float64)
+            if np.all(np.abs(picked) < 1e-12):
+                return
+            self._plotter.camera.focal_point = tuple(picked.tolist())
+            self._plotter.reset_camera_clipping_range()
+            self._plotter.render()
+        except Exception:
+            logger.debug("Double-click re-center failed", exc_info=True)
 
     def _ensure_plotter(self):
         if self._plotter is not None:
@@ -895,10 +953,66 @@ class QtPointCloudViewer(QWidget):
         except Exception:
             logger.debug("Axes widget unavailable", exc_info=True)
         self._canvas_layout.addWidget(self._plotter)
+        self._plotter.installEventFilter(self)
         # Keep the legend on top after the plotter is added below it.
         self.legend_overlay.raise_()
+        self._install_scroll_zoom()
         self._enable_picking()
         return self._plotter
+
+    def _install_scroll_zoom(self) -> None:
+        """Scroll-wheel zoom toward the cursor position instead of screen center.
+
+        Observers are on the interactor (not the style) so zoom works in both
+        navigate and pick mode.
+        """
+        plotter = self._plotter
+        if plotter is None:
+            return
+        zoom_speed = 0.10
+
+        def _zoom(obj, event):  # type: ignore[no-untyped-def]
+            forward = event == "MouseWheelForwardEvent"
+            direction = 1.0 if forward else -1.0
+            camera = plotter.camera
+            cam_pos = np.asarray(camera.position, dtype=np.float64)
+            focal = np.asarray(camera.focal_point, dtype=np.float64)
+
+            x, y = plotter.iren.interactor.GetEventPosition()
+            try:
+                from vtkmodules.vtkRenderingCore import vtkWorldPointPicker
+
+                wp = vtkWorldPointPicker()
+                wp.Pick(float(x), float(y), 0.0, plotter.renderer)
+                picked = np.asarray(wp.GetPickPosition(), dtype=np.float64)
+            except Exception:
+                picked = focal
+
+            target = picked if np.any(np.abs(picked) > 1e-12) else focal
+
+            view_vec = cam_pos - target
+            dist = float(np.linalg.norm(view_vec))
+            if dist < 1e-9:
+                return
+            step = dist * zoom_speed * direction
+            new_dist = max(dist - step, dist * 0.01)
+            camera.position = tuple((target + (view_vec / dist) * new_dist).tolist())
+
+            # Keep focal point between camera and target to prevent orbit inversion.
+            cam_to_focal = np.asarray(camera.focal_point, dtype=np.float64) - np.asarray(
+                camera.position, dtype=np.float64
+            )
+            if float(np.dot(cam_to_focal, view_vec)) > 0:
+                camera.focal_point = tuple(
+                    (np.asarray(camera.position, dtype=np.float64) + cam_to_focal * 0.5).tolist()
+                )
+
+            plotter.reset_camera_clipping_range()
+            plotter.render()
+
+        iren = plotter.iren
+        iren.add_observer("MouseWheelForwardEvent", _zoom)
+        iren.add_observer("MouseWheelBackwardEvent", _zoom)
 
     def _enable_picking(self) -> None:
         if self._picking_enabled or self._plotter is None:
@@ -936,41 +1050,25 @@ class QtPointCloudViewer(QWidget):
             pass
 
     def set_pick_mode(self, enabled: bool) -> None:
-        """Toggle modal pick mode.
+        """Toggle pick mode.
 
-        While enabled: left-click picks a point and orbit is suspended (we
-        swap to vtkInteractorStyleUser, a passive style that doesn't drive
-        the camera). Cursor turns into a crosshair. While disabled: trackball
-        is restored and left-click manipulates the camera as usual.
+        While enabled: left-click picks a point (distinguished from drag by a
+        pixel threshold in eventFilter). Orbit, pan, and zoom remain active —
+        the trackball style is NOT swapped out. Cursor shows a crosshair to
+        indicate that clicks will pick.
         """
         enabled = bool(enabled)
         if enabled == self._pick_mode_enabled:
             return
-        plotter = self._plotter
         if enabled:
-            if plotter is not None:
-                try:
-                    import vtkmodules.vtkInteractionStyle  # noqa: F401  (registers styles)
-                    from vtkmodules.vtkInteractionStyle import vtkInteractorStyleUser
-
-                    iren = plotter.iren
-                    self._prev_interactor_style = iren.GetInteractorStyle()
-                    iren.SetInteractorStyle(vtkInteractorStyleUser())
-                except Exception:
-                    logger.debug("Could not swap interactor style for pick mode", exc_info=True)
-                    self._prev_interactor_style = None
             try:
                 self._canvas_container.setCursor(Qt.CrossCursor)
             except Exception:
                 pass
             self._pick_mode_enabled = True
         else:
-            if plotter is not None and self._prev_interactor_style is not None:
-                try:
-                    plotter.iren.SetInteractorStyle(self._prev_interactor_style)
-                except Exception:
-                    logger.debug("Could not restore interactor style", exc_info=True)
-            self._prev_interactor_style = None
+            self._pending_pick = None
+            self._pick_press_pos = None
             try:
                 self._canvas_container.unsetCursor()
             except Exception:
@@ -979,16 +1077,27 @@ class QtPointCloudViewer(QWidget):
         self.pick_mode_changed.emit(self._pick_mode_enabled)
 
     def _on_point_picked(self, mesh, point_id) -> None:
-        # Picks only count while in pick mode. Outside of it the picker may
-        # still fire (pyvista's left-click observer stays installed for
-        # performance simplicity), but we silently ignore the event so the
-        # user can left-drag to orbit without phantom picks.
+        # Pyvista fires this on LeftButtonPressEvent — before we know if the
+        # user will drag. In pick mode we defer to _pending_pick; the
+        # eventFilter commits it on release only if the mouse didn't drag.
+        # Outside pick mode the guard drops the event entirely.
         if not self._pick_mode_enabled:
             return
-        if self._final_index is None or self._plotter is None:
-            self.point_picked_clear.emit()
-            return
         if mesh is None or point_id is None or int(point_id) < 0:
+            self._pending_pick = None
+            return
+        self._pending_pick = (mesh, point_id)
+
+    def _on_pick_miss(self) -> None:
+        """Left-click in pick mode hit nothing or the pending pick was empty."""
+        self.point_picked_clear.emit()
+        if self._status_callback is not None:
+            self._status_callback("No point under cursor")
+            QTimer.singleShot(1500, lambda: self._status_callback(""))
+
+    def _process_pick(self, mesh, point_id) -> None:  # type: ignore[no-untyped-def]
+        """Commit a deferred pick after confirming it was a click, not a drag."""
+        if self._final_index is None or self._plotter is None:
             self.point_picked_clear.emit()
             return
 
@@ -1029,7 +1138,7 @@ class QtPointCloudViewer(QWidget):
             except Exception:
                 continue
         if picked_cid is None:
-            self.point_picked_clear.emit()
+            self._on_pick_miss()
             return
 
         fi = self._final_index
@@ -1735,7 +1844,7 @@ class QtPointCloudViewer(QWidget):
         pd = _make_line_segments_polydata(batched)
         self._frustum_batch_actor = self._plotter.add_mesh(
             pd, color=(0.5, 0.5, 0.5), line_width=1, opacity=0.6,
-            name="frustums_batch",
+            name="frustums_batch", pickable=False,
         )
         self._frustum_batch_pd = pd
         self._frustum_frame_ids = frustum_frame_ids
@@ -1746,7 +1855,7 @@ class QtPointCloudViewer(QWidget):
         hl_pd = _make_line_segments_polydata(all_pts[0])
         self._frustum_highlight_actor = self._plotter.add_mesh(
             hl_pd, color=(1.0, 0.8, 0.25), line_width=2, opacity=0.9,
-            name="frustum_highlight",
+            name="frustum_highlight", pickable=False,
         )
         self._frustum_highlight_pd = hl_pd
         self._frustum_all_pts = all_pts

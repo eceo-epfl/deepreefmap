@@ -104,19 +104,154 @@ class ViewerControlsMixin:
         nxt = (self._frame_slider.value() + 1) % n
         self._frame_slider.setValue(nxt)
 
+    def _connect_overlay_sync(self) -> None:
+        """Wire bidirectional sync between overlay and sidebar controls.
+
+        Called once from _show_viewer_controls after both the overlay
+        (built in _build_pick_mode_overlay) and the sidebar (built in
+        _build_form_panel) exist.
+        """
+        if getattr(self, "_overlay_sync_connected", False):
+            return
+        self._overlay_sync_connected = True
+
+        ov = self._ov_pt_slider
+        sb = self._point_size_spin
+        ov_r = self._ov_pt_readout
+
+        def _sync_bool(src, dst, callback):
+            def _fn(checked):
+                dst.blockSignals(True)
+                dst.setChecked(checked)
+                dst.blockSignals(False)
+                callback()
+            return _fn
+
+        # Point size: overlay slider (int ×10) ↔ sidebar spin (float)
+        def _pt_from_overlay(val: int) -> None:
+            fval = val / 10.0
+            ov_r.setText(f"{fval:.1f}")
+            sb.blockSignals(True)
+            sb.setValue(fval)
+            sb.blockSignals(False)
+            self._on_viewer_control_changed()
+
+        def _pt_from_sidebar(fval: float) -> None:
+            ov.blockSignals(True)
+            ov.setValue(int(fval * 10))
+            ov.blockSignals(False)
+            ov_r.setText(f"{fval:.1f}")
+
+        ov.valueChanged.connect(_pt_from_overlay)
+        sb.valueChanged.connect(_pt_from_sidebar)
+
+        # Semantic toggle
+        self._ov_sem_btn.toggled.connect(
+            _sync_bool(self._ov_sem_btn, self._semantic_check, self._on_viewer_control_changed)
+        )
+        self._semantic_check.toggled.connect(
+            _sync_bool(self._semantic_check, self._ov_sem_btn, lambda: None)
+        )
+
+        # Accumulate toggle
+        self._ov_acc_btn.toggled.connect(
+            _sync_bool(self._ov_acc_btn, self._accumulate_check, self._on_viewer_control_changed)
+        )
+        self._accumulate_check.toggled.connect(
+            _sync_bool(self._accumulate_check, self._ov_acc_btn, lambda: None)
+        )
+
+        # Confidence
+        ov_c = self._ov_conf_slider
+        sb_c = self._confidence_slider
+        ov_cr = self._ov_conf_readout
+
+        def _conf_from_overlay(val: int) -> None:
+            ov_cr.setText(f"{val}%")
+            sb_c.blockSignals(True)
+            sb_c.setValue(val)
+            sb_c.blockSignals(False)
+            self._on_viewer_control_changed()
+
+        def _conf_from_sidebar(val: int) -> None:
+            ov_c.blockSignals(True)
+            ov_c.setValue(val)
+            ov_c.blockSignals(False)
+            ov_cr.setText(f"{val}%")
+
+        ov_c.valueChanged.connect(_conf_from_overlay)
+        sb_c.valueChanged.connect(_conf_from_sidebar)
+
+        # Play / pause
+        self._ov_play_btn.toggled.connect(
+            _sync_bool(self._ov_play_btn, self._play_check, self._on_play_toggled)
+        )
+        self._play_check.toggled.connect(
+            _sync_bool(self._play_check, self._ov_play_btn, lambda: None)
+        )
+
+        # FPS
+        ov_f = self._ov_fps_spin
+        sb_f = self._play_fps_spin
+
+        def _fps_from_overlay(val: int) -> None:
+            sb_f.blockSignals(True)
+            sb_f.setValue(val)
+            sb_f.blockSignals(False)
+            self._on_play_fps_changed()
+
+        def _fps_from_sidebar(val: int) -> None:
+            ov_f.blockSignals(True)
+            ov_f.setValue(val)
+            ov_f.blockSignals(False)
+
+        ov_f.valueChanged.connect(_fps_from_overlay)
+        sb_f.valueChanged.connect(_fps_from_sidebar)
+
+        # Follow camera
+        self._ov_follow_btn.toggled.connect(
+            _sync_bool(self._ov_follow_btn, self._follow_camera_check, self._on_follow_camera_changed)
+        )
+        self._follow_camera_check.toggled.connect(
+            _sync_bool(self._follow_camera_check, self._ov_follow_btn, lambda: None)
+        )
+
     def _show_viewer_controls(self) -> None:
         n = self._viewer.n_frames
         self._frame_slider.setRange(0, max(0, n - 1))
         self._frame_slider.setValue(n - 1)
-        self._viewer_controls_group.setVisible(True)
+        # Viewer controls now live in the canvas overlay; the sidebar group
+        # stays hidden but the widgets remain so _on_viewer_control_changed
+        # can read from them.
         self._set_semantic_only_controls_visible(True)
         self._sidebar_tabs.setTabEnabled(self._TAB_RESULTS, True)
+        self._connect_overlay_sync()
+        # Show the overlay display controls on the canvas.
+        overlay_ctrl = getattr(self, "_overlay_controls_container", None)
+        if overlay_ctrl is not None:
+            overlay_ctrl.setVisible(True)
+        ctrl_sep = getattr(self, "_overlay_ctrl_sep", None)
+        if ctrl_sep is not None:
+            ctrl_sep.setVisible(True)
+        overlay = getattr(self, "_pick_mode_overlay", None)
+        if overlay is not None:
+            overlay.adjustSize()
+            self._reposition_pick_mode_overlay()
 
     def _set_semantic_only_controls_visible(self, visible: bool) -> None:
         """Hide per-class/semantic-only controls for geometry-only runs."""
         self._semantic_check.setVisible(visible)
         self._accumulate_check.setVisible(visible)
         self._confidence_box.setVisible(visible)
+        ov_sem = getattr(self, "_ov_sem_btn", None)
+        if ov_sem is not None:
+            ov_sem.setVisible(visible)
+        ov_acc = getattr(self, "_ov_acc_btn", None)
+        if ov_acc is not None:
+            ov_acc.setVisible(visible)
+        ov_conf = getattr(self, "_ov_conf_container", None)
+        if ov_conf is not None:
+            ov_conf.setVisible(visible)
 
     def _build_legend(self) -> None:
         cc = self._classes_config
@@ -340,6 +475,12 @@ class ViewerControlsMixin:
         self._pick_card_pinned_pos = None
         self._refresh_pick_marker()
 
+        frame_idx = payload.get("frame_index", -1)
+        if frame_idx >= 0:
+            slider = getattr(self, "_frame_slider", None)
+            if slider is not None and 0 <= frame_idx <= slider.maximum():
+                slider.setValue(int(frame_idx))
+
     def _on_pick_card_moved(self, x: int, y: int) -> None:
         # User drag-relocated the card. Pin to the new spot so subsequent
         # camera/canvas refreshes keep it there, then refresh the leader
@@ -380,8 +521,11 @@ class ViewerControlsMixin:
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QKeySequence, QShortcut
         from PySide6.QtWidgets import (
+            QFrame,
             QHBoxLayout,
             QLabel,
+            QSlider,
+            QSpinBox,
             QToolButton,
             QVBoxLayout,
             QWidget,
@@ -419,6 +563,22 @@ class ViewerControlsMixin:
                 color: #aaa;
                 font-size: 10px;
             }
+            QWidget#pick_mode_overlay QSlider::groove:horizontal {
+                height: 4px; background: #555; border-radius: 2px;
+            }
+            QWidget#pick_mode_overlay QSlider::handle:horizontal {
+                background: #ddd; width: 10px; height: 10px;
+                margin: -3px 0; border-radius: 5px;
+            }
+            QWidget#pick_mode_overlay QSlider::sub-page:horizontal {
+                background: #4aa3ff; border-radius: 2px;
+            }
+            QWidget#pick_mode_overlay QSpinBox {
+                background: rgba(255,255,255,20); color: #e8e8e8;
+                border: 1px solid rgba(255,255,255,40); border-radius: 3px;
+                padding: 1px 2px; font-size: 10px;
+            }
+            QWidget#pick_mode_overlay QCheckBox { color: #e8e8e8; font-size: 10px; }
             """
         )
         layout = QVBoxLayout(overlay)
@@ -429,8 +589,17 @@ class ViewerControlsMixin:
         buttons_row.setSpacing(6)
         buttons_row.setContentsMargins(0, 0, 0, 0)
 
+        from deepreefmap.launcher.qt_icons import (
+            crosshair_icon,
+            fit_icon,
+            help_icon,
+            refresh_icon,
+        )
+
         btn = QToolButton(overlay)
-        btn.setText("⊕  Pick")
+        btn.setIcon(crosshair_icon(18))
+        btn.setText("Pick")
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         btn.setCheckable(True)
         btn.setToolTip(
             "Enter pick mode. In pick mode, left-click a point to inspect it.\n"
@@ -439,12 +608,39 @@ class ViewerControlsMixin:
         buttons_row.addWidget(btn)
 
         reset_btn = QToolButton(overlay)
-        reset_btn.setText("↺  Reset")
+        reset_btn.setIcon(refresh_icon(18))
+        reset_btn.setText("Reset")
+        reset_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         reset_btn.setToolTip(
             "Reset the 3D view to the default transect-lengthwise orientation.\n"
             "R triggers."
         )
         buttons_row.addWidget(reset_btn)
+
+        fit_btn = QToolButton(overlay)
+        fit_btn.setIcon(fit_icon(18))
+        fit_btn.setText("Fit")
+        fit_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        fit_btn.setToolTip(
+            "Zoom to fit all visible geometry (preserves view orientation).\n"
+            "F triggers."
+        )
+        buttons_row.addWidget(fit_btn)
+
+        help_btn = QToolButton(overlay)
+        help_btn.setIcon(help_icon(18))
+        help_btn.setToolTip(
+            "Keyboard shortcuts:\n\n"
+            "  P          Toggle pick mode\n"
+            "  Esc        Exit pick mode\n"
+            "  R          Reset view (transect orientation)\n"
+            "  F          Fit all visible geometry\n"
+            "  Dbl-click  Re-center orbit pivot\n"
+            "  Scroll     Zoom toward cursor\n"
+            "  Right-drag Pan\n"
+            "  Left-drag  Orbit"
+        )
+        buttons_row.addWidget(help_btn)
 
         layout.addLayout(buttons_row)
 
@@ -459,7 +655,127 @@ class ViewerControlsMixin:
         reset_hint.setObjectName("pick_mode_shortcut")
         reset_hint.setAlignment(Qt.AlignHCenter)
         hints_row.addWidget(reset_hint, 1)
+        fit_hint = QLabel("F", overlay)
+        fit_hint.setObjectName("pick_mode_shortcut")
+        fit_hint.setAlignment(Qt.AlignHCenter)
+        hints_row.addWidget(fit_hint, 1)
         layout.addLayout(hints_row)
+
+        # --- Display controls section (visible once a run is loaded) ---
+        ctrl_sep = QFrame(overlay)
+        ctrl_sep.setFrameShape(QFrame.Shape.HLine)
+        ctrl_sep.setStyleSheet("color: rgba(255,255,255,40); margin: 2px 0;")
+        layout.addWidget(ctrl_sep)
+
+        controls_container = QWidget(overlay)
+        controls_container.setObjectName("overlay_controls")
+        controls_container.setVisible(False)
+        ctrl_layout = QVBoxLayout(controls_container)
+        ctrl_layout.setContentsMargins(0, 2, 0, 0)
+        ctrl_layout.setSpacing(3)
+
+        # Point size row
+        ps_row = QHBoxLayout()
+        ps_row.setSpacing(4)
+        ps_lbl = QLabel("Pt", overlay)
+        ps_lbl.setStyleSheet("color: #aaa; font-size: 10px;")
+        ps_row.addWidget(ps_lbl)
+        ov_pt_slider = QSlider(Qt.Horizontal, overlay)
+        ov_pt_slider.setRange(5, 200)
+        ov_pt_slider.setValue(20)
+        ov_pt_slider.setFixedWidth(80)
+        ov_pt_slider.setFixedHeight(16)
+        ps_row.addWidget(ov_pt_slider)
+        ov_pt_readout = QLabel("2.0", overlay)
+        ov_pt_readout.setStyleSheet("color: #ccc; font-size: 10px; min-width: 24px;")
+        ps_row.addWidget(ov_pt_readout)
+
+        ov_sem_btn = QToolButton(overlay)
+        ov_sem_btn.setText("Sem")
+        ov_sem_btn.setCheckable(True)
+        ov_sem_btn.setChecked(True)
+        ov_sem_btn.setToolTip("Toggle semantic / RGB colouring")
+        ps_row.addWidget(ov_sem_btn)
+
+        ov_acc_btn = QToolButton(overlay)
+        ov_acc_btn.setText("Acc")
+        ov_acc_btn.setCheckable(True)
+        ov_acc_btn.setChecked(True)
+        ov_acc_btn.setToolTip("Accumulate frames up to current / show current only")
+        ps_row.addWidget(ov_acc_btn)
+        ctrl_layout.addLayout(ps_row)
+
+        # Confidence row
+        conf_row = QHBoxLayout()
+        conf_row.setSpacing(4)
+        conf_lbl = QLabel("Conf", overlay)
+        conf_lbl.setStyleSheet("color: #aaa; font-size: 10px;")
+        conf_row.addWidget(conf_lbl)
+        ov_conf_slider = QSlider(Qt.Horizontal, overlay)
+        ov_conf_slider.setRange(0, 100)
+        ov_conf_slider.setValue(0)
+        ov_conf_slider.setFixedWidth(100)
+        ov_conf_slider.setFixedHeight(16)
+        conf_row.addWidget(ov_conf_slider)
+        ov_conf_readout = QLabel("0%", overlay)
+        ov_conf_readout.setStyleSheet("color: #ccc; font-size: 10px; min-width: 24px;")
+        conf_row.addWidget(ov_conf_readout)
+        conf_row.addStretch()
+        ov_conf_container = QWidget(overlay)
+        ov_conf_container.setLayout(conf_row)
+        ctrl_layout.addWidget(ov_conf_container)
+
+        # Playback row
+        play_row = QHBoxLayout()
+        play_row.setSpacing(4)
+        ov_play_btn = QToolButton(overlay)
+        ov_play_btn.setText("▶")
+        ov_play_btn.setCheckable(True)
+        ov_play_btn.setToolTip("Play / pause timeline")
+        play_row.addWidget(ov_play_btn)
+        fps_lbl = QLabel("FPS", overlay)
+        fps_lbl.setStyleSheet("color: #aaa; font-size: 10px;")
+        play_row.addWidget(fps_lbl)
+        ov_fps_spin = QSpinBox(overlay)
+        ov_fps_spin.setRange(1, 60)
+        ov_fps_spin.setValue(8)
+        ov_fps_spin.setFixedWidth(48)
+        ov_fps_spin.setStyleSheet("font-size: 10px;")
+        play_row.addWidget(ov_fps_spin)
+
+        ov_follow_btn = QToolButton(overlay)
+        ov_follow_btn.setText("Follow")
+        ov_follow_btn.setCheckable(True)
+        ov_follow_btn.setToolTip("Auto-snap camera to current frame pose")
+        play_row.addWidget(ov_follow_btn)
+        play_row.addStretch()
+        ctrl_layout.addLayout(play_row)
+
+        layout.addWidget(controls_container)
+        ctrl_sep.setVisible(False)
+
+        self._overlay_controls_container = controls_container
+        self._overlay_ctrl_sep = ctrl_sep
+        self._ov_pt_slider = ov_pt_slider
+        self._ov_pt_readout = ov_pt_readout
+        self._ov_sem_btn = ov_sem_btn
+        self._ov_acc_btn = ov_acc_btn
+        self._ov_conf_slider = ov_conf_slider
+        self._ov_conf_readout = ov_conf_readout
+        self._ov_conf_container = ov_conf_container
+        self._ov_play_btn = ov_play_btn
+        self._ov_fps_spin = ov_fps_spin
+        self._ov_follow_btn = ov_follow_btn
+
+        self._overlay_sync_connected = False
+
+        # Overlay-only connections (no sidebar dependency).
+        ov_pt_slider.valueChanged.connect(
+            lambda val: ov_pt_readout.setText(f"{val / 10.0:.1f}")
+        )
+        ov_conf_slider.valueChanged.connect(
+            lambda val: ov_conf_readout.setText(f"{val}%")
+        )
 
         self._pick_mode_overlay = overlay
         self._pick_mode_button = btn
@@ -484,12 +800,23 @@ class ViewerControlsMixin:
             except Exception:
                 logger.debug("Failed to reset view", exc_info=True)
 
+        def _on_fit_clicked() -> None:
+            try:
+                plotter = self._viewer._plotter
+                if plotter is not None:
+                    plotter.reset_camera()
+                    plotter.render()
+            except Exception:
+                logger.debug("Failed to fit view", exc_info=True)
+
         btn.toggled.connect(_on_button_toggled)
         self._viewer.pick_mode_changed.connect(_on_viewer_pick_mode_changed)
         reset_btn.clicked.connect(_on_reset_clicked)
+        fit_btn.clicked.connect(_on_fit_clicked)
 
         QShortcut(QKeySequence("P"), self, activated=lambda: btn.toggle())
         QShortcut(QKeySequence("R"), self, activated=_on_reset_clicked)
+        QShortcut(QKeySequence("F"), self, activated=_on_fit_clicked)
         QShortcut(
             QKeySequence(Qt.Key_Escape),
             self,
