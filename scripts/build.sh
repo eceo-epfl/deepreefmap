@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -e
 
+# Output artifact name. Defaults to the linux name; the macOS CI job passes
+# deepreefmap-macos-arm64. The PyApp flow below is otherwise platform-agnostic.
+OUTPUT_NAME="${1:-${OUTPUT_NAME:-deepreefmap-linux-x64}}"
+
 rm -f dist/*.whl dist/*.tar.gz
 uv build
 
@@ -71,5 +75,5 @@ PYAPP_UV_ENABLED=1 \
 PYAPP_PASS_LOCATION=1 \
 cargo install --path "$PYAPP_DIR" --force --root /tmp/pyapp-builder
 
-cp /tmp/pyapp-builder/bin/pyapp dist/deepreefmap-linux-x64
-dist/deepreefmap-linux-x64 self remove 2>/dev/null || true
+cp /tmp/pyapp-builder/bin/pyapp "dist/${OUTPUT_NAME}"
+"dist/${OUTPUT_NAME}" self remove 2>/dev/null || true

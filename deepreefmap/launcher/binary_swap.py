@@ -20,6 +20,8 @@ def resolve_asset_name(platform: str | None = None) -> str:
         return "deepreefmap-linux-x64"
     if p.startswith("win"):
         return "deepreefmap-windows-x64.exe"
+    if p.startswith("darwin"):
+        return "deepreefmap-macos-arm64"
     raise BinarySwapError(f"No binary asset is built for platform {p!r}")
 
 

@@ -32,3 +32,16 @@ def test_classes_have_group_fields_for_all_levels() -> None:
             assert isinstance(group, str) and group, (
                 f"Class {cls.name} (id {cls.id}) missing valid group for level {level}"
             )
+
+
+def test_bundled_fonts_are_present() -> None:
+    # The launcher pins a global Inter font and a JetBrains Mono monospace; both
+    # must ship as package data or the app silently falls back to per-OS system
+    # fonts (the macOS/Linux size mismatch this was meant to fix).
+    from importlib import resources
+
+    from deepreefmap.launcher.fonts import _FONT_FILES
+
+    fonts_dir = resources.files("deepreefmap.resources").joinpath("fonts")
+    for name in _FONT_FILES:
+        assert fonts_dir.joinpath(name).is_file(), f"missing bundled font {name}"

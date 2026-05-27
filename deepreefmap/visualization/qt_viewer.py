@@ -673,11 +673,11 @@ class QtPointCloudViewer(QWidget):
         self._frames_panel = QWidget()
         frames_outer = QVBoxLayout(self._frames_panel)
         frames_outer.setContentsMargins(0, 0, 0, 0)
-        frames_outer.setSpacing(2)
+        frames_outer.setSpacing(0)
         frames_row = QWidget()
         frames_layout = QHBoxLayout(frames_row)
         frames_layout.setContentsMargins(0, 0, 0, 0)
-        frames_layout.setSpacing(2)
+        frames_layout.setSpacing(0)
         frames_layout.addWidget(self._rgb_label, 1)
         frames_layout.addWidget(self._seg_label, 1)
         frames_layout.addWidget(self._depth_label, 1)
@@ -734,7 +734,7 @@ class QtPointCloudViewer(QWidget):
         slider_layout.addWidget(self.frame_slider, 1)
         self._frame_readout = QLabel("0 / 0")
         self._frame_readout.setStyleSheet(
-            "color: #e8e8e8; font-family: monospace; min-width: 80px;"
+            'color: #e8e8e8; font-family: "JetBrains Mono"; min-width: 80px;'
         )
         self._frame_readout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         slider_layout.addWidget(self._frame_readout)

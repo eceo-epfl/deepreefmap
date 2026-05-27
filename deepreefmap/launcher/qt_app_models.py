@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from deepreefmap.launcher.qt_app_hf_dialog import HfLoginDialog
+from deepreefmap.launcher.theme import DANGER_BG, SUCCESS, WARNING
 
 
 class ModelManagementMixin:
@@ -49,7 +50,7 @@ class ModelManagementMixin:
         prev = label.styleSheet()
         label.setStyleSheet(
             "QLabel { background-color: rgba(232, 160, 74, 60);"
-            " border: 1px solid #e8a04a; border-radius: 3px; padding: 2px; }"
+            f" border: 1px solid {WARNING}; border-radius: 3px; padding: 2px; }}"
         )
 
         def _clear() -> None:
@@ -236,7 +237,7 @@ class ModelManagementMixin:
             self._hf_auth_label.setToolTip(
                 f"Signed in to Hugging Face as {auth_user}. Click Log out to remove the saved token."
             )
-            self._hf_auth_icon.setText('<span style="color:#4a4; font-weight:bold">●</span>')
+            self._hf_auth_icon.setText(f'<span style="color:{SUCCESS}; font-weight:bold">●</span>')
             self._hf_auth_icon.setToolTip("Signed in to Hugging Face")
             self._hf_auth_btn.setText("Log out")
             self._hf_auth_btn.setEnabled(True)
@@ -249,7 +250,7 @@ class ModelManagementMixin:
             label = "Not logged in to Hugging Face"
             if gated_required:
                 label += (
-                    f'  <span style="color:#e8a04a">— needed for '
+                    f'  <span style="color:{WARNING}">— needed for '
                     f'{", ".join(gated_required)}</span>'
                 )
             self._hf_auth_label.setText(label)
@@ -257,7 +258,7 @@ class ModelManagementMixin:
                 "Some gated models need a Hugging Face account. "
                 "Click Log in… to paste an access token from huggingface.co/settings/tokens."
             )
-            self._hf_auth_icon.setText('<span style="color:#e8a04a; font-weight:bold">!</span>')
+            self._hf_auth_icon.setText(f'<span style="color:{WARNING}; font-weight:bold">!</span>')
             self._hf_auth_icon.setToolTip(
                 "Hugging Face login required to download gated models — "
                 "click Log in… to paste an access token."
@@ -289,7 +290,7 @@ class ModelManagementMixin:
                 name_html += f'&nbsp;<span style="color:#888; font-size:10px">{size_text}</span>'
             if info.name in required:
                 name_html += (
-                    '&nbsp;<span style="color:#e8a04a; '
+                    f'&nbsp;<span style="color:{WARNING}; '
                     'font-size:10px; font-weight:bold">REQUIRED</span>'
                 )
             name_label = QLabel(name_html)
@@ -348,10 +349,10 @@ class ModelManagementMixin:
         icon.setFixedWidth(14)
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         if cached:
-            icon.setText('<span style="color:#4a4; font-weight:bold">✓</span>')
+            icon.setText(f'<span style="color:{SUCCESS}; font-weight:bold">✓</span>')
             icon.setToolTip("cached")
         elif info.gated and not auth_user:
-            icon.setText('<span style="color:#e8a04a; font-weight:bold">!</span>')
+            icon.setText(f'<span style="color:{WARNING}; font-weight:bold">!</span>')
             icon.setToolTip(
                 "Hugging Face login required — this is a gated model. "
                 "Click Log in… above to paste an access token."
@@ -381,7 +382,7 @@ class ModelManagementMixin:
                 # status refresh, instead of disappearing from the shared
                 # status bar the moment the user clicks anywhere else.
                 btn.setToolTip(f"Previous download failed: {prior_error}\nClick to retry.")
-                btn.setStyleSheet("QPushButton { color: #e8a04a; }")
+                btn.setStyleSheet(f"QPushButton {{ color: {WARNING}; }}")
             model_name = info.name
             btn.clicked.connect(lambda checked=False, n=model_name: self._download_model(n))
         hb.addWidget(btn)
@@ -440,7 +441,7 @@ class ModelManagementMixin:
 
         self._delete_armed[model_name] = btn
         btn.setText("Confirm?")
-        btn.setStyleSheet("background-color: #8a2222; color: white; font-weight: bold;")
+        btn.setStyleSheet(f"background-color: {DANGER_BG}; color: white; font-weight: bold;")
 
         def _revert() -> None:
             if self._delete_armed.get(model_name) is btn:

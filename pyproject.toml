@@ -82,7 +82,7 @@ build-backend = "setuptools.build_meta"
 include = ["deepreefmap*"]
 
 [tool.setuptools.package-data]
-"deepreefmap.resources" = ["configs/*.yaml", "camera_profiles/*.json", "*.png"]
+"deepreefmap.resources" = ["configs/*.yaml", "camera_profiles/*.json", "*.png", "fonts/*.ttf", "fonts/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

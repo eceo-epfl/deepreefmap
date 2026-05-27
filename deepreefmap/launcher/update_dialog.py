@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from deepreefmap.launcher.theme import ERROR
 from deepreefmap.launcher.binary_swap import (
     BinarySwapError,
     download_to,
@@ -69,7 +70,7 @@ class UpdateProgressDialog(QDialog):
         self._log.setReadOnly(True)
         self._log.setMaximumBlockCount(_LOG_LINE_CAP)
         self._log.setMinimumHeight(220)
-        self._log.setStyleSheet("font-family: monospace;")
+        self._log.setStyleSheet('font-family: "JetBrains Mono";')
         layout.addWidget(self._log)
 
         buttons = QHBoxLayout()
@@ -119,7 +120,7 @@ class UpdateProgressDialog(QDialog):
         else:
             self._progress.setRange(0, 1)
             self._progress.setValue(0)
-            self._log.setStyleSheet("font-family: monospace; color: #c0392b;")
+            self._log.setStyleSheet(f'font-family: "JetBrains Mono"; color: {ERROR};')
         self._status_label.setText(message)
 
     def _on_relaunch(self) -> None:

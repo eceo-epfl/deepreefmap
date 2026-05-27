@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from deepreefmap.launcher.theme import BANNER_BG, BANNER_BORDER, BANNER_TEXT
 from deepreefmap.launcher.qt_app_batch import (  # noqa: F401  re-exported for tests
     BatchMixin,
     _load_batch_csv,
@@ -148,8 +149,8 @@ class DeepReefMapWindow(
         self._run_meta_banner.setWordWrap(True)
         self._run_meta_banner.setTextFormat(Qt.TextFormat.RichText)
         self._run_meta_banner.setStyleSheet(
-            "background-color: #1f2a36; color: #d8e2ec;"
-            " padding: 4px 12px; border-bottom: 1px solid #2f3f50;"
+            f"background-color: {BANNER_BG}; color: {BANNER_TEXT};"
+            f" padding: 4px 12px; border-bottom: 1px solid {BANNER_BORDER};"
         )
         # Compact single-row format means we only need ~2 lines of height.
         self._run_meta_banner.setMaximumHeight(56)
@@ -181,10 +182,21 @@ def launch(classes_path: Path | None = None, view_run_dir: Path | None = None) -
     os.environ.setdefault("QT_OPENGL", "desktop")
     fmt = QSurfaceFormat()
     fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
-    fmt.setVersion(2, 1)
-    fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
+    # VTK 9's OpenGL2 backend needs >=3.2 core. (The old 2.1 compatibility
+    # profile was a vispy-gl2 shader requirement; vispy was replaced by
+    # pyvistaqt/VTK.) macOS only exposes >2.1 through a forward-compatible core
+    # profile, which Qt sets automatically for a core-profile request.
+    fmt.setVersion(3, 2)
+    fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
     QSurfaceFormat.setDefaultFormat(fmt)
+    QApplication.setApplicationName("DeepReefMap")
+    QApplication.setApplicationDisplayName("DeepReefMap")
     qt_app = QApplication.instance() or QApplication(sys.argv)
+    from deepreefmap.launcher.fonts import apply_app_fonts
+    from deepreefmap.launcher.theme import apply_theme
+
+    apply_app_fonts(qt_app)
+    apply_theme(qt_app)
     from importlib import resources
     icon_path = resources.files("deepreefmap.resources").joinpath("icon.png")
     qt_app.setWindowIcon(QIcon(str(icon_path)))

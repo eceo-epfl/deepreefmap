@@ -275,11 +275,50 @@ def test_resolve_asset_name_windows():
     assert resolve_asset_name("win32") == "deepreefmap-windows-x64.exe"
 
 
+def test_resolve_asset_name_macos():
+    from deepreefmap.launcher.binary_swap import resolve_asset_name
+
+    assert resolve_asset_name("darwin") == "deepreefmap-macos-arm64"
+
+
 def test_resolve_asset_name_unsupported_raises():
     from deepreefmap.launcher.binary_swap import BinarySwapError, resolve_asset_name
 
     with pytest.raises(BinarySwapError):
-        resolve_asset_name("darwin")
+        resolve_asset_name("freebsd")
+
+
+def test_apply_theme_sets_dark_palette(qapp):
+    # apply_theme mutates the shared app, so snapshot and restore to keep other
+    # tests isolated. We assert on the palette (not style().objectName(), which
+    # the global stylesheet wraps in an empty-named QStyleSheetStyle proxy).
+    from PySide6.QtGui import QPalette
+
+    from deepreefmap.launcher.theme import apply_theme
+
+    prev_style = qapp.style().objectName()
+    prev_palette = QPalette(qapp.palette())
+    prev_qss = qapp.styleSheet()
+    try:
+        apply_theme(qapp)
+        win = qapp.palette().color(QPalette.ColorRole.Window)
+        base = qapp.palette().color(QPalette.ColorRole.Base)
+        assert win.red() < 80 and win.green() < 80 and win.blue() < 80
+        assert base.lightness() < win.lightness()
+    finally:
+        qapp.setStyleSheet(prev_qss)
+        qapp.setPalette(prev_palette)
+        if prev_style:
+            qapp.setStyle(prev_style)
+
+
+def test_theme_semantic_constants_are_valid_hex():
+    from PySide6.QtGui import QColor
+
+    from deepreefmap.launcher import theme
+
+    for name in ("SUCCESS", "WARNING", "ERROR", "PRIMARY", "LINK", "UPDATE", "DANGER_BG"):
+        assert QColor(getattr(theme, name)).isValid()
 
 
 def test_find_asset_url_returns_match():

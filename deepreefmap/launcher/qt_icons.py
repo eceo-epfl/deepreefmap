@@ -5,6 +5,8 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
+from deepreefmap.launcher.theme import SUCCESS, WARNING
+
 
 def _px(size: int = 24, bg: QColor | None = None) -> tuple[QPixmap, QPainter]:
     pm = QPixmap(size, size)
@@ -121,7 +123,7 @@ def help_icon(size: int = 24, color: QColor | None = None) -> QIcon:
 
 
 def check_icon(size: int = 16, color: QColor | None = None) -> QIcon:
-    c = color or QColor(74, 170, 74)
+    c = color or QColor(SUCCESS)
     pm, p = _px(size)
     pen = QPen(c, 2.0)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -135,7 +137,7 @@ def check_icon(size: int = 16, color: QColor | None = None) -> QIcon:
 
 
 def download_icon(size: int = 16, color: QColor | None = None) -> QIcon:
-    c = color or QColor(232, 160, 74)
+    c = color or QColor(WARNING)
     pm, p = _px(size)
     pen = QPen(c, 1.8)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -154,7 +156,7 @@ def download_icon(size: int = 16, color: QColor | None = None) -> QIcon:
 
 
 def lock_icon(size: int = 16, color: QColor | None = None) -> QIcon:
-    c = color or QColor(232, 160, 74)
+    c = color or QColor(WARNING)
     pm, p = _px(size)
     pen = QPen(c, 1.6)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)

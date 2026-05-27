@@ -7,10 +7,12 @@ from pathlib import Path
 
 from PySide6.QtGui import QColor
 
+from deepreefmap.launcher.theme import UPDATE
+
 logger = logging.getLogger(__name__)
 
 # Amber accent used to flag the Updates tab when a newer release exists.
-_UPDATE_ACCENT = QColor("#e0a030")
+_UPDATE_ACCENT = QColor(UPDATE)
 
 
 _DEFAULT_GH_REPO = "eceo-epfl/deepreefmap"

@@ -36,6 +36,7 @@ from deepreefmap.launcher.qt_app_progress import (
     ProgressModel,
 )
 from deepreefmap.launcher.qt_app_version import _current_version
+from deepreefmap.launcher.theme import WARN_BG, WARN_BORDER, WARN_TEXT
 from deepreefmap.visualization.sunburst_widget import SunburstWidget
 
 logger = logging.getLogger(__name__)
@@ -189,8 +190,8 @@ class FormPanelMixin:
         self._warnings_label_running.setWordWrap(True)
         self._warnings_label_running.setTextFormat(Qt.TextFormat.RichText)
         self._warnings_label_running.setStyleSheet(
-            "background-color: #4a3a14; color: #ffd98a;"
-            " border: 1px solid #8a6b1a; padding: 6px; border-radius: 3px;"
+            f"background-color: {WARN_BG}; color: {WARN_TEXT};"
+            f" border: 1px solid {WARN_BORDER}; padding: 6px; border-radius: 3px;"
         )
         self._warnings_label_running.setVisible(False)
         setup_layout.addWidget(self._warnings_label_running)
@@ -447,8 +448,8 @@ class FormPanelMixin:
         self._warnings_label.setWordWrap(True)
         self._warnings_label.setTextFormat(Qt.TextFormat.RichText)
         self._warnings_label.setStyleSheet(
-            "background-color: #4a3a14; color: #ffd98a;"
-            " border: 1px solid #8a6b1a; padding: 6px; border-radius: 3px;"
+            f"background-color: {WARN_BG}; color: {WARN_TEXT};"
+            f" border: 1px solid {WARN_BORDER}; padding: 6px; border-radius: 3px;"
         )
         self._warnings_label.setVisible(False)
         self._run_warnings: list[str] = []
