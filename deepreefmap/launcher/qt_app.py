@@ -193,10 +193,19 @@ def launch(classes_path: Path | None = None, view_run_dir: Path | None = None) -
         QTimer.singleShot(100, lambda: window._auto_load_run(view_run_dir))
 
     # Qt's exec() blocks in C++, so Python's SIGINT handler can't fire until
-    # the event loop yields. Install a handler that closes the app, and run a
-    # no-op timer to wake the interpreter every 200 ms so the handler runs.
-    signal.signal(signal.SIGINT, lambda *_: qt_app.quit())
-    sigint_heartbeat = QTimer()
+    # the event loop yields. A no-op timer wakes the interpreter every 200 ms.
+    # Parent it to qt_app so PySide6 won't garbage-collect the C++ side.
+    _sigint_count = 0
+
+    def _on_sigint(*_: object) -> None:
+        nonlocal _sigint_count
+        _sigint_count += 1
+        if _sigint_count >= 2:
+            os._exit(1)
+        qt_app.quit()
+
+    signal.signal(signal.SIGINT, _on_sigint)
+    sigint_heartbeat = QTimer(qt_app)
     sigint_heartbeat.start(200)
     sigint_heartbeat.timeout.connect(lambda: None)
 
