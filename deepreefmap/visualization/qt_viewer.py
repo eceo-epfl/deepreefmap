@@ -803,7 +803,6 @@ class QtPointCloudViewer(QWidget):
 
         self._point_filter: Callable[[np.ndarray], np.ndarray] | None = None
 
-        self._picking_enabled = False
         self._picked_actor_inner = None
         self._picked_actor_outer = None
         self._pick_2d_actors: list[object] = []
@@ -814,7 +813,6 @@ class QtPointCloudViewer(QWidget):
         self._picked_leader_target: tuple[float, float] | None = None
         self._pick_camera_obs_id: int | None = None
         self._pick_mode_enabled: bool = False
-        self._pending_pick: tuple[object, object] | None = None
         self._pick_press_pos: tuple[int, int] | None = None
         self._pick_drag_detected: bool = False
 
@@ -852,6 +850,11 @@ class QtPointCloudViewer(QWidget):
         self._last_t = None
 
     _PICK_DRAG_THRESHOLD = 4
+    # Gap-forgiveness radius (px) for the depth pick: if the exact click pixel
+    # falls between point sprites, the nearest covered pixel to the cursor
+    # within this window is used, so picks stay accurate without needing a
+    # pixel-perfect hit.
+    _PICK_PIXEL_RADIUS = 8
 
     def eventFilter(self, obj, event):  # type: ignore[override]
         if obj is self._canvas_container and event.type() == QEvent.Type.Resize:
@@ -864,32 +867,30 @@ class QtPointCloudViewer(QWidget):
         ):
             self._recenter_on_click(event)
 
-        # Pick-mode click-vs-drag detection on the plotter widget.
-        # Pyvista fires the pick callback on LeftButtonPressEvent (before any
-        # drag). We defer processing: _on_point_picked stores the result in
-        # _pending_pick, and we only commit it on release if the mouse didn't
-        # move more than _PICK_DRAG_THRESHOLD pixels.
+        # Pick-mode click-vs-drag detection on the plotter widget. The pick
+        # itself runs on release (only if the mouse didn't move more than
+        # _PICK_DRAG_THRESHOLD pixels) so it can't be mistaken for an orbit.
         if obj is self._plotter and self._pick_mode_enabled:
             etype = event.type()
             if etype == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                 pos = event.position().toPoint()
                 self._pick_press_pos = (pos.x(), pos.y())
                 self._pick_drag_detected = False
-                self._pending_pick = None
             elif etype == QEvent.Type.MouseMove and self._pick_press_pos is not None:
                 pos = event.position().toPoint()
                 dx = pos.x() - self._pick_press_pos[0]
                 dy = pos.y() - self._pick_press_pos[1]
                 if abs(dx) + abs(dy) > self._PICK_DRAG_THRESHOLD:
                     self._pick_drag_detected = True
-                    self._pending_pick = None
             elif etype == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
-                if not self._pick_drag_detected and self._pending_pick is not None:
-                    self._process_pick(*self._pending_pick)
-                elif not self._pick_drag_detected and self._pending_pick is None:
-                    self._on_pick_miss()
+                if not self._pick_drag_detected:
+                    pos = event.position().toPoint()
+                    res = self._pick_at(pos.x(), pos.y())
+                    if res is not None:
+                        self._process_pick(*res)
+                    else:
+                        self._on_pick_miss()
                 self._pick_press_pos = None
-                self._pending_pick = None
         return super().eventFilter(obj, event)
 
     def _recenter_on_click(self, event) -> None:  # type: ignore[no-untyped-def]
@@ -953,7 +954,6 @@ class QtPointCloudViewer(QWidget):
         # Keep the legend on top after the plotter is added below it.
         self.legend_overlay.raise_()
         self._install_scroll_zoom()
-        self._enable_picking()
         return self._plotter
 
     def _install_scroll_zoom(self) -> None:
@@ -1010,24 +1010,106 @@ class QtPointCloudViewer(QWidget):
         iren.add_observer("MouseWheelForwardEvent", _zoom)
         iren.add_observer("MouseWheelBackwardEvent", _zoom)
 
-    def _enable_picking(self) -> None:
-        if self._picking_enabled or self._plotter is None:
-            return
+    def _iter_pickable_actors(self):
+        """Yield actors that _process_pick can resolve: frustums + class clouds.
+
+        These hold the final, indexed cloud; the live/simple actors aren't in
+        _process_pick's lookup tables, so picking them never resolved anyway.
+        """
+        if self._frustum_batch_actor is not None:
+            yield self._frustum_batch_actor
+        yield from self._frustum_actors.values()
+        yield from self._class_actors.values()
+
+    @staticmethod
+    def _select_pick_pixel(
+        z: np.ndarray, cursor_local: tuple[int, int]
+    ) -> tuple[int, int] | None:
+        """Choose the foreground z-buffer pixel nearest the cursor.
+
+        ``z`` has shape ``(ny, nx)``; ``z[j, i]`` is the depth at local column
+        ``i``, row ``j`` (VTK's bottom-left origin). ``cursor_local`` is the
+        click's ``(col, row)`` within the window. A pixel is foreground when
+        its depth is ``< 1.0`` (something was rendered there). Returns the
+        chosen ``(col, row)`` or ``None`` if the whole window is background.
+        Ties in pixel distance break toward the nearer (smaller depth) pixel.
+        """
+        foreground = z < 1.0 - 1e-6
+        if not foreground.any():
+            return None
+        ny, nx = z.shape
+        ci, cj = cursor_local
+        jj, ii = np.mgrid[0:ny, 0:nx]
+        dist2 = (ii - ci).astype(np.float64) ** 2 + (jj - cj).astype(np.float64) ** 2
+        # Primary key pixel distance; +depth as a sub-unit tiebreak (z in [0,1)
+        # so it never outweighs an integer-spaced distance difference).
+        score = np.where(foreground, dist2 + 1e-3 * z, np.inf)
+        j, i = np.unravel_index(int(np.argmin(score)), score.shape)
+        return int(i), int(j)
+
+    def _pick_at(self, qt_x, qt_y):  # type: ignore[no-untyped-def]
+        """Find the rendered point nearest the cursor via the depth buffer.
+
+        Reads the z-buffer in a small window around the click, picks the
+        foreground pixel closest to the cursor, unprojects it to a world point,
+        and snaps to the nearest point across the visible pickable actors.
+        Returns ``(dataset, point_id)`` for _process_pick, or ``None`` on a
+        miss (click landed on the background). Unlike a ray+tolerance picker,
+        this honours occlusion and the view angle.
+        """
+        if self._plotter is None:
+            return None
         try:
-            # tolerance is in normalised viewport units (~55px on 1080p at
-            # 0.025). Too tight and picks miss; too wide and they snap to
-            # distant points.
-            self._plotter.enable_point_picking(
-                callback=self._on_point_picked,
-                show_message=False,
-                show_point=False,
-                left_clicking=True,
-                use_mesh=True,
-                tolerance=0.025,
-            )
-            self._picking_enabled = True
+            from vtkmodules.util.numpy_support import vtk_to_numpy
+            from vtkmodules.vtkCommonCore import vtkFloatArray
+            from vtkmodules.vtkRenderingCore import vtkWorldPointPicker
+
+            ren = self._plotter.renderer
+            win = self._plotter.iren.GetRenderWindow()
+            w, h = ren.GetSize()
+            if w <= 0 or h <= 0:
+                return None
+            cx, cy = int(qt_x), int(h - int(qt_y))  # Qt top-left -> VTK bottom-left
+            r = self._PICK_PIXEL_RADIUS
+            x0, x1 = max(0, cx - r), min(w - 1, cx + r)
+            y0, y1 = max(0, cy - r), min(h - 1, cy + r)
+            if x1 < x0 or y1 < y0:
+                return None
+            nx, ny = x1 - x0 + 1, y1 - y0 + 1
+            zarr = vtkFloatArray()
+            win.GetZbufferData(x0, y0, x1, y1, zarr)
+            z = vtk_to_numpy(zarr).reshape(ny, nx)  # row 0 == y0 (bottom)
+            sel = self._select_pick_pixel(z, (cx - x0, cy - y0))
+            if sel is None:
+                return None
+            wp = vtkWorldPointPicker()
+            wp.Pick(float(x0 + sel[0]), float(y0 + sel[1]), 0.0, ren)
+            world = np.asarray(wp.GetPickPosition(), dtype=np.float64)
+
+            best = None  # (dist_sq, dataset, point_id) of the closest point so far
+            for actor in self._iter_pickable_actors():
+                try:
+                    if actor is None or not actor.GetVisibility():
+                        continue
+                    mapper = actor.GetMapper()
+                    ds = mapper.GetInput() if mapper is not None else None
+                    if ds is None or ds.GetNumberOfPoints() == 0:
+                        continue
+                    pid = ds.FindPoint(float(world[0]), float(world[1]), float(world[2]))
+                    if pid < 0:
+                        continue
+                    pt = np.asarray(ds.GetPoint(int(pid)), dtype=np.float64) - world
+                    d2 = float(pt @ pt)
+                    if best is None or d2 < best[0]:
+                        best = (d2, ds, int(pid))
+                except Exception:
+                    continue
+            if best is None:
+                return None
+            return best[1], best[2]
         except Exception:
-            logger.debug("enable_point_picking unavailable", exc_info=True)
+            logger.debug("depth pick failed", exc_info=True)
+            return None
 
     def _render_canvas_safe(self) -> None:
         """Force a GL re-render (e.g. after the legend overlay relayouts).
@@ -1060,7 +1142,6 @@ class QtPointCloudViewer(QWidget):
                 pass
             self._pick_mode_enabled = True
         else:
-            self._pending_pick = None
             self._pick_press_pos = None
             try:
                 self._canvas_container.unsetCursor()
@@ -1069,20 +1150,8 @@ class QtPointCloudViewer(QWidget):
             self._pick_mode_enabled = False
         self.pick_mode_changed.emit(self._pick_mode_enabled)
 
-    def _on_point_picked(self, mesh, point_id) -> None:
-        # Pyvista fires this on LeftButtonPressEvent — before we know if the
-        # user will drag. In pick mode we defer to _pending_pick; the
-        # eventFilter commits it on release only if the mouse didn't drag.
-        # Outside pick mode the guard drops the event entirely.
-        if not self._pick_mode_enabled:
-            return
-        if mesh is None or point_id is None or int(point_id) < 0:
-            self._pending_pick = None
-            return
-        self._pending_pick = (mesh, point_id)
-
     def _on_pick_miss(self) -> None:
-        """Left-click in pick mode hit nothing or the pending pick was empty."""
+        """Left-click in pick mode landed on the background (no point under cursor)."""
         self.point_picked_clear.emit()
         if self._status_callback is not None:
             self._status_callback("No point under cursor")

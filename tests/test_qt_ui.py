@@ -592,6 +592,41 @@ def test_compute_transect_view_falls_back_for_degenerate_data():
     assert all(np.isfinite(cam_pos))
 
 
+# --- Depth-buffer pick pixel selection ---
+
+def test_select_pick_pixel_all_background_returns_none():
+    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+
+    z = np.ones((5, 5), dtype=np.float32)  # far plane everywhere == nothing drawn
+    assert QtPointCloudViewer._select_pick_pixel(z, (2, 2)) is None
+
+
+def test_select_pick_pixel_snaps_to_only_foreground_pixel():
+    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+
+    z = np.ones((5, 5), dtype=np.float32)
+    z[1, 3] = 0.4  # one covered pixel at (col=3, row=1), cursor a few px away
+    assert QtPointCloudViewer._select_pick_pixel(z, (2, 2)) == (3, 1)
+
+
+def test_select_pick_pixel_prefers_pixel_under_cursor():
+    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+
+    z = np.full((5, 5), 0.5, dtype=np.float32)  # everything covered
+    assert QtPointCloudViewer._select_pick_pixel(z, (2, 2)) == (2, 2)
+
+
+def test_select_pick_pixel_breaks_distance_ties_by_depth():
+    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+
+    # Two covered pixels equidistant from the cursor; the front-most (smaller
+    # depth) wins so picks land on the visible surface, not one behind it.
+    z = np.ones((3, 3), dtype=np.float32)
+    z[1, 0] = 0.8  # left, farther
+    z[1, 2] = 0.3  # right, nearer
+    assert QtPointCloudViewer._select_pick_pixel(z, (1, 1)) == (2, 1)
+
+
 # --- Qt widget tests (offscreen) ---
 
 @pytest.fixture(scope="module")
