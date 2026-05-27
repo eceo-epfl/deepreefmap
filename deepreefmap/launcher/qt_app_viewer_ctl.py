@@ -62,7 +62,7 @@ class ViewerControlsMixin:
             self._viewer.apply_geometry_state(
                 timeline_t=self._frame_slider.value(),
                 point_size=self._point_size_spin.value(),
-                frustums_visible=self._viewer.legend_overlay._frustum_check.isChecked(),
+                frustums_visible=getattr(self, "_ov_frustum_btn", None) is not None and self._ov_frustum_btn.isChecked(),
             )
             if getattr(self, "_follow_camera_check", None) and self._follow_camera_check.isChecked():
                 self._snap_camera_to_current_frame()
@@ -74,7 +74,7 @@ class ViewerControlsMixin:
             semantic_colors=self._semantic_check.isChecked(),
             point_size=self._point_size_spin.value(),
             min_confidence=self._confidence_slider.value() / 100.0,
-            frustums_visible=self._viewer.legend_overlay._frustum_check.isChecked(),
+            frustums_visible=getattr(self, "_ov_frustum_btn", None) is not None and self._ov_frustum_btn.isChecked(),
         )
         if getattr(self, "_follow_camera_check", None) and self._follow_camera_check.isChecked():
             self._snap_camera_to_current_frame()
@@ -216,6 +216,9 @@ class ViewerControlsMixin:
             _sync_bool(self._follow_camera_check, self._ov_follow_btn, lambda: None)
         )
 
+        # Frustum visibility (overlay-only, no sidebar counterpart)
+        self._ov_frustum_btn.toggled.connect(lambda _: self._on_viewer_control_changed())
+
     def _show_viewer_controls(self) -> None:
         n = self._viewer.n_frames
         self._frame_slider.setRange(0, max(0, n - 1))
@@ -270,7 +273,6 @@ class ViewerControlsMixin:
         if not self._legend_sort_connected:
             overlay.sort_clicked.connect(self._on_legend_sort_clicked)
             overlay.master_clicked.connect(self._on_master_clicked)
-            overlay._frustum_check.toggled.connect(self._on_viewer_control_changed)
             self._legend_sort_connected = True
         overlay.set_sort_indicator(self._legend_sort_mode, self._legend_sort_ascending)
         self._legend_order_cache = None
@@ -609,7 +611,7 @@ class ViewerControlsMixin:
 
         reset_btn = QToolButton(overlay)
         reset_btn.setIcon(refresh_icon(18))
-        reset_btn.setText("Reset")
+        reset_btn.setText("Reset View")
         reset_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         reset_btn.setToolTip(
             "Reset the 3D view to the default transect-lengthwise orientation.\n"
@@ -748,6 +750,13 @@ class ViewerControlsMixin:
         ov_follow_btn.setCheckable(True)
         ov_follow_btn.setToolTip("Auto-snap camera to current frame pose")
         play_row.addWidget(ov_follow_btn)
+
+        ov_frustum_btn = QToolButton(overlay)
+        ov_frustum_btn.setText("Frustums")
+        ov_frustum_btn.setCheckable(True)
+        ov_frustum_btn.setChecked(True)
+        ov_frustum_btn.setToolTip("Show / hide camera frustum wireframes")
+        play_row.addWidget(ov_frustum_btn)
         play_row.addStretch()
         ctrl_layout.addLayout(play_row)
 
@@ -766,6 +775,7 @@ class ViewerControlsMixin:
         self._ov_play_btn = ov_play_btn
         self._ov_fps_spin = ov_fps_spin
         self._ov_follow_btn = ov_follow_btn
+        self._ov_frustum_btn = ov_frustum_btn
 
         self._overlay_sync_connected = False
 

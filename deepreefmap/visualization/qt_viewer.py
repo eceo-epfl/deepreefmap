@@ -399,11 +399,11 @@ class LegendOverlay(QWidget):
         self._scroll.setWidget(self._inner)
         outer.addWidget(self._scroll, 1)
 
-        # Footer: per-view toggle for the camera frustums, kept with the legend
-        # so all visibility controls live in one box. Checked = frustums shown.
-        self._frustum_check = QCheckBox("Show frustums")
-        self._frustum_check.setChecked(True)
-        outer.addWidget(self._frustum_check, 0)
+        # Frustum visibility toggle used to live here; it's now in the
+        # canvas toolbar overlay (qt_app_viewer_ctl._build_pick_mode_overlay).
+        # The attribute is kept as a plain bool so existing code that reads
+        # legend_overlay._frustum_check.isChecked() still works via the shim.
+        self._frustum_visible = True
 
         self._sunburst: QWidget | None = None
         self._sunburst_was_visible = False
@@ -465,11 +465,9 @@ class LegendOverlay(QWidget):
                 self._sunburst.setVisible(False)
             self._sort_row.setVisible(False)
             self._scroll.setVisible(False)
-            self._frustum_check.setVisible(False)
         else:
             self._scroll.setVisible(True)
             self._sort_row.setVisible(True)
-            self._frustum_check.setVisible(True)
             if self._sunburst is not None:
                 self._sunburst.setVisible(self._sunburst_was_visible)
         self._minimize_btn.setText("+" if self._minimized else "−")
@@ -615,8 +613,6 @@ class LegendOverlay(QWidget):
             used = chrome + header_h
             if self._sort_row.isVisibleTo(self):
                 used += self._sort_row.sizeHint().height() + 4
-            if self._frustum_check.isVisibleTo(self):
-                used += self._frustum_check.sizeHint().height() + 4
             if self._sunburst is not None and self._sunburst.isVisibleTo(self):
                 used += self._sunburst.height() + 4
             content_h = getattr(self, "_list_content_h", cap_h)

@@ -587,7 +587,7 @@ def test_overlay_has_reset_button_and_r_shortcut_triggers_view_reset(qapp):
     cc = load_classes(DEFAULT_CLASSES_PATH)
     window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
     assert window._reset_view_button is not None
-    assert window._reset_view_button.text().strip().endswith("Reset")
+    assert "Reset" in window._reset_view_button.text()
 
     calls: list[int] = []
     window._viewer.reset_view = lambda: calls.append(1)  # type: ignore[method-assign]
