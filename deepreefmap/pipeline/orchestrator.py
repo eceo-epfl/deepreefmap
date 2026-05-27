@@ -1,37 +1,115 @@
 from __future__ import annotations
 
+import dataclasses
 import gc
 import logging
 import shutil
+import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable, Protocol, cast
 
 import cv2
 import imageio.v3 as iio
 import numpy as np
 from tqdm.auto import tqdm
 
+from deepreefmap import __version__ as deepreefmap_version
 from deepreefmap.camera.intrinsics import CameraProfile, scale_intrinsics
 from deepreefmap.camera.rectification import Rectifier
-from deepreefmap.config.classes import ClassConfig, DEFAULT_CLASSES_PATH, load_classes
+from deepreefmap.config.classes import ClassConfig, load_classes
 from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_semantic_cloud
 from deepreefmap.io.video import _first_sample_time, iter_video_frames, selected_local_indices_for_clip
+from deepreefmap.io.video_hash import describe_videos
 from deepreefmap.mapping.registry import create_mapping_backend
 from deepreefmap.pipeline import resume as resume_mod
-from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
+from deepreefmap.pipeline.artifacts import (
+    FrameBatch,
+    MappingSequenceResult,
+    PreparedFrame,
+    ReconstructionCancelled,
+)
+from deepreefmap.pipeline.instrumentation import RunInstrumentation
 from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_reference_cloud
 from deepreefmap.pointcloud.tsdf import integrate_tsdf
 from deepreefmap.pointcloud.tsdf_align import align_tsdf_to_reference
-from deepreefmap.postproc.ortho_outputs import TransectCropParams, build_ortho_outputs
-from deepreefmap.postproc.reports import save_cover_report, save_run_manifest
-from deepreefmap.segmentation.registry import create_segmentation_model
-from deepreefmap.telemetry.gopro import extract_gravity_vectors_for_video_selection
-from deepreefmap.visualization.viser_app import ViserLiveApp
-from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
 from deepreefmap.pointcloud.unprojection import depth_to_points
+from deepreefmap.postproc.ortho_outputs import TransectCropParams, build_ortho_outputs
+from deepreefmap.postproc.quality import analyse_preprocess_quality
+from deepreefmap.postproc.reports import save_cover_report, save_run_manifest
+from deepreefmap.segmentation.registry import create_segmentation_model, model_processing_size
+from deepreefmap.telemetry.gopro import extract_gravity_vectors_for_video_selection
+
+if TYPE_CHECKING:
+    import torch
 
 logger = logging.getLogger(__name__)
+
+
+class RunViewer(Protocol):
+    """Stage-by-stage viewer contract the orchestrator drives during a run.
+
+    Satisfied structurally by `gui/viewer/widget.py` and the two viser apps.
+    """
+
+    def start_run(self, run_label: str, output_dir: str) -> None: ...
+    def set_stage(self, stage: str, status: str, message: str | None = None) -> None: ...
+    def update_progress(
+        self,
+        stage: str,
+        current: int,
+        total: int | None = None,
+        message: str | None = None,
+        frame_index: int | None = None,
+    ) -> None: ...
+    def set_data(self, **kwargs: object) -> None: ...
+    def mark_outputs_ready(self, output_dir: str, output_files: list[str]) -> None: ...
+    def fail_run(self, stage: str, error_message: str) -> None: ...
+    def close(self) -> None: ...
+    def wait_forever(self) -> None: ...
+
+
+def _check_cancel(
+    cancel_event: threading.Event | None,
+    pause_event: threading.Event | None = None,
+) -> None:
+    if pause_event is not None:
+        pause_event.wait()
+    if cancel_event is not None and cancel_event.is_set():
+        raise ReconstructionCancelled("Reconstruction cancelled by user")
+
+
+_CLOUD_STAGE_LABELS = {
+    "concatenating": "Concatenating point arrays",
+    "replacing": "Applying replacement radius",
+    "replacing_keys": "Replacement radius: computing voxel keys",
+    "replacing_sort": "Replacement radius: sorting points",
+    "replacing_select": "Replacement radius: selecting representatives",
+    "voxelizing": "Reducing by voxel size",
+}
+
+
+def _viewer_cloud_callbacks(
+    viewer: "RunViewer | None",
+) -> tuple[Callable[[str], None], Callable[[int, int], None]]:
+    """Stage/progress callbacks adapting the cloud builder's sub-steps to the viewer."""
+
+    def stage(name: str) -> None:
+        if viewer is not None:
+            viewer.set_stage("outputs", "running", _CLOUD_STAGE_LABELS.get(name, f"Cloud {name}"))
+
+    def progress(done: int, total: int) -> None:
+        if viewer is not None:
+            viewer.update_progress("outputs", current=done, total=total, message="Building semantic cloud")
+
+    return stage, progress
+
+
+def _wait_for_viser(viser: "RunViewer | None", keep_viser_open: bool) -> None:
+    """Hold a finished run open on the viser server until the user interrupts it."""
+    if viser is not None and keep_viser_open:
+        viser.wait_forever()
 
 
 def run_reconstruction(
@@ -43,8 +121,10 @@ def run_reconstruction(
     output_dir: Path,
     transect_length: float | None,
     transect_crop_width: float | None,
-    enable_viser: bool,
-    viser_port: int = 8080,
+    # Position 9 since v1.0.0. Everything past it is keyword-only so reordering
+    # the tail can never silently rebind a positional caller's argument.
+    enable_viser: bool = False,
+    *,
     enable_tsdf: bool = False,
     replacement_radius_factor: float | None = None,
     replacement_radius_estimation_frames: int = 30,
@@ -52,15 +132,20 @@ def run_reconstruction(
     begin_s: float | None = None,
     end_s: float | None = None,
     mapping_options: dict[str, object] | None = None,
-    classes_path: Path = DEFAULT_CLASSES_PATH,
+    classes_path: Path | None = None,
     grid_bins: int = 2000,
-    keep_viser_open: bool = True,
     require_gravity_telemetry: bool = False,
     preprocess_batch_size: int = 4,
     processing_width: int | None = None,
     processing_height: int | None = None,
     skip_segmentation: bool = False,
     refine_intrinsics_from_mapper: bool = False,
+    viewer: RunViewer | None = None,
+    viser_port: int = 8080,
+    keep_viser_open: bool = True,
+    run_name: str | None = None,
+    cancel_event: threading.Event | None = None,
+    pause_event: threading.Event | None = None,
 ) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -68,31 +153,56 @@ def run_reconstruction(
         datefmt="%H:%M:%S",
     )
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    logger.info("Loading classes from %s", classes_path)
-    classes_config = load_classes(classes_path)
-    if enable_viser:
-        if skip_segmentation:
-            viewer = SimpleGeometryViserApp(port=viser_port)
-        else:
-            viewer = ViserLiveApp(
-                class_colors=classes_config.id_to_color,
-                class_names=classes_config.id_to_name,
-                port=viser_port,
-            )
-    else:
-        viewer = None
-    if viewer is not None:
-        viewer.start_run(run_label="DeepReefMap reconstruction", output_dir=str(output_dir))
-        viewer.set_stage("startup", "running", "Loading camera + segmentation + mapping backends")
-
+    run_started_at = datetime.now(timezone.utc).isoformat()
+    # Sampled imohash + size + mtime, sub-ms even on multi-GB clips. Captured
+    # up front so the manifest identity matches the files as they were read.
+    video_meta = describe_videos([Path(p) for p in video_paths])
     active_stage = "startup"
+    # A viser server built here is ours to shut down. An injected viewer belongs to
+    # the Qt GUI and must survive the run, so it is never closed below.
+    owned_viser: RunViewer | None = None
+    # Stage marks + memory sampling + machine snapshot for the manifest (and thence
+    # the machine's timing profile). Its sampler thread runs until stop(), so the
+    # try opens on the very next line: any statement in between leaks a thread per
+    # failed run.
+    instr = RunInstrumentation(output_dir)
     try:
+        from deepreefmap.device import resolve_device
+
+        device = resolve_device()
+        logger.info("Compute device: %s", device)
+
+        logger.info("Loading classes from %s", classes_path if classes_path is not None else "built-in")
+        classes_config = load_classes(classes_path)
+        if viewer is None and enable_viser:
+            # Lazy import keeps viser's web stack off the headless and Qt-GUI paths.
+            if skip_segmentation:
+                from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
+
+                # Typed set_data signatures don't structurally match the Protocol's **kwargs form,
+                # but the apps honour the contract at runtime (as the Qt viewer does).
+                owned_viser = cast(RunViewer, SimpleGeometryViserApp(port=viser_port))
+            else:
+                from deepreefmap.visualization.viser_app import ViserLiveApp
+
+                owned_viser = cast(
+                    RunViewer,
+                    ViserLiveApp(
+                        class_colors=classes_config.id_to_color,
+                        class_names=classes_config.id_to_name,
+                        port=viser_port,
+                    ),
+                )
+            viewer = owned_viser
+        if viewer is not None:
+            viewer.start_run(run_label="DeepReefMap reconstruction", output_dir=str(output_dir))
+            viewer.set_stage("startup", "running", "Loading camera + segmentation + mapping backends")
+
         logger.info("Loading camera profile '%s'", camera_profile_name)
         profile = CameraProfile.load(camera_profile_name)
         rectifier = Rectifier(profile)
         processing_image_size = _resolve_processing_image_size(
-            profile.image_size,
+            _default_processing_size(segmentation_name, skip_segmentation, profile.image_size),
             processing_width=processing_width,
             processing_height=processing_height,
         )
@@ -123,12 +233,13 @@ def run_reconstruction(
                 logger.info("Skip segmentation enabled: rectified frames will be saved without semantic labels.")
         elif not prep_hit:
             logger.info("Loading segmentation model '%s'", segmentation_name)
-            segmentation = create_segmentation_model(segmentation_name)
+            segmentation = create_segmentation_model(segmentation_name, device=device)
         else:
             segmentation = None
             logger.info("Resume: preprocess cache hit, skipping segmentation model load.")
         if viewer is not None:
             viewer.set_stage("startup", "completed", "Backends initialized")
+        _check_cancel(cancel_event, pause_event)
 
         estimated_total = _estimate_selected_frame_count([Path(p) for p in video_paths], fps=fps, begin_s=begin_s, end_s=end_s)
         if estimated_total is not None:
@@ -142,14 +253,18 @@ def run_reconstruction(
             viewer.set_stage("preprocess", "running", "Rectifying + segmenting + masking")
         active_stage = "preprocess"
         t_start = time.monotonic()
+        instr.mark("preprocess")
         progress_cb: Callable[[int, int | None, int, float], None] | None = None
         if viewer is not None:
+            active_viewer_prep = viewer
+
             def progress_cb(current: int, total: int | None, frame_idx: int, elapsed_s: float) -> None:
-                viewer.update_progress(
+                del elapsed_s  # the GUI status ticker now renders elapsed time
+                active_viewer_prep.update_progress(
                     "preprocess",
                     current=current,
                     total=total,
-                    message=f"Rectify+segment+mask ({elapsed_s:.1f}s)",
+                    message="Rectify+segment+mask",
                     frame_index=frame_idx,
                 )
         frame_batch: FrameBatch | None = None
@@ -164,7 +279,7 @@ def run_reconstruction(
                 prep_hit = False
                 if not skip_segmentation:
                     logger.info("Loading segmentation model '%s'", segmentation_name)
-                    segmentation = create_segmentation_model(segmentation_name)
+                    segmentation = create_segmentation_model(segmentation_name, device=device)
             else:
                 logger.info("Resume: loaded %d preprocessed frames from %s", len(frame_batch.frames), output_dir)
         if frame_batch is None:
@@ -182,6 +297,8 @@ def run_reconstruction(
                 batch_size=preprocess_batch_size,
                 processing_image_size=processing_image_size,
                 processing_intrinsics=processing_intrinsics,
+                cancel_event=cancel_event,
+                pause_event=pause_event,
             )
             if len(frame_batch.frames) > 0:
                 resume_mod.write_sidecar(
@@ -193,7 +310,7 @@ def run_reconstruction(
                         "clip_counts": list(frame_batch.clip_counts),
                     },
                 )
-        _release_segmentation_gpu_memory(segmentation)
+        _release_segmentation_gpu_memory(segmentation, device)
         segmentation = None
         frame_count = len(frame_batch.frames)
         if frame_count == 0:
@@ -232,7 +349,13 @@ def run_reconstruction(
         if viewer is not None:
             viewer.set_stage("preprocess", "completed", f"Prepared {frame_count} sampled frames")
 
+        for warning in analyse_preprocess_quality(frame_batch, classes_config):
+            logger.warning(warning)
+            if viewer is not None:
+                viewer.set_stage("preprocess", "warning", warning)
+
         logger.info("Prepared %d sampled frames in %.1fs", frame_count, time.monotonic() - t_start)
+        instr.mark("mapping")
 
         map_key_options = dict(mapping_options or {})
         map_key_options["refine_intrinsics_from_mapper"] = bool(refine_intrinsics_from_mapper)
@@ -256,19 +379,28 @@ def run_reconstruction(
                 if viewer is not None:
                     viewer.set_stage("mapping", "completed", "Loaded from cache")
         if mapping_result is None:
+            _check_cancel(cancel_event, pause_event)
             logger.info("Initializing mapping backend '%s'", mapping_name)
-            mapping = create_mapping_backend(mapping_name, **(mapping_options or {}))
+            mapping = create_mapping_backend(mapping_name, device=device, **(mapping_options or {}))
             mapping.initialize(image_size=processing_image_size, intrinsics=processing_intrinsics)
             logger.info("Running mapping backend '%s' on %d prepared frames...", mapping_name, frame_count)
+            mapping_progress_cb = None
             if viewer is not None:
-                viewer.set_stage("mapping", "running", "3D mapping pipeline in progress")
-                viewer.update_progress("mapping", current=0, total=frame_count, message="Starting mapping")
+                active_viewer = viewer
+                active_viewer.set_stage("mapping", "running", "3D mapping pipeline in progress")
+                active_viewer.update_progress("mapping", current=0, total=frame_count, message="Starting mapping")
+
+                def mapping_progress_cb(current: int, total: int, message: str) -> None:
+                    active_viewer.update_progress("mapping", current=current, total=total, message=message)
             active_stage = "mapping"
             mapping_result = mapping.process_sequence(
                 frame_batch.frame_indices,
                 frame_batch.images,
                 gravity_vectors=frame_batch.gravity_vectors,
+                cancel_event=cancel_event,
+                progress_callback=mapping_progress_cb,
             )
+            _check_cancel(cancel_event, pause_event)
             mapping_result = _maybe_refine_intrinsics(
                 mapping_name=mapping_name,
                 mapping=mapping,
@@ -277,10 +409,25 @@ def run_reconstruction(
                 processing_image_size=processing_image_size,
                 refine_intrinsics_from_mapper=refine_intrinsics_from_mapper,
             )
+            # Intrinsics refinement above is the only reader of local_points, so
+            # free it now (a per-pixel HxWx3 float32, ~12.7 MB/frame: ~14 GB at
+            # 3fps, ~24 GB at 5fps) before the cloud and save stages pile on. This
+            # is the difference between 5fps fitting or hitting the OOM killer.
+            from deepreefmap.device import release_device_memory
+
+            mapping_result = dataclasses.replace(mapping_result, local_points=None)
+            release_device_memory(device)
+            # This save sits on the interactive critical path before the viewer
+            # shows results, so it is uncompressed: zlib on the multi-GB point
+            # arrays cost minutes, while a raw write is seconds. local_points is
+            # not saved: its only reader is intrinsics refinement, which runs live
+            # before this point, so it is write-only dead weight on resume (the
+            # refined K is already baked into intrinsics). world_points stays; the
+            # cloud builder needs it or falls back to degraded depth-unprojection.
             if viewer is not None:
-                viewer.update_progress("mapping", current=frame_count, total=frame_count, message="Mapping complete")
-                viewer.set_stage("mapping", "completed", "3D mapping complete")
-            np.savez_compressed(
+                viewer.update_progress("mapping", current=0, total=0, message="Saving depth + points for resume")
+            t_save = time.monotonic()
+            np.savez(
                 output_dir / "mapping_outputs.npz",
                 frame_indices=mapping_result.frame_indices,
                 depth=mapping_result.depth_maps,
@@ -289,10 +436,13 @@ def run_reconstruction(
                 confidence=np.asarray([]) if mapping_result.confidence is None else mapping_result.confidence,
                 gravity_vectors=np.asarray([]) if mapping_result.gravity_vectors is None else mapping_result.gravity_vectors,
                 world_points=np.asarray([]) if mapping_result.world_points is None else mapping_result.world_points,
-                local_points=np.asarray([]) if mapping_result.local_points is None else mapping_result.local_points,
                 scale_type=np.asarray(mapping_result.scale_type),
             )
+            logger.info("Saved mapping_outputs.npz in %.1fs", time.monotonic() - t_save)
             resume_mod.write_sidecar(output_dir, resume_mod.STAGE_MAPPING, map_key)
+            if viewer is not None:
+                viewer.update_progress("mapping", current=frame_count, total=frame_count, message="Mapping complete")
+                viewer.set_stage("mapping", "completed", "3D mapping complete")
         elif refine_intrinsics_from_mapper:
             logger.info(
                 "Intrinsics refinement flag is enabled with cached mapping output."
@@ -307,6 +457,36 @@ def run_reconstruction(
                 "LoGeR intrinsics refinement mode: forcing depth+pose unprojection for cloud assembly."
             )
             mapping_result_for_cloud = _mapping_without_world_points(mapping_result)
+
+        geometry_source = (
+            "world_points"
+            if mapping_result_for_cloud.world_points is not None
+            else "depth_unprojection"
+        )
+        run_params: dict[str, object] = {
+            "fps": fps,
+            "begin_s": begin_s,
+            "end_s": end_s,
+            "processing_width": int(processing_image_size[0]),
+            "processing_height": int(processing_image_size[1]),
+            "grid_bins": grid_bins,
+            "replacement_radius_factor": replacement_radius_factor,
+            "replacement_radius_estimation_frames": replacement_radius_estimation_frames,
+            "replacement_radius_override": replacement_radius_override,
+            "enable_tsdf": enable_tsdf,
+            "mapping_options": dict(mapping_options) if mapping_options else {},
+            "refine_intrinsics_from_mapper": refine_intrinsics_from_mapper,
+            "geometry_source": geometry_source,
+            "scale_type": str(mapping_result.scale_type),
+            "deepreefmap_version": deepreefmap_version,
+            "run_timestamp": run_started_at,
+        }
+
+        _check_cancel(cancel_event, pause_event)
+        instr.mark("cloud")
+        # No throwaway preview cloud: it was a second full pass over every point
+        # just to show geometry early. The semantic build below reports per-frame
+        # progress instead, so the bar moves while the authoritative cloud forms.
 
         if skip_segmentation:
             logger.info("Skip segmentation: building geometry-only point cloud...")
@@ -324,6 +504,7 @@ def run_reconstruction(
                 "geometry_cloud.ply",
             ]
             save_geometry_cloud(output_dir / "geometry_cloud.ply", geometry_xyz, geometry_rgb)
+            instr.mark("end")
             save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
                 output_dir=output_dir,
                 frame_batch=frame_batch,
@@ -339,22 +520,41 @@ def run_reconstruction(
                 gravity_telemetry=mapping_result.gravity_vectors is not None,
                 output_files=output_files,
                 mode="geometry_only",
+                run_name=run_name,
+                input_videos=video_paths,
+                video_meta=video_meta,
+                run_params={
+                    **run_params,
+                    "transect": {
+                        "length": transect_length,
+                        "crop_width": transect_crop_width,
+                        "applied": False,
+                    },
+                },
+                stage_durations=instr.stage_durations(),
+                stage_peaks=instr.stage_peaks(),
+                system_profile=instr.system_profile,
             ))
             if viewer is not None:
+                # Lazy batch over the run's PNGs so the viewer holds handles,
+                # not the decoded frame stack, once the run scope exits.
+                from deepreefmap.io.scene_file import lazy_frame_batch_from_run_dir
                 viewer.set_data(
-                    frame_batch=frame_batch,
+                    frame_batch=lazy_frame_batch_from_run_dir(output_dir, frame_batch),
                     mapping_result=mapping_result,
                     geometry_xyz=geometry_xyz,
                     geometry_rgb=geometry_rgb,
+                    geometry_only=True,
                 )
                 viewer.mark_outputs_ready(str(output_dir), output_files)
-                if keep_viser_open:
-                    logger.info("Viser is still running. Press Ctrl-C to close it.")
-                    viewer.wait_forever()
             logger.info("Done. Outputs in %s", output_dir)
+            _wait_for_viser(owned_viser, keep_viser_open)
             return
 
+        _check_cancel(cancel_event, pause_event)
         logger.info("Building filtered semantic reference cloud...")
+
+        _cloud_stage, _cloud_progress = _viewer_cloud_callbacks(viewer)
         reference_cloud = build_semantic_reference_cloud(
             frame_batch,
             mapping_result_for_cloud,
@@ -366,6 +566,8 @@ def run_reconstruction(
                 replacement_radius_estimation_frames=replacement_radius_estimation_frames,
                 replacement_radius_override=replacement_radius_override,
             ),
+            progress_cb=_cloud_progress,
+            stage_cb=_cloud_stage,
         )
 
         cloud_for_metrics = reference_cloud
@@ -399,21 +601,34 @@ def run_reconstruction(
             tsdf_rgb = None
             semantic_tsdf = None
 
+        _check_cancel(cancel_event, pause_event)
         logger.info("Building aggregated ortho grid...")
         if viewer is not None:
             viewer.set_stage("outputs", "running", "Generating outputs")
         active_stage = "outputs"
+        instr.mark("ortho")
         crop = (
             TransectCropParams(transect_length_m=transect_length, crop_width_m=transect_crop_width)
             if transect_length is not None and transect_crop_width is not None
             else None
         )
-        ortho_outputs = build_ortho_outputs(cloud_for_metrics, classes_config, bins=grid_bins, crop=crop)
+        def _ortho_progress(message: str) -> None:
+            if viewer is not None:
+                viewer.set_stage("outputs", "running", message)
+
+        ortho_outputs = build_ortho_outputs(
+            cloud_for_metrics, classes_config, bins=grid_bins, crop=crop,
+            progress=_ortho_progress,
+        )
         grid = ortho_outputs.grid
+        instr.mark("save")
 
         if viewer is not None:
+            # Hand the viewer a lazy batch over the run's PNGs so it does not
+            # pin the decoded frame stack for the life of the window.
+            from deepreefmap.io.scene_file import lazy_frame_batch_from_run_dir
             viewer.set_data(
-                frame_batch=frame_batch,
+                frame_batch=lazy_frame_batch_from_run_dir(output_dir, frame_batch),
                 mapping_result=mapping_result,
                 reference_cloud=reference_cloud,
                 classes_config=classes_config,
@@ -421,17 +636,26 @@ def run_reconstruction(
                 ortho_cloud=cloud_for_metrics,
                 ortho_grid=grid,
             )
-            viewer.set_stage("outputs", "running", "Saving outputs")
+            viewer.set_stage("outputs", "running", "Saving semantic cloud")
 
         save_semantic_cloud(output_dir / "semantic_reference_cloud.ply", reference_cloud)
         if enable_tsdf and tsdf_xyz is not None and tsdf_rgb is not None and semantic_tsdf is not None:
+            if viewer is not None:
+                viewer.set_stage("outputs", "running", "Saving TSDF cloud")
             save_geometry_cloud(output_dir / "tsdf_cloud.ply", tsdf_xyz, tsdf_rgb)
             save_semantic_cloud(output_dir / "semantic_tsdf_cloud.ply", semantic_tsdf)
+        if viewer is not None:
+            viewer.set_stage("outputs", "running", "Saving ortho image")
         cv2.imwrite(str(output_dir / "ortho.png"), cv2.cvtColor(grid.rgb, cv2.COLOR_RGB2BGR))
         save_ortho_grid(output_dir / "ortho.npz", grid)
+        if viewer is not None:
+            viewer.set_stage("outputs", "running", "Saving cover report")
         save_cover_report(output_dir / "benthic_cover.json", ortho_outputs.cover)
 
-        save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
+        if viewer is not None:
+            viewer.set_stage("outputs", "running", "Writing run manifest")
+        instr.mark("end")
+        manifest_dict = _build_manifest(
             output_dir=output_dir,
             frame_batch=frame_batch,
             mapping_result=mapping_result,
@@ -446,20 +670,73 @@ def run_reconstruction(
             gravity_telemetry=mapping_result.gravity_vectors is not None,
             output_files=output_files,
             mode="semantic",
-        ))
+            run_name=run_name,
+            input_videos=video_paths,
+            video_meta=video_meta,
+            run_params={
+                **run_params,
+                "transect": {
+                    "length": transect_length,
+                    "crop_width": transect_crop_width,
+                    "applied": transect_length is not None and transect_crop_width is not None,
+                },
+            },
+            stage_durations=instr.stage_durations(),
+            stage_peaks=instr.stage_peaks(),
+            system_profile=instr.system_profile,
+        )
+        save_run_manifest(output_dir / "run_manifest.json", manifest_dict)
+
+        # Generate the quick-load scene file for instant re-opening.
+        try:
+            if viewer is not None:
+                viewer.set_stage("outputs", "running", "Saving scene file")
+            from deepreefmap.io.scene_file import save_scene_file, scene_file_name
+            from deepreefmap.pointcloud.final_cloud_index import build_final_cloud_index
+
+            frame_order = [int(f.frame_index) for f in frame_batch.frames]
+            fci = build_final_cloud_index(
+                reference_cloud, frame_order, classes_config.id_to_color,
+            )
+            sfn = scene_file_name(manifest_dict, output_dir)
+            save_scene_file(
+                output_dir / sfn,
+                manifest=manifest_dict,
+                classes_config=classes_config,
+                mapping_result=mapping_result,
+                frame_batch=frame_batch,
+                final_cloud_index=fci,
+                run_dir=output_dir,
+            )
+            output_files.append(sfn)
+            logger.info("Scene file saved: %s", output_dir / sfn)
+        except Exception:
+            logger.warning("Failed to generate scene file", exc_info=True)
+
+        # The scene save is the slowest write; capture it in its own span and
+        # re-write the manifest so the learned profile sees the real end-of-run
+        # tail. It was previously untimed, leaving the UI on "complete" for ~1min.
+        instr.mark("scene_end")
+        manifest_dict["output_files"] = list(output_files)
+        manifest_dict["stage_durations"] = instr.stage_durations()
+        manifest_dict["stage_peaks"] = instr.stage_peaks()
+        save_run_manifest(output_dir / "run_manifest.json", manifest_dict)
+
         if viewer is not None:
             viewer.mark_outputs_ready(str(output_dir), output_files)
-            if keep_viser_open:
-                logger.info("Viser is still running. Press Ctrl-C to close it.")
-                viewer.wait_forever()
         logger.info("Done. Outputs in %s", output_dir)
+        _wait_for_viser(owned_viser, keep_viser_open)
+    except ReconstructionCancelled:
+        logger.info("Reconstruction cancelled by user at stage '%s'", active_stage)
+        raise
     except Exception as exc:
         if viewer is not None:
             viewer.fail_run(active_stage, str(exc))
         raise
     finally:
-        if viewer is not None:
-            viewer.close()
+        instr.stop()
+        if owned_viser is not None:
+            owned_viser.close()
 
 
 def _prepare_frames(
@@ -476,6 +753,8 @@ def _prepare_frames(
     batch_size: int = 4,
     processing_image_size: tuple[int, int] | None = None,
     processing_intrinsics: np.ndarray | None = None,
+    cancel_event: threading.Event | None = None,
+    pause_event: threading.Event | None = None,
 ) -> FrameBatch:
     frames_dir = output_dir / "frames"
     labels_dir = output_dir / "labels"
@@ -484,6 +763,14 @@ def _prepare_frames(
     labels_dir.mkdir(parents=True, exist_ok=True)
     masks_dir.mkdir(parents=True, exist_ok=True)
     ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
+    # Labels are uint8 in RAM and cached as 8-bit grayscale PNG, so class ids
+    # must fit a byte.
+    max_class_id = max((cls.id for cls in classes_config.classes), default=0)
+    if max_class_id > 255:
+        raise ValueError(
+            f"Class ids up to {max_class_id} do not fit uint8 labels; "
+            "the classes config must use ids below 256."
+        )
     prepared: list[PreparedFrame] = []
     pending: list[tuple[int, np.ndarray]] = []
     batch_size = max(1, int(batch_size))
@@ -496,6 +783,9 @@ def _prepare_frames(
         desc="Preparing frames",
         unit="frame",
         dynamic_ncols=True,
+        # Off-TTY (GUI: stderr is a log shim or devnull) the bar is redundant
+        # and its \r redraws would spam the log window.
+        disable=None,
     )
 
     def flush_pending() -> None:
@@ -506,9 +796,9 @@ def _prepare_frames(
         pending.clear()
         if segmentation is None:
             h0, w0 = batch[0][1].shape[:2]
-            labels_batch = [np.zeros((h0, w0), dtype=np.int32) for _ in batch]
+            labels_batch = [np.zeros((h0, w0), dtype=np.uint8) for _ in batch]
         else:
-            labels_batch = [out.labels.astype(np.int32) for out in segmentation.predict_batch([frame for _, frame in batch])]
+            labels_batch = [np.asarray(out.labels, dtype=np.uint8) for out in segmentation.predict_batch([frame for _, frame in batch])]
         if len(labels_batch) != len(batch):
             raise RuntimeError(f"Segmentation returned {len(labels_batch)} outputs for batch of {len(batch)} frames")
         elapsed = time.monotonic() - t_batch
@@ -523,10 +813,12 @@ def _prepare_frames(
                 keep_mask = (~np.isin(labels, ignore_list)).astype(np.uint8) * 255
             stem = f"{idx:08d}"
             image_path = frames_dir / f"{stem}.png"
-            labels_path = labels_dir / f"{stem}.npy"
+            labels_path = labels_dir / f"{stem}.png"
             mask_path = masks_dir / f"{stem}.png"
             cv2.imwrite(str(image_path), cv2.cvtColor(rectified, cv2.COLOR_RGB2BGR))
-            np.save(labels_path, labels)
+            # Lossless grayscale PNG: label rasters are flat regions, so this
+            # is ~200x smaller on disk than the raw array.
+            cv2.imwrite(str(labels_path), labels)
             cv2.imwrite(str(mask_path), keep_mask)
             prepared.append(
                 PreparedFrame(
@@ -547,6 +839,7 @@ def _prepare_frames(
     try:
         target_size = processing_image_size if processing_image_size is not None else rectifier.profile.image_size
         for idx, frame in iter_video_frames(video_paths, target_fps=fps, begin_s=begin_s, end_s=end_s):
+            _check_cancel(cancel_event, pause_event)
             rectified = rectifier.rectify(frame)
             if (rectified.shape[1], rectified.shape[0]) != target_size:
                 target_w, target_h = target_size
@@ -586,17 +879,7 @@ def _maybe_refine_intrinsics(
         depth_size=(depth_w, depth_h),
         processing_image_size=processing_image_size,
     )
-    mapping_result = MappingSequenceResult(
-        frame_indices=mapping_result.frame_indices,
-        depth_maps=mapping_result.depth_maps,
-        poses_w_c=mapping_result.poses_w_c,
-        intrinsics=effective_intrinsics,
-        world_points=mapping_result.world_points,
-        local_points=mapping_result.local_points,
-        confidence=mapping_result.confidence,
-        scale_type=mapping_result.scale_type,
-        gravity_vectors=mapping_result.gravity_vectors,
-    )
+    mapping_result = dataclasses.replace(mapping_result, intrinsics=effective_intrinsics)
     if not refine_intrinsics_from_mapper:
         return mapping_result
     refined_intrinsics = mapping.refine_intrinsics(mapping_result)
@@ -620,31 +903,11 @@ def _maybe_refine_intrinsics(
         _format_matrix(camera_profile_intrinsics_depth),
         _format_matrix(refined_intrinsics),
     )
-    return MappingSequenceResult(
-        frame_indices=mapping_result.frame_indices,
-        depth_maps=mapping_result.depth_maps,
-        poses_w_c=mapping_result.poses_w_c,
-        intrinsics=refined_intrinsics.astype(np.float32),
-        world_points=mapping_result.world_points,
-        local_points=mapping_result.local_points,
-        confidence=mapping_result.confidence,
-        scale_type=mapping_result.scale_type,
-        gravity_vectors=mapping_result.gravity_vectors,
-    )
+    return dataclasses.replace(mapping_result, intrinsics=refined_intrinsics.astype(np.float32))
 
 
 def _mapping_without_world_points(mapping_result: MappingSequenceResult) -> MappingSequenceResult:
-    return MappingSequenceResult(
-        frame_indices=mapping_result.frame_indices,
-        depth_maps=mapping_result.depth_maps,
-        poses_w_c=mapping_result.poses_w_c,
-        intrinsics=mapping_result.intrinsics,
-        world_points=None,
-        local_points=mapping_result.local_points,
-        confidence=mapping_result.confidence,
-        scale_type=mapping_result.scale_type,
-        gravity_vectors=mapping_result.gravity_vectors,
-    )
+    return dataclasses.replace(mapping_result, world_points=None)
 
 
 def _format_matrix(matrix: np.ndarray) -> str:
@@ -720,6 +983,23 @@ def _build_geometry_cloud(
         xyz_all = xyz_all[idx]
         rgb_all = rgb_all[idx]
     return xyz_all, rgb_all
+
+
+def _default_processing_size(
+    segmentation_name: str,
+    skip_segmentation: bool,
+    profile_image_size: tuple[int, int],
+) -> tuple[int, int]:
+    """Native processing size when the user gives no explicit width/height.
+
+    DPT heads have no internal resize, so feeding off-native degrades them. Falls back
+    to the camera profile size when segmentation is skipped or the model is unknown.
+    """
+    if not skip_segmentation:
+        model_size = model_processing_size(segmentation_name)
+        if model_size is not None:
+            return model_size
+    return profile_image_size
 
 
 def _resolve_processing_image_size(
@@ -811,7 +1091,7 @@ def _estimate_selected_frame_count(
     return total
 
 
-def _release_segmentation_gpu_memory(segmentation: object | None) -> None:
+def _release_segmentation_gpu_memory(segmentation: object | None, device: "torch.device | None" = None) -> None:
     """Best-effort release of segmentation model GPU allocations before mapping."""
     if segmentation is None:
         return
@@ -827,15 +1107,13 @@ def _release_segmentation_gpu_memory(segmentation: object | None) -> None:
                 setattr(segmentation, attr_name, None)
             except Exception:
                 pass
-    gc.collect()
+    del segmentation
     try:
-        import torch
+        from deepreefmap.device import release_device_memory, resolve_device
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
+        release_device_memory(device if device is not None else resolve_device())
     except Exception:
-        pass
+        gc.collect()  # torch unavailable: plain collection is all there is
 
 
 def _rel(output_dir: Path, path: Path | None) -> str | None:
@@ -855,22 +1133,35 @@ def _build_manifest(
     segmentation_name: str,
     mapping_name: str,
     camera_profile_name: str,
-    classes_path: Path,
+    classes_path: Path | None,
     reference_cloud_size: int,
     metric_cloud_size: int,
     pixel_size_m: float | None,
     gravity_telemetry: bool,
     output_files: list[str],
     mode: str,
+    run_name: str | None = None,
+    input_videos: list[str] | None = None,
+    video_meta: list[dict[str, object]] | None = None,
+    run_params: dict[str, object] | None = None,
+    stage_durations: dict[str, float] | None = None,
+    stage_peaks: dict[str, dict[str, int | None]] | None = None,
+    system_profile: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
-        "schema_version": 2,
+    manifest: dict[str, object] = {
+        "schema_version": 4,
+        "name": run_name,
+        "input_videos": list(input_videos) if input_videos else [],
+        # Parallel to input_videos; None entries where hashing/stat failed.
+        "video_hashes": [m.get("hash") for m in video_meta] if video_meta else [],
+        "video_sizes": [m.get("size_bytes") for m in video_meta] if video_meta else [],
+        "video_mtimes": [m.get("mtime") for m in video_meta] if video_meta else [],
         "mode": mode,
         "frames_processed": frames_processed,
         "segmentation_model": segmentation_name,
         "mapping_backend": mapping_name,
         "camera_profile": camera_profile_name,
-        "classes": str(classes_path),
+        "classes": None if classes_path is None else str(Path(classes_path).resolve()),
         "semantic_reference_points": reference_cloud_size,
         "metric_points": metric_cloud_size,
         "pixel_size_m": pixel_size_m,
@@ -883,4 +1174,10 @@ def _build_manifest(
         "clip_counts": list(frame_batch.clip_counts),
         "depth_maps": "mapping_outputs.npz",
         "mapping_frame_indices": mapping_result.frame_indices.tolist(),
+        "stage_durations": stage_durations or {},
+        "stage_peaks": stage_peaks or {},
+        "system_profile": system_profile or {},
     }
+    if run_params:
+        manifest.update(run_params)
+    return manifest
