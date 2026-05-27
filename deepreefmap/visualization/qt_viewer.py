@@ -1014,19 +1014,16 @@ class QtPointCloudViewer(QWidget):
         if self._picking_enabled or self._plotter is None:
             return
         try:
-            # tolerance is in normalised viewport units. A larger value
-            # widens the search radius around the click ray, which in dense
-            # multi-class clouds lets the picker snap to a point that's
-            # *near the ray* but visually far from the cursor — picks feel
-            # random. Keep this tight so picks land on the point under the
-            # crosshair.
+            # tolerance is in normalised viewport units (~55px on 1080p at
+            # 0.025). Too tight and picks miss; too wide and they snap to
+            # distant points.
             self._plotter.enable_point_picking(
                 callback=self._on_point_picked,
                 show_message=False,
                 show_point=False,
                 left_clicking=True,
                 use_mesh=True,
-                tolerance=0.012,
+                tolerance=0.025,
             )
             self._picking_enabled = True
         except Exception:
