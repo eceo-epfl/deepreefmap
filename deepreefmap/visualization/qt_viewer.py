@@ -1840,7 +1840,7 @@ class QtPointCloudViewer(QWidget):
         pd = _make_line_segments_polydata(batched)
         self._frustum_batch_actor = self._plotter.add_mesh(
             pd, color=(0.5, 0.5, 0.5), line_width=1, opacity=0.6,
-            name="frustums_batch", pickable=False,
+            name="frustums_batch",
         )
         self._frustum_batch_pd = pd
         self._frustum_frame_ids = frustum_frame_ids
@@ -1851,7 +1851,7 @@ class QtPointCloudViewer(QWidget):
         hl_pd = _make_line_segments_polydata(all_pts[0])
         self._frustum_highlight_actor = self._plotter.add_mesh(
             hl_pd, color=(1.0, 0.8, 0.25), line_width=2, opacity=0.9,
-            name="frustum_highlight", pickable=False,
+            name="frustum_highlight",
         )
         self._frustum_highlight_pd = hl_pd
         self._frustum_all_pts = all_pts

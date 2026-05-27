@@ -124,7 +124,7 @@ class ViewerControlsMixin:
                 dst.blockSignals(True)
                 dst.setChecked(checked)
                 dst.blockSignals(False)
-                callback(checked)
+                callback()
             return _fn
 
         # Point size: overlay slider (int ×10) ↔ sidebar spin (float)
@@ -150,7 +150,7 @@ class ViewerControlsMixin:
             _sync_bool(self._ov_sem_btn, self._semantic_check, self._on_viewer_control_changed)
         )
         self._semantic_check.toggled.connect(
-            _sync_bool(self._semantic_check, self._ov_sem_btn, lambda _: None)
+            _sync_bool(self._semantic_check, self._ov_sem_btn, lambda: None)
         )
 
         # Accumulate toggle
@@ -158,7 +158,7 @@ class ViewerControlsMixin:
             _sync_bool(self._ov_acc_btn, self._accumulate_check, self._on_viewer_control_changed)
         )
         self._accumulate_check.toggled.connect(
-            _sync_bool(self._accumulate_check, self._ov_acc_btn, lambda _: None)
+            _sync_bool(self._accumulate_check, self._ov_acc_btn, lambda: None)
         )
 
         # Confidence
@@ -182,12 +182,16 @@ class ViewerControlsMixin:
         ov_c.valueChanged.connect(_conf_from_overlay)
         sb_c.valueChanged.connect(_conf_from_sidebar)
 
-        # Play / pause
-        self._ov_play_btn.toggled.connect(
-            _sync_bool(self._ov_play_btn, self._play_check, self._on_play_toggled)
-        )
+        # Play / pause — _on_play_toggled takes (playing: bool)
+        def _play_from_overlay(checked):
+            self._play_check.blockSignals(True)
+            self._play_check.setChecked(checked)
+            self._play_check.blockSignals(False)
+            self._on_play_toggled(checked)
+
+        self._ov_play_btn.toggled.connect(_play_from_overlay)
         self._play_check.toggled.connect(
-            _sync_bool(self._play_check, self._ov_play_btn, lambda _: None)
+            _sync_bool(self._play_check, self._ov_play_btn, lambda: None)
         )
 
         # FPS
@@ -213,7 +217,7 @@ class ViewerControlsMixin:
             _sync_bool(self._ov_follow_btn, self._follow_camera_check, self._on_follow_camera_changed)
         )
         self._follow_camera_check.toggled.connect(
-            _sync_bool(self._follow_camera_check, self._ov_follow_btn, lambda _: None)
+            _sync_bool(self._follow_camera_check, self._ov_follow_btn, lambda: None)
         )
 
         # Frustum visibility (overlay-only, no sidebar counterpart)
@@ -467,21 +471,14 @@ class ViewerControlsMixin:
             self._pick_card = PickCard(canvas)
             self._pick_card.isolate_requested.connect(self._on_isolate_class)
             self._pick_card.show_all_requested.connect(self._on_show_all_classes)
+            self._pick_card.goto_frame_requested.connect(self._on_goto_frame)
             self._pick_card.close_requested.connect(self._dismiss_pick)
             self._pick_card.moved.connect(self._on_pick_card_moved)
 
         self._pick_card.set_payload(payload)
         self._last_pick_payload = dict(payload)
-        # Fresh pick — let _refresh_pick_marker place the card next to this
-        # click rather than reuse the previous pin.
         self._pick_card_pinned_pos = None
         self._refresh_pick_marker()
-
-        frame_idx = payload.get("frame_index", -1)
-        if frame_idx >= 0:
-            slider = getattr(self, "_frame_slider", None)
-            if slider is not None and 0 <= frame_idx <= slider.maximum():
-                slider.setValue(int(frame_idx))
 
     def _on_pick_card_moved(self, x: int, y: int) -> None:
         # User drag-relocated the card. Pin to the new spot so subsequent
@@ -490,6 +487,11 @@ class ViewerControlsMixin:
         self._pick_card_pinned_pos = (int(x), int(y))
         if self._last_pick_payload is not None:
             self._refresh_pick_marker()
+
+    def _on_goto_frame(self, frame_idx: int) -> None:
+        slider = getattr(self, "_frame_slider", None)
+        if slider is not None and 0 <= frame_idx <= slider.maximum():
+            slider.setValue(int(frame_idx))
 
     def _on_point_picked_clear(self) -> None:
         self._dismiss_pick()
@@ -594,7 +596,6 @@ class ViewerControlsMixin:
         from deepreefmap.launcher.qt_icons import (
             crosshair_icon,
             fit_icon,
-            help_icon,
             refresh_icon,
         )
 
@@ -628,21 +629,6 @@ class ViewerControlsMixin:
             "F triggers."
         )
         buttons_row.addWidget(fit_btn)
-
-        help_btn = QToolButton(overlay)
-        help_btn.setIcon(help_icon(18))
-        help_btn.setToolTip(
-            "Keyboard shortcuts:\n\n"
-            "  P          Toggle pick mode\n"
-            "  Esc        Exit pick mode\n"
-            "  R          Reset view (transect orientation)\n"
-            "  F          Fit all visible geometry\n"
-            "  Dbl-click  Re-center orbit pivot\n"
-            "  Scroll     Zoom toward cursor\n"
-            "  Right-drag Pan\n"
-            "  Left-drag  Orbit"
-        )
-        buttons_row.addWidget(help_btn)
 
         layout.addLayout(buttons_row)
 
@@ -694,17 +680,17 @@ class ViewerControlsMixin:
         ps_row.addWidget(ov_pt_readout)
 
         ov_sem_btn = QToolButton(overlay)
-        ov_sem_btn.setText("Semantic")
+        ov_sem_btn.setText("Class colours")
         ov_sem_btn.setCheckable(True)
         ov_sem_btn.setChecked(True)
-        ov_sem_btn.setToolTip("Toggle semantic class colours / original RGB")
+        ov_sem_btn.setToolTip("On: colour by semantic class. Off: original camera RGB.")
         ps_row.addWidget(ov_sem_btn)
 
         ov_acc_btn = QToolButton(overlay)
-        ov_acc_btn.setText("Accumulate")
+        ov_acc_btn.setText("All frames")
         ov_acc_btn.setCheckable(True)
         ov_acc_btn.setChecked(True)
-        ov_acc_btn.setToolTip("Show all frames up to current / current frame only")
+        ov_acc_btn.setToolTip("On: show all frames up to current. Off: current frame only.")
         ps_row.addWidget(ov_acc_btn)
         ctrl_layout.addLayout(ps_row)
 

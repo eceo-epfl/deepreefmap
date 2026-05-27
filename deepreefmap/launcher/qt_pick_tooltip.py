@@ -27,6 +27,7 @@ class PickCard(QFrame):
 
     isolate_requested = Signal(int)
     show_all_requested = Signal()
+    goto_frame_requested = Signal(int)
     close_requested = Signal()
     moved = Signal(int, int)
 
@@ -65,6 +66,7 @@ class PickCard(QFrame):
         )
 
         self._cid: int = -1
+        self._frame_idx: int = -1
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 6, 8, 8)
@@ -96,12 +98,17 @@ class PickCard(QFrame):
 
         actions = QHBoxLayout()
         actions.setSpacing(6)
-        self._isolate_btn = QPushButton("Isolate this class")
+        self._goto_btn = QPushButton("Go to frame")
+        self._goto_btn.setCursor(Qt.PointingHandCursor)
+        self._goto_btn.clicked.connect(self._emit_goto)
+        self._goto_btn.setVisible(False)
+        self._isolate_btn = QPushButton("Isolate class")
         self._isolate_btn.setCursor(Qt.PointingHandCursor)
         self._isolate_btn.clicked.connect(self._emit_isolate)
         self._show_all_btn = QPushButton("Show all")
         self._show_all_btn.setCursor(Qt.PointingHandCursor)
         self._show_all_btn.clicked.connect(self.show_all_requested.emit)
+        actions.addWidget(self._goto_btn)
         actions.addWidget(self._isolate_btn)
         actions.addWidget(self._show_all_btn)
         outer.addLayout(actions)
@@ -110,8 +117,13 @@ class PickCard(QFrame):
         if self._cid >= 0:
             self.isolate_requested.emit(self._cid)
 
+    def _emit_goto(self) -> None:
+        if self._frame_idx >= 0:
+            self.goto_frame_requested.emit(self._frame_idx)
+
     def set_payload(self, payload: dict[str, Any]) -> None:
         self._cid = int(payload.get("class_id", -1))
+        self._frame_idx = int(payload.get("frame_index", -1))
         name = str(payload.get("class_name", f"class {self._cid}"))
         r, g, b = payload.get("color", (180, 180, 180))
         self._name_label.setText(name)
@@ -123,11 +135,12 @@ class PickCard(QFrame):
         self._xyz_label.setText(
             f"xyz: {float(xyz[0]):.3f}, {float(xyz[1]):.3f}, {float(xyz[2]):.3f}"
         )
-        frame_idx = int(payload.get("frame_index", -1))
-        if frame_idx < 0:
+        if self._frame_idx < 0:
             self._frame_label.setText("frame: —")
+            self._goto_btn.setVisible(False)
         else:
-            self._frame_label.setText(f"frame: {frame_idx}")
+            self._frame_label.setText(f"frame: {self._frame_idx}")
+            self._goto_btn.setVisible(True)
         conf = float(payload.get("confidence", float("nan")))
         if math.isnan(conf):
             self._conf_label.setText("confidence: —")
