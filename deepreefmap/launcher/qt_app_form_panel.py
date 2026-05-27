@@ -162,10 +162,12 @@ class FormPanelMixin:
 
         # "+" icon button on the far left of the top bar starts a fresh
         # reconstruction (clears the viewer + resets the past-run selection).
-        self._new_run_btn = QPushButton("+")
+        from deepreefmap.launcher.qt_icons import plus_icon
+
+        self._new_run_btn = QPushButton()
+        self._new_run_btn.setIcon(plus_icon(20))
         self._new_run_btn.setToolTip("New reconstruction")
         self._new_run_btn.setFixedSize(28, 28)
-        self._new_run_btn.setStyleSheet("QPushButton { font-size: 18px; font-weight: bold; }")
         self._new_run_btn.clicked.connect(self._on_new_reconstruction)
 
         # Log toggle button — checkable so the pressed state mirrors panel
@@ -180,13 +182,6 @@ class FormPanelMixin:
         self._load_cancel_btn.setVisible(False)
         self._load_cancel_btn.clicked.connect(self._cancel_load)
 
-        setup_layout.addWidget(QLabel("<b>New reconstruction</b>"))
-
-        # Sibling warnings label that lives on the setup form (the form stays
-        # visible during running mode now, so this is always reachable).
-        # The Results-tab label is the primary one; this mirror is kept in sync
-        # by _refresh_run_warnings_view so warnings show up wherever the user
-        # happens to be looking.
         self._warnings_label_running = QLabel("")
         self._warnings_label_running.setWordWrap(True)
         self._warnings_label_running.setTextFormat(Qt.TextFormat.RichText)
@@ -197,22 +192,9 @@ class FormPanelMixin:
         self._warnings_label_running.setVisible(False)
         setup_layout.addWidget(self._warnings_label_running)
 
-        # Run identity at the top: name + computed output path. The path label
-        # is rendered as a clickable file:// link once the directory exists
-        # (i.e. after Start creates it) — see _update_effective_dir_label.
-        setup_layout.addWidget(QLabel("Run name"))
-        from datetime import datetime
-
-        self._run_name_input = QLineEdit(datetime.now().strftime("%Y%m%d-%H%M%S"))
-        self._run_name_input.setPlaceholderText("Friendly name (e.g. barrier-reef-2026-05-20)")
-        setup_layout.addWidget(self._run_name_input)
-
-        self._effective_dir_label = QLabel("")
-        self._effective_dir_label.setStyleSheet("color: #888;")
-        self._effective_dir_label.setWordWrap(True)
-        self._effective_dir_label.setTextFormat(Qt.TextFormat.RichText)
-        self._effective_dir_label.setOpenExternalLinks(True)
-        setup_layout.addWidget(self._effective_dir_label)
+        # --- Input group ---
+        input_group = QGroupBox("Input")
+        ig = QVBoxLayout(input_group)
 
         video_row = QHBoxLayout()
         self._video_input = QLineEdit()
@@ -221,92 +203,19 @@ class FormPanelMixin:
         browse_btn.clicked.connect(self._browse_video)
         video_row.addWidget(self._video_input, 1)
         video_row.addWidget(browse_btn)
-        setup_layout.addLayout(video_row)
+        ig.addLayout(video_row)
 
-        setup_layout.addWidget(QLabel("Camera profile"))
+        ig.addWidget(QLabel("Camera profile"))
         self._profile_combo = QComboBox()
         self._profile_combo.addItems(profiles)
-        setup_layout.addWidget(self._profile_combo)
+        ig.addWidget(self._profile_combo)
 
-        setup_layout.addWidget(QLabel("Segmentation"))
-        seg_row = QHBoxLayout()
-        seg_row.setContentsMargins(0, 0, 0, 0)
-        seg_row.setSpacing(4)
-        self._seg_combo = QComboBox()
-        self._seg_combo.addItems(seg_models)
-        idx = self._seg_combo.findText("segformer-b2")
-        if idx >= 0:
-            self._seg_combo.setCurrentIndex(idx)
-        seg_row.addWidget(self._seg_combo, 1)
-        self._seg_status_btn = self._build_model_status_button(self._seg_combo)
-        seg_row.addWidget(self._seg_status_btn)
-        setup_layout.addLayout(seg_row)
-
-        setup_layout.addWidget(QLabel("Mapping"))
-        map_row = QHBoxLayout()
-        map_row.setContentsMargins(0, 0, 0, 0)
-        map_row.setSpacing(4)
-        self._map_combo = QComboBox()
-        self._map_combo.addItems(map_backends)
-        idx = self._map_combo.findText("scsfmlearner")
-        if idx >= 0:
-            self._map_combo.setCurrentIndex(idx)
-        map_row.addWidget(self._map_combo, 1)
-        self._map_status_btn = self._build_model_status_button(self._map_combo)
-        map_row.addWidget(self._map_status_btn)
-        setup_layout.addLayout(map_row)
-
-        # Output root row layout:
-        #   "Output root  →"     ← label + small arrow that opens the folder
-        #   [ path line edit ] [📂 browse] [↺ reset]
-        # Open lives next to the label because it acts on the existing folder;
-        # browse and reset are next to the input because they change it.
-        style = self.style()
-        label_row = QHBoxLayout()
-        label_row.setContentsMargins(0, 0, 0, 0)
-        label_row.setSpacing(4)
-        label_row.addWidget(QLabel("Output root"))
-        # Unicode RIGHTWARDS ARROW (→) renders as a real arrow at all sizes,
-        # avoiding the chevron look of Qt's SP_ArrowRight. Normal button frame
-        # (no setFlat) so it reads as clickable.
-        root_open_btn = QPushButton("→")
-        root_open_btn.setFixedSize(26, 24)
-        root_open_btn.setStyleSheet("QPushButton { font-size: 16px; padding: 0px; }")
-        root_open_btn.setToolTip("Open output root in file manager")
-        root_open_btn.clicked.connect(self._open_output_root)
-        label_row.addWidget(root_open_btn)
-        label_row.addStretch(1)
-        setup_layout.addLayout(label_row)
-
-        input_row = QHBoxLayout()
-        input_row.setContentsMargins(0, 0, 0, 0)
-        input_row.setSpacing(4)
-        self._out_root_input = QLineEdit(default_root)
-        input_row.addWidget(self._out_root_input, 1)
-        root_browse_btn = QPushButton()
-        root_browse_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
-        root_browse_btn.setIconSize(QSize(18, 18))
-        root_browse_btn.setFixedSize(28, 28)
-        root_browse_btn.setToolTip("Browse for output root folder…")
-        root_browse_btn.clicked.connect(self._browse_output_root)
-        input_row.addWidget(root_browse_btn)
-        root_default_btn = QPushButton()
-        root_default_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
-        root_default_btn.setIconSize(QSize(18, 18))
-        root_default_btn.setFixedSize(28, 28)
-        root_default_btn.setToolTip("Reset to <Documents>/DeepReefMap")
-        root_default_btn.clicked.connect(self._reset_output_root_to_default)
-        input_row.addWidget(root_default_btn)
-        setup_layout.addLayout(input_row)
-
-        setup_layout.addWidget(QLabel("FPS"))
+        ig.addWidget(QLabel("FPS"))
         self._fps_spin = QSpinBox()
         self._fps_spin.setRange(1, 60)
         self._fps_spin.setValue(10)
-        setup_layout.addWidget(self._fps_spin)
+        ig.addWidget(self._fps_spin)
 
-        # Begin/end timestamps in seconds. Max range is filled in once a video
-        # is picked via Browse and we probe its duration with cv2.
         range_row = QHBoxLayout()
         range_row.setContentsMargins(0, 0, 0, 0)
         begin_col = QVBoxLayout()
@@ -330,9 +239,101 @@ class FormPanelMixin:
         self._end_spin.setValue(0.0)
         end_col.addWidget(self._end_spin)
         range_row.addLayout(end_col, 1)
-        setup_layout.addLayout(range_row)
+        ig.addLayout(range_row)
 
         self._video_duration_s: float | None = None
+        setup_layout.addWidget(input_group)
+
+        # --- Models group ---
+        models_group = QGroupBox("Models")
+        mg = QVBoxLayout(models_group)
+
+        mg.addWidget(QLabel("Segmentation"))
+        seg_row = QHBoxLayout()
+        seg_row.setContentsMargins(0, 0, 0, 0)
+        seg_row.setSpacing(4)
+        self._seg_combo = QComboBox()
+        self._seg_combo.addItems(seg_models)
+        idx = self._seg_combo.findText("segformer-b2")
+        if idx >= 0:
+            self._seg_combo.setCurrentIndex(idx)
+        seg_row.addWidget(self._seg_combo, 1)
+        self._seg_status_btn = self._build_model_status_button(self._seg_combo)
+        seg_row.addWidget(self._seg_status_btn)
+        mg.addLayout(seg_row)
+
+        mg.addWidget(QLabel("Mapping"))
+        map_row = QHBoxLayout()
+        map_row.setContentsMargins(0, 0, 0, 0)
+        map_row.setSpacing(4)
+        self._map_combo = QComboBox()
+        self._map_combo.addItems(map_backends)
+        idx = self._map_combo.findText("scsfmlearner")
+        if idx >= 0:
+            self._map_combo.setCurrentIndex(idx)
+        map_row.addWidget(self._map_combo, 1)
+        self._map_status_btn = self._build_model_status_button(self._map_combo)
+        map_row.addWidget(self._map_status_btn)
+        mg.addLayout(map_row)
+
+        setup_layout.addWidget(models_group)
+
+        # --- Output group ---
+        output_group = QGroupBox("Output")
+        og = QVBoxLayout(output_group)
+
+        og.addWidget(QLabel("Run name"))
+        from datetime import datetime
+
+        self._run_name_input = QLineEdit(datetime.now().strftime("%Y%m%d-%H%M%S"))
+        self._run_name_input.setPlaceholderText("Friendly name (e.g. barrier-reef-2026-05-20)")
+        og.addWidget(self._run_name_input)
+
+        self._effective_dir_label = QLabel("")
+        self._effective_dir_label.setStyleSheet("color: #888;")
+        self._effective_dir_label.setWordWrap(True)
+        self._effective_dir_label.setTextFormat(Qt.TextFormat.RichText)
+        self._effective_dir_label.setOpenExternalLinks(True)
+        og.addWidget(self._effective_dir_label)
+
+        style = self.style()
+        label_row = QHBoxLayout()
+        label_row.setContentsMargins(0, 0, 0, 0)
+        label_row.setSpacing(4)
+        label_row.addWidget(QLabel("Output root"))
+        from deepreefmap.launcher.qt_icons import arrow_right_icon
+
+        root_open_btn = QPushButton()
+        root_open_btn.setIcon(arrow_right_icon(18))
+        root_open_btn.setFixedSize(26, 24)
+        root_open_btn.setToolTip("Open output root in file manager")
+        root_open_btn.clicked.connect(self._open_output_root)
+        label_row.addWidget(root_open_btn)
+        label_row.addStretch(1)
+        og.addLayout(label_row)
+
+        input_row = QHBoxLayout()
+        input_row.setContentsMargins(0, 0, 0, 0)
+        input_row.setSpacing(4)
+        self._out_root_input = QLineEdit(default_root)
+        input_row.addWidget(self._out_root_input, 1)
+        root_browse_btn = QPushButton()
+        root_browse_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        root_browse_btn.setIconSize(QSize(18, 18))
+        root_browse_btn.setFixedSize(28, 28)
+        root_browse_btn.setToolTip("Browse for output root folder…")
+        root_browse_btn.clicked.connect(self._browse_output_root)
+        input_row.addWidget(root_browse_btn)
+        root_default_btn = QPushButton()
+        root_default_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
+        root_default_btn.setIconSize(QSize(18, 18))
+        root_default_btn.setFixedSize(28, 28)
+        root_default_btn.setToolTip("Reset to <Documents>/DeepReefMap")
+        root_default_btn.clicked.connect(self._reset_output_root_to_default)
+        input_row.addWidget(root_default_btn)
+        og.addLayout(input_row)
+
+        setup_layout.addWidget(output_group)
 
         self._advanced_toggle = QCheckBox("Advanced settings")
         self._advanced_toggle.toggled.connect(self._on_advanced_toggled)

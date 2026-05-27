@@ -70,6 +70,37 @@ def fit_icon(size: int = 24, color: QColor | None = None) -> QIcon:
     return QIcon(pm)
 
 
+def plus_icon(size: int = 24, color: QColor | None = None) -> QIcon:
+    c = color or QColor(230, 230, 230)
+    pm, p = _px(size)
+    pen = QPen(c, 2.0)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    cx, cy = size / 2, size / 2
+    arm = size * 0.28
+    p.drawLine(QPointF(cx - arm, cy), QPointF(cx + arm, cy))
+    p.drawLine(QPointF(cx, cy - arm), QPointF(cx, cy + arm))
+    p.end()
+    return QIcon(pm)
+
+
+def arrow_right_icon(size: int = 24, color: QColor | None = None) -> QIcon:
+    c = color or QColor(230, 230, 230)
+    pm, p = _px(size)
+    pen = QPen(c, 1.8)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+    cx, cy = size / 2, size / 2
+    arm = size * 0.28
+    head = size * 0.16
+    p.drawLine(QPointF(cx - arm, cy), QPointF(cx + arm, cy))
+    p.drawLine(QPointF(cx + arm - head, cy - head), QPointF(cx + arm, cy))
+    p.drawLine(QPointF(cx + arm - head, cy + head), QPointF(cx + arm, cy))
+    p.end()
+    return QIcon(pm)
+
+
 def help_icon(size: int = 24, color: QColor | None = None) -> QIcon:
     c = color or QColor(170, 170, 170)
     pm, p = _px(size)

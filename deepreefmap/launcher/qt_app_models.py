@@ -99,20 +99,25 @@ class ModelManagementMixin:
             btn.setToolTip("Open Models")
             btn.setStyleSheet("")
             return
+        from deepreefmap.launcher.qt_icons import check_icon, download_icon, lock_icon
+
         if cached:
-            btn.setText("✓")
+            btn.setText("")
+            btn.setIcon(check_icon(16))
             btn.setToolTip(f"{selected_name} is downloaded. Click to manage cache.")
-            btn.setStyleSheet("QPushButton { color: #4a4; font-weight: bold; }")
+            btn.setStyleSheet("")
         elif info.gated and self._hf_auth_user is None:
-            btn.setText("🔒")
+            btn.setText("")
+            btn.setIcon(lock_icon(16))
             btn.setToolTip(
                 f"{selected_name} is gated. Click to log in to Hugging Face."
             )
-            btn.setStyleSheet("QPushButton { color: #e8a04a; font-weight: bold; }")
+            btn.setStyleSheet("")
         else:
-            btn.setText("⬇")
+            btn.setText("")
+            btn.setIcon(download_icon(16))
             btn.setToolTip(f"{selected_name} not downloaded. Click to download.")
-            btn.setStyleSheet("QPushButton { color: #e8a04a; font-weight: bold; }")
+            btn.setStyleSheet("")
 
     def _apply_downloading_style(
         self, btn: QPushButton, model_name: str, percent: int
