@@ -677,33 +677,34 @@ class ViewerControlsMixin:
         ctrl_layout.setSpacing(3)
 
         # Point size row
+        _lbl_w = 32
         ps_row = QHBoxLayout()
         ps_row.setSpacing(4)
         ps_lbl = QLabel("Pt", overlay)
+        ps_lbl.setFixedWidth(_lbl_w)
         ps_lbl.setStyleSheet("color: #aaa; font-size: 10px;")
         ps_row.addWidget(ps_lbl)
         ov_pt_slider = QSlider(Qt.Horizontal, overlay)
         ov_pt_slider.setRange(5, 200)
         ov_pt_slider.setValue(20)
-        ov_pt_slider.setFixedWidth(80)
         ov_pt_slider.setFixedHeight(16)
-        ps_row.addWidget(ov_pt_slider)
+        ps_row.addWidget(ov_pt_slider, 1)
         ov_pt_readout = QLabel("2.0", overlay)
         ov_pt_readout.setStyleSheet("color: #ccc; font-size: 10px; min-width: 24px;")
         ps_row.addWidget(ov_pt_readout)
 
         ov_sem_btn = QToolButton(overlay)
-        ov_sem_btn.setText("Sem")
+        ov_sem_btn.setText("Semantic")
         ov_sem_btn.setCheckable(True)
         ov_sem_btn.setChecked(True)
-        ov_sem_btn.setToolTip("Toggle semantic / RGB colouring")
+        ov_sem_btn.setToolTip("Toggle semantic class colours / original RGB")
         ps_row.addWidget(ov_sem_btn)
 
         ov_acc_btn = QToolButton(overlay)
-        ov_acc_btn.setText("Acc")
+        ov_acc_btn.setText("Accumulate")
         ov_acc_btn.setCheckable(True)
         ov_acc_btn.setChecked(True)
-        ov_acc_btn.setToolTip("Accumulate frames up to current / show current only")
+        ov_acc_btn.setToolTip("Show all frames up to current / current frame only")
         ps_row.addWidget(ov_acc_btn)
         ctrl_layout.addLayout(ps_row)
 
@@ -711,14 +712,14 @@ class ViewerControlsMixin:
         conf_row = QHBoxLayout()
         conf_row.setSpacing(4)
         conf_lbl = QLabel("Conf", overlay)
+        conf_lbl.setFixedWidth(_lbl_w)
         conf_lbl.setStyleSheet("color: #aaa; font-size: 10px;")
         conf_row.addWidget(conf_lbl)
         ov_conf_slider = QSlider(Qt.Horizontal, overlay)
         ov_conf_slider.setRange(0, 100)
         ov_conf_slider.setValue(0)
-        ov_conf_slider.setFixedWidth(100)
         ov_conf_slider.setFixedHeight(16)
-        conf_row.addWidget(ov_conf_slider)
+        conf_row.addWidget(ov_conf_slider, 1)
         ov_conf_readout = QLabel("0%", overlay)
         ov_conf_readout.setStyleSheet("color: #ccc; font-size: 10px; min-width: 24px;")
         conf_row.addWidget(ov_conf_readout)
@@ -741,8 +742,7 @@ class ViewerControlsMixin:
         ov_fps_spin = QSpinBox(overlay)
         ov_fps_spin.setRange(1, 60)
         ov_fps_spin.setValue(8)
-        ov_fps_spin.setFixedWidth(48)
-        ov_fps_spin.setStyleSheet("font-size: 10px;")
+        ov_fps_spin.setFixedWidth(52)
         play_row.addWidget(ov_fps_spin)
 
         ov_follow_btn = QToolButton(overlay)
@@ -806,7 +806,10 @@ class ViewerControlsMixin:
 
         def _on_reset_clicked() -> None:
             try:
-                self._viewer.reset_view()
+                if getattr(self, "_follow_camera_check", None) and self._follow_camera_check.isChecked():
+                    self._snap_camera_to_current_frame()
+                else:
+                    self._viewer.reset_view()
             except Exception:
                 logger.debug("Failed to reset view", exc_info=True)
 
