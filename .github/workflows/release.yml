@@ -124,7 +124,7 @@ jobs:
           fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}-${{ steps.label.outputs.value }}
           path: dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}${{ matrix.ext }}
@@ -144,7 +144,7 @@ jobs:
         run: echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
       - name: Download all binaries
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: deepreefmap-*-${{ steps.label.outputs.value }}
