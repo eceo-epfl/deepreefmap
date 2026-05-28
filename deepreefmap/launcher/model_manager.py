@@ -274,8 +274,18 @@ def _hf_cache_dir(repo_id: str) -> Path:
 
 
 def is_model_cached(info: ModelInfo) -> bool:
-    if not all(_hf_cache_dir(repo).exists() for repo in info.hf_repos):
-        return False
+    for repo in info.hf_repos:
+        if not _hf_cache_dir(repo).exists():
+            return False
+        if info.gated:
+            try:
+                from huggingface_hub import try_to_load_from_cache
+
+                result = try_to_load_from_cache(repo, "config.json")
+                if not isinstance(result, str):
+                    return False
+            except Exception:
+                return False
     return all(dest.exists() for dest in info.materialise_to.values())
 
 

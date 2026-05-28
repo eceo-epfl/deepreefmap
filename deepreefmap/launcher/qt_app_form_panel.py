@@ -1213,14 +1213,15 @@ class FormPanelMixin:
         logged_in = self._hf_auth_user is not None
         if logged_in:
             msg = (
-                f"<b>{seg_name}</b> requires license acceptance for gated repos. "
-                f"Visit each and click <i>Agree and access</i>: {links}"
+                f"<b>{seg_name}</b> uses gated repos that must be downloaded first. "
+                f"Accept the license on each repo page, and ensure your HF token "
+                f"has <i>gated repo access</i> enabled: {links}"
             )
         else:
             msg = (
-                f"<b>{seg_name}</b> requires Hugging Face login and license acceptance. "
-                f"Log in on the Models tab, then visit each repo and click "
-                f"<i>Agree and access</i>: {links}"
+                f"<b>{seg_name}</b> requires Hugging Face login. "
+                f"Log in on the Models tab, accept each repo's license, "
+                f"and ensure your token has <i>gated repo access</i>: {links}"
             )
         self._gated_warning.setText(msg)
         self._gated_warning.setVisible(True)
