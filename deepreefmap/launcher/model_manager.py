@@ -46,6 +46,7 @@ class ModelInfo:
     gated: bool
     description: str
     approx_size_mb: int | None = None
+    release_date: str | None = None
     # Optional copy step run after snapshot_download. Maps repo-relative
     # paths inside the snapshot to absolute destinations the runtime backend
     # reads from. Used for LoGeR, which loads checkpoints from a fixed
@@ -65,6 +66,7 @@ SEGMENTATION_MODELS: list[ModelInfo] = [
         gated=False,
         description="SegFormer B2 (lightweight, no auth required)",
         approx_size_mb=110,
+        release_date="2025-03-07",
     ),
     ModelInfo(
         name="segformer-b5",
@@ -73,6 +75,7 @@ SEGMENTATION_MODELS: list[ModelInfo] = [
         gated=False,
         description="SegFormer B5 (larger, no auth required)",
         approx_size_mb=339,
+        release_date="2025-03-21",
     ),
     # The coralscapes-vit-*-dpt repos only ship the DPT head plus a custom
     # loader. The loader's from_pretrained() pulls a Meta DINOv3 backbone
@@ -88,6 +91,7 @@ SEGMENTATION_MODELS: list[ModelInfo] = [
         gated=True,
         description="DINOv3 ViT-S DPT (requires HF login)",
         approx_size_mb=257,
+        release_date="2026-05-06",
     ),
     ModelInfo(
         name="coralscapes-vit-b-dpt",
@@ -99,6 +103,7 @@ SEGMENTATION_MODELS: list[ModelInfo] = [
         gated=True,
         description="DINOv3 ViT-B DPT (requires HF login)",
         approx_size_mb=786,
+        release_date="2026-04-22",
     ),
     ModelInfo(
         name="coralscapes-vit-l-dpt",
@@ -110,6 +115,7 @@ SEGMENTATION_MODELS: list[ModelInfo] = [
         gated=True,
         description="DINOv3 ViT-L DPT (largest, requires HF login)",
         approx_size_mb=2542,
+        release_date="2026-04-23",
     ),
 ]
 
@@ -121,14 +127,16 @@ MAPPING_MODELS: list[ModelInfo] = [
         gated=False,
         description="SC-SfMLearner depth + pose estimation",
         approx_size_mb=326,
+        release_date="2026-05-06",
     ),
     ModelInfo(
         name="loger",
         kind="mapping",
         hf_repos=["Junyi42/LoGeR"],
         gated=False,
-        description="LoGeR depth + pose estimation (CUDA required)",
+        description="LoGeR depth + pose estimation (GPU required)",
         approx_size_mb=4787,
+        release_date="2026-03-06",
         materialise_to={
             "LoGeR/latest.pt": _LOGER_CKPTS / "LoGeR" / "latest.pt",
             "LoGeR/original_config.yaml": _LOGER_CKPTS / "LoGeR" / "original_config.yaml",
@@ -140,8 +148,9 @@ MAPPING_MODELS: list[ModelInfo] = [
         kind="mapping",
         hf_repos=["Junyi42/LoGeR"],
         gated=False,
-        description="LoGeR* (longer-context variant, CUDA required)",
+        description="LoGeR* (longer-context variant, GPU required)",
         approx_size_mb=4787,
+        release_date="2026-03-06",
         materialise_to={
             "LoGeR_star/latest.pt": _LOGER_CKPTS / "LoGeR_star" / "latest.pt",
             "LoGeR_star/original_config.yaml": _LOGER_CKPTS / "LoGeR_star" / "original_config.yaml",
@@ -217,6 +226,8 @@ def discover_models() -> tuple[list[str], str | None]:
         if synth is None:
             continue
         info, resolution, family = synth
+        if info.release_date is None and getattr(repo, "created_at", None) is not None:
+            info.release_date = str(repo.created_at.date())
         if not register_discovered(info):
             continue
         register_segmentation_model(info.name, info.hf_repos[0], family, resolution)

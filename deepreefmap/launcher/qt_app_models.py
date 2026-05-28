@@ -278,7 +278,11 @@ class ModelManagementMixin:
                 w.deleteLater()
 
         required = self._required_model_names()
-        ordered_states = sorted(model_states, key=lambda s: s[0].name not in required)
+        ordered_states = sorted(
+            model_states,
+            key=lambda s: (s[0].name in required, s[0].release_date or ""),
+            reverse=True,
+        )
         for row, (info, cached) in enumerate(ordered_states):
             name_html = f'<span style="color:#cfd">{info.name}</span>'
             if info.approx_size_mb:
@@ -288,6 +292,8 @@ class ModelManagementMixin:
                     else f"~{info.approx_size_mb} MB"
                 )
                 name_html += f'&nbsp;<span style="color:#888; font-size:10px">{size_text}</span>'
+            if info.release_date:
+                name_html += f'&nbsp;<span style="color:#888; font-size:10px">({info.release_date})</span>'
             if info.name in required:
                 name_html += (
                     f'&nbsp;<span style="color:{WARNING}; '

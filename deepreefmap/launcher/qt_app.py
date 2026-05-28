@@ -215,6 +215,7 @@ def launch(classes_path: Path | None = None, view_run_dir: Path | None = None) -
         _sigint_count += 1
         if _sigint_count >= 2:
             os._exit(1)
+        qt_app.closeAllWindows()
         qt_app.quit()
 
     signal.signal(signal.SIGINT, _on_sigint)
