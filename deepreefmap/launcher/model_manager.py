@@ -159,7 +159,41 @@ MAPPING_MODELS: list[ModelInfo] = [
     ),
 ]
 
-ALL_MODELS = SEGMENTATION_MODELS + MAPPING_MODELS
+BACKBONE_MODELS: list[ModelInfo] = [
+    ModelInfo(
+        name="dinov3-vits16",
+        kind="backbone",
+        hf_repos=["facebook/dinov3-vits16-pretrain-lvd1689m"],
+        gated=True,
+        description="DINOv3 ViT-S backbone (needed by coralscapes-vit-s-dpt)",
+        approx_size_mb=85,
+    ),
+    ModelInfo(
+        name="dinov3-vitb16",
+        kind="backbone",
+        hf_repos=["facebook/dinov3-vitb16-pretrain-lvd1689m"],
+        gated=True,
+        description="DINOv3 ViT-B backbone (needed by coralscapes-vit-b-dpt)",
+        approx_size_mb=330,
+    ),
+    ModelInfo(
+        name="dinov3-vitl16",
+        kind="backbone",
+        hf_repos=["facebook/dinov3-vitl16-pretrain-lvd1689m"],
+        gated=True,
+        description="DINOv3 ViT-L backbone (needed by coralscapes-vit-l-dpt)",
+        approx_size_mb=1170,
+    ),
+]
+
+# DPT model name → backbone model name
+DPT_BACKBONE_MAP: dict[str, str] = {
+    "coralscapes-vit-s-dpt": "dinov3-vits16",
+    "coralscapes-vit-b-dpt": "dinov3-vitb16",
+    "coralscapes-vit-l-dpt": "dinov3-vitl16",
+}
+
+ALL_MODELS = SEGMENTATION_MODELS + MAPPING_MODELS + BACKBONE_MODELS
 
 # Models discovered at run time via discover_models(). Session-scoped (not
 # persisted): re-running discovery is cheap and avoids a stale on-disk cache.
@@ -244,22 +278,6 @@ def is_model_cached(info: ModelInfo) -> bool:
         return False
     return all(dest.exists() for dest in info.materialise_to.values())
 
-
-def check_repo_access(repo_id: str) -> bool | None:
-    """Check whether the current HF token grants access to a repo.
-
-    Returns True if accessible, False if gated/denied (403), None if the
-    check can't run (no token, no network, etc.).
-    """
-    try:
-        from huggingface_hub import HfApi
-
-        HfApi().model_info(repo_id)
-        return True
-    except Exception as exc:
-        if "403" in str(exc) or "gated" in str(exc).lower():
-            return False
-        return None
 
 
 def check_hf_auth() -> str | None:

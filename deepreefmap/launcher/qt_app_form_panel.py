@@ -906,7 +906,6 @@ class FormPanelMixin:
         self._download_cancel_requested: set[str] = set()
         self._delete_armed: dict[str, QPushButton] = {}
         self._last_model_states: list = []
-        self._repo_access: dict[str, bool | None] = {}
         self._download_errors: dict[str, str] = {}
 
         self._seg_combo.currentTextChanged.connect(self._on_required_models_changed)
@@ -1191,27 +1190,31 @@ class FormPanelMixin:
         if self._skip_seg_check.isChecked():
             self._gated_warning.setVisible(False)
             return
-        info_match = None
-        for info, cached in self._last_model_states:
-            if info.name == seg_name:
-                info_match = (info, cached)
-                break
-        if info_match is None or not info_match[0].gated:
+        from deepreefmap.launcher.model_manager import DPT_BACKBONE_MAP
+
+        backbone_name = DPT_BACKBONE_MAP.get(seg_name)
+        if not backbone_name:
             self._gated_warning.setVisible(False)
             return
-        info, cached = info_match
-        if cached:
+        states = {info.name: (info, cached) for info, cached in self._last_model_states}
+        missing_repos: list[str] = []
+        for name in (seg_name, backbone_name):
+            entry = states.get(name)
+            if entry and not entry[1]:
+                for repo in entry[0].hf_repos:
+                    missing_repos.append(repo)
+        if not missing_repos:
             self._gated_warning.setVisible(False)
             return
         links = " ".join(
             f'<a href="https://huggingface.co/{repo}" style="color:{WARN_TEXT}">{repo}</a>'
-            for repo in info.hf_repos
+            for repo in missing_repos
         )
         logged_in = self._hf_auth_user is not None
         if logged_in:
             msg = (
-                f"<b>{seg_name}</b> requires license acceptance. "
-                f"Visit each repo and click <i>Agree and access</i>: {links}"
+                f"<b>{seg_name}</b> requires license acceptance for gated repos. "
+                f"Visit each and click <i>Agree and access</i>: {links}"
             )
         else:
             msg = (
