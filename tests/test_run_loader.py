@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import yaml
 
+from deepreefmap.config.classes import load_classes, resolve_manifest_classes
 from deepreefmap.io.exports import save_geometry_cloud
 from deepreefmap.pipeline.run_loader import _resolve_classes_path, load_cached_run
 from deepreefmap.pointcloud.filters import PointFilterConfig
@@ -169,14 +170,14 @@ def test_load_cached_run_validates_output_files(tmp_path: Path, monkeypatch) -> 
         raise AssertionError("Expected invalid output_files to fail")
 
 
-def test_resolve_classes_path_falls_back_to_default_when_cwd_lacks_configs(tmp_path, monkeypatch) -> None:
-    # Regression: running `deepreefmap` from a cwd where `configs/` doesn't
-    # exist (e.g. from inside the repo's configs subdir) previously raised
-    # FileNotFoundError before load_classes could try its bundled fallback.
+def test_resolve_classes_path_maps_default_to_builtin(tmp_path, monkeypatch) -> None:
+    # The default — and the pre-refactor "configs/classes_coralscapes.yaml" literal that older
+    # manifests recorded — resolves to None, which load_classes reads from the bundled package
+    # resource. So a run viewer works from any cwd, including one without a configs/ dir.
     monkeypatch.chdir(tmp_path)
-    manifest = {"classes": "configs/classes_coralscapes.yaml"}
-    resolved = _resolve_classes_path(tmp_path / "missing_run", manifest)
-    assert resolved == Path("configs/classes_coralscapes.yaml")
+    assert _resolve_classes_path(tmp_path / "missing_run", {}) is None
+    assert _resolve_classes_path(tmp_path / "missing_run", {"classes": "configs/classes_coralscapes.yaml"}) is None
+    assert load_classes(None).classes
 
 
 def test_resolve_classes_path_raises_for_unknown_custom_path(tmp_path, monkeypatch) -> None:
@@ -188,3 +189,16 @@ def test_resolve_classes_path_raises_for_unknown_custom_path(tmp_path, monkeypat
         pass
     else:
         raise AssertionError("Expected FileNotFoundError for unknown custom path")
+
+
+def test_resolve_manifest_classes_contract(tmp_path) -> None:
+    assert resolve_manifest_classes(None) is None
+    assert resolve_manifest_classes("") is None
+    assert resolve_manifest_classes("configs/classes_coralscapes.yaml") is None
+    custom = tmp_path / "my.yaml"
+    custom.write_text("classes: []\n")
+    assert resolve_manifest_classes(str(custom)) == custom
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "rel.yaml").write_text("classes: []\n")
+    assert resolve_manifest_classes("rel.yaml", run_dir) == run_dir / "rel.yaml"

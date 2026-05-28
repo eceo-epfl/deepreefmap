@@ -8,8 +8,10 @@ from typing import Any
 import yaml
 
 
-DEFAULT_CLASSES_PATH = Path("configs/classes_coralscapes.yaml")
-_DEFAULT_CLASSES_RESOURCE = "configs/classes_coralscapes.yaml"
+# Path of the built-in classes file *within* the deepreefmap.resources package. It is also the
+# literal that pre-refactor runs recorded in run_manifest.json (the old default was this
+# CWD-relative path), so resolve_manifest_classes maps that legacy value to the built-in.
+_BUILTIN_CLASSES_RESOURCE = "configs/classes_coralscapes.yaml"
 
 
 @dataclass(frozen=True)
@@ -28,7 +30,7 @@ COVER_LEVELS = ("fine", "intermediate", "coarse")
 @dataclass(frozen=True)
 class ClassConfig:
     classes: tuple[SemanticClass, ...]
-    path: Path
+    path: Path | None
 
     @property
     def id_to_name(self) -> dict[int, str]:
@@ -89,12 +91,12 @@ class ClassConfig:
         return (128, 128, 128)
 
 
-def load_classes(path: Path | str = DEFAULT_CLASSES_PATH) -> ClassConfig:
-    classes_path = Path(path)
+def load_classes(path: Path | str | None = None) -> ClassConfig:
+    classes_path = Path(path) if path is not None else None
     payload = yaml.safe_load(_read_classes_text(classes_path)) or {}
     raw_classes = payload.get("classes", [])
     if not isinstance(raw_classes, list):
-        raise ValueError(f"Classes file {classes_path} must contain a 'classes' list")
+        raise ValueError(f"Classes file {classes_path or '<built-in>'} must contain a 'classes' list")
 
     classes: list[SemanticClass] = []
     seen_ids: set[int] = set()
@@ -134,18 +136,28 @@ def load_classes(path: Path | str = DEFAULT_CLASSES_PATH) -> ClassConfig:
     return ClassConfig(classes=tuple(classes), path=classes_path)
 
 
-def read_classes_bytes(path: Path | str = DEFAULT_CLASSES_PATH) -> bytes:
-    classes_path = Path(path)
-    if classes_path.exists():
-        return classes_path.read_bytes()
-    if classes_path == DEFAULT_CLASSES_PATH:
-        resource = resources.files("deepreefmap.resources").joinpath(_DEFAULT_CLASSES_RESOURCE)
-        return resource.read_bytes()
-    raise FileNotFoundError(f"Classes config not found: {classes_path}")
+def read_classes_bytes(path: Path | str | None = None) -> bytes:
+    if path is None:
+        return resources.files("deepreefmap.resources").joinpath(_BUILTIN_CLASSES_RESOURCE).read_bytes()
+    return Path(path).read_bytes()
 
 
-def _read_classes_text(classes_path: Path) -> str:
+def _read_classes_text(classes_path: Path | None) -> str:
     return read_classes_bytes(classes_path).decode("utf-8")
+
+
+def resolve_manifest_classes(value: str | None, run_dir: Path | None = None) -> Path | None:
+    # None / empty / the pre-refactor default literal => use the built-in config.
+    if not value or value == _BUILTIN_CLASSES_RESOURCE:
+        return None
+    candidate = Path(value)
+    if candidate.is_absolute() and candidate.exists():
+        return candidate
+    if run_dir is not None and (run_dir / candidate).exists():
+        return run_dir / candidate
+    if candidate.exists():
+        return candidate
+    raise FileNotFoundError(f"Classes config not found: {value}")
 
 
 def _coerce_int(value: Any, field_name: str) -> int:

@@ -1,12 +1,10 @@
-from pathlib import Path
-
 import pytest
 
 from deepreefmap.config.classes import load_classes
 
 
 def test_load_coralscapes_classes_roles():
-    classes_config = load_classes(Path("configs/classes_coralscapes.yaml"))
+    classes_config = load_classes()
 
     assert classes_config.single_id_for_role("transect_line") == 15
     assert classes_config.single_id_for_role("transect_tools") == 8

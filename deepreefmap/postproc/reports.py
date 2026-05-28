@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from tqdm.auto import tqdm
 
-from deepreefmap.config.classes import ClassConfig, load_classes
+from deepreefmap.config.classes import ClassConfig, load_classes, resolve_manifest_classes
 from deepreefmap.pointcloud.transect_crop import (
     build_transect_crop_geometry,
     build_transect_crop_selection,
@@ -108,13 +108,7 @@ def render_offline_video_placeholder(
         raise FileNotFoundError(f"Missing run manifest: {manifest_path}")
 
     manifest = json.loads(manifest_path.read_text())
-    classes_path = Path(manifest.get("classes", "configs/classes_coralscapes.yaml"))
-    run_relative = classes_path if classes_path.is_absolute() else run_dir / classes_path
-    if run_relative.exists():
-        classes_path = run_relative
-    # A missing on-disk path is fine for the bundled default: load_classes resolves
-    # it from package resources. A genuinely missing custom path still raises there.
-    classes_config = load_classes(classes_path)
+    classes_config = load_classes(resolve_manifest_classes(manifest.get("classes"), run_dir))
     class_colors = classes_config.id_to_color
     class_names = classes_config.id_to_name
     frame_paths = [run_dir / p for p in manifest.get("frame_paths", [])]

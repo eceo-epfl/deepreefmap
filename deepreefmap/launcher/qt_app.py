@@ -72,7 +72,7 @@ class DeepReefMapWindow(
     _sig_qc_render_done = Signal(bool, str)
     _sig_discovery_done = Signal(object, object)
 
-    def __init__(self, classes_config: object, classes_path: Path) -> None:
+    def __init__(self, classes_config: object, classes_path: Path | None) -> None:
         super().__init__()
         self._classes_config = classes_config
         self._classes_path = classes_path
@@ -169,10 +169,8 @@ class DeepReefMapWindow(
 
 
 def launch(classes_path: Path | None = None, view_run_dir: Path | None = None) -> None:
-    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.config.classes import load_classes
 
-    if classes_path is None:
-        classes_path = DEFAULT_CLASSES_PATH
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",

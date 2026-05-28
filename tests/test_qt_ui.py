@@ -667,11 +667,11 @@ def test_viewer_empty_cloud_noop(qapp):
 
 def test_window_creates(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
-    from deepreefmap.config.classes import load_classes, DEFAULT_CLASSES_PATH
+    from deepreefmap.config.classes import load_classes
     from deepreefmap.launcher.qt_app import DeepReefMapWindow
 
-    cc = load_classes(DEFAULT_CLASSES_PATH)
-    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    cc = load_classes()
+    window = DeepReefMapWindow(cc, None)
     assert window.windowTitle() == "DeepReefMap"
 
 
@@ -679,11 +679,11 @@ def test_overlay_has_reset_button_and_r_shortcut_triggers_view_reset(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
     from PySide6.QtGui import QKeySequence, QShortcut
 
-    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.config.classes import load_classes
     from deepreefmap.launcher.qt_app import DeepReefMapWindow
 
-    cc = load_classes(DEFAULT_CLASSES_PATH)
-    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    cc = load_classes()
+    window = DeepReefMapWindow(cc, None)
     assert window._reset_view_button is not None
     assert "Reset" in window._reset_view_button.text()
 
@@ -728,11 +728,11 @@ def test_legend_overlay_reorder_places_rows(qapp):
 
 def test_legend_sort_selected_first_puts_checked_above_unchecked(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
-    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.config.classes import load_classes
     from deepreefmap.launcher.qt_app import DeepReefMapWindow
 
-    cc = load_classes(DEFAULT_CLASSES_PATH)
-    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    cc = load_classes()
+    window = DeepReefMapWindow(cc, None)
     window._build_legend()
     cids = list(window._legend_toggles.keys())
     assert len(cids) >= 3
@@ -748,11 +748,11 @@ def test_legend_sort_selected_first_puts_checked_above_unchecked(qapp):
 
 def test_legend_sort_header_click_toggles_direction(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
-    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.config.classes import load_classes
     from deepreefmap.launcher.qt_app import DeepReefMapWindow
 
-    cc = load_classes(DEFAULT_CLASSES_PATH)
-    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    cc = load_classes()
+    window = DeepReefMapWindow(cc, None)
     window._build_legend()
     assert (window._legend_sort_mode, window._legend_sort_ascending) == ("selected", False)
 
@@ -766,11 +766,11 @@ def test_legend_sort_header_click_toggles_direction(qapp):
 
 def test_pie_click_toggles_selection(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
-    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.config.classes import load_classes
     from deepreefmap.launcher.qt_app import DeepReefMapWindow
 
-    cc = load_classes(DEFAULT_CLASSES_PATH)
-    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    cc = load_classes()
+    window = DeepReefMapWindow(cc, None)
     window._build_legend()
     cids = list(window._legend_toggles.keys())
     assert len(cids) >= 2
@@ -789,11 +789,11 @@ def test_master_checkbox_select_deselect_and_partial(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
     from PySide6.QtCore import Qt
 
-    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.config.classes import load_classes
     from deepreefmap.launcher.qt_app import DeepReefMapWindow
 
-    cc = load_classes(DEFAULT_CLASSES_PATH)
-    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    cc = load_classes()
+    window = DeepReefMapWindow(cc, None)
     window._build_legend()
     present = frozenset(window._legend_toggles.keys())
     master = window._viewer.legend_overlay._master_check
@@ -811,11 +811,11 @@ def test_master_checkbox_select_deselect_and_partial(qapp):
 
 def test_sunburst_reflects_selection(qapp, monkeypatch):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
-    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.config.classes import load_classes
     from deepreefmap.launcher.qt_app import DeepReefMapWindow
 
-    cc = load_classes(DEFAULT_CLASSES_PATH)
-    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    cc = load_classes()
+    window = DeepReefMapWindow(cc, None)
     # The sunburst sync runs through _on_viewer_control_changed, which only acts
     # once the viewer has scene data (as when a run is loaded). Patch via
     # monkeypatch so the class property is restored at teardown and later tests
@@ -937,11 +937,11 @@ def test_load_batch_csv_rejects_excel(tmp_path):
 
 def test_loger_options_collected_from_form(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
-    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.config.classes import load_classes
     from deepreefmap.launcher.qt_app import DeepReefMapWindow
 
-    cc = load_classes(DEFAULT_CLASSES_PATH)
-    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    cc = load_classes()
+    window = DeepReefMapWindow(cc, None)
 
     assert window._collect_loger_options("scsfmlearner") is None
 
@@ -960,11 +960,11 @@ def test_loger_options_collected_from_form(qapp):
 
 def test_loger_panel_visibility_follows_backend(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
-    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, load_classes
+    from deepreefmap.config.classes import load_classes
     from deepreefmap.launcher.qt_app import DeepReefMapWindow
 
-    cc = load_classes(DEFAULT_CLASSES_PATH)
-    window = DeepReefMapWindow(cc, DEFAULT_CLASSES_PATH)
+    cc = load_classes()
+    window = DeepReefMapWindow(cc, None)
 
     window._map_combo.setCurrentText("scsfmlearner")
     assert window._loger_panel.isHidden()

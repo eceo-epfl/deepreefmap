@@ -70,7 +70,7 @@ def reconstruct(
     end: Optional[float] = typer.Option(None, help="End timestamp in the concatenated stream (seconds)."),
     transect_length: Optional[float] = typer.Option(None, help="Transect length in meters."),
     transect_crop_width: Optional[float] = typer.Option(None, help="Crop width around transect in meters."),
-    classes: Path = typer.Option(Path("configs/classes_coralscapes.yaml"), help="Classes YAML with class roles and colors."),
+    classes: Optional[Path] = typer.Option(None, help="Override the built-in coralscapes class definitions (roles + colors) with your own YAML. Defaults to the bundled config."),
     tsdf: bool = typer.Option(False, help="Enable optional TSDF fusion output."),
     replacement_radius_factor: Optional[float] = typer.Option(
         None,

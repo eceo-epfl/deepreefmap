@@ -57,6 +57,21 @@ def test_preprocess_key_changes_with_video_mtime(fake_video: Path, classes_file:
     assert k0 != k1
 
 
+def test_preprocess_key_uses_builtin_classes_from_any_cwd(fake_video: Path, tmp_path: Path, monkeypatch) -> None:
+    # classes_path=None must hash the bundled built-in regardless of cwd (no configs/ dir present).
+    monkeypatch.chdir(tmp_path)
+    key = resume_mod.preprocess_key(
+        video_paths=[fake_video],
+        fps=10,
+        begin_s=None,
+        end_s=None,
+        camera_profile_name="cam-a",
+        segmentation_name="seg-a",
+        classes_path=None,
+    )
+    assert isinstance(key, str) and key
+
+
 def test_mapping_key_depends_on_preprocess_and_options() -> None:
     k0 = resume_mod.mapping_key("prep-x", "scsfmlearner", {"a": 1}, gravity_available=False)
     assert k0 == resume_mod.mapping_key("prep-x", "scsfmlearner", {"a": 1}, gravity_available=False)

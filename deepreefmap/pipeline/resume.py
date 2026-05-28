@@ -41,7 +41,7 @@ def preprocess_key(
     end_s: float | None,
     camera_profile_name: str,
     segmentation_name: str,
-    classes_path: Path,
+    classes_path: Path | None,
     processing_width: int | None = None,
     processing_height: int | None = None,
 ) -> str:

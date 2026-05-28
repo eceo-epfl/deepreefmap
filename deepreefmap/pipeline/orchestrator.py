@@ -15,7 +15,7 @@ from tqdm.auto import tqdm
 
 from deepreefmap.camera.intrinsics import CameraProfile, scale_intrinsics
 from deepreefmap.camera.rectification import Rectifier
-from deepreefmap.config.classes import ClassConfig, DEFAULT_CLASSES_PATH, load_classes
+from deepreefmap.config.classes import ClassConfig, load_classes
 from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_semantic_cloud
 from deepreefmap.io.video import _first_sample_time, iter_video_frames, selected_local_indices_for_clip
 from deepreefmap.mapping.registry import create_mapping_backend
@@ -50,7 +50,7 @@ def run_reconstruction(
     begin_s: float | None = None,
     end_s: float | None = None,
     mapping_options: dict[str, object] | None = None,
-    classes_path: Path = DEFAULT_CLASSES_PATH,
+    classes_path: Path | None = None,
     grid_bins: int = 2000,
     require_gravity_telemetry: bool = False,
     preprocess_batch_size: int = 4,
@@ -69,7 +69,7 @@ def run_reconstruction(
     output_dir.mkdir(parents=True, exist_ok=True)
     run_started_at = datetime.now(timezone.utc).isoformat()
 
-    logger.info("Loading classes from %s", classes_path)
+    logger.info("Loading classes from %s", classes_path if classes_path is not None else "built-in")
     classes_config = load_classes(classes_path)
     if viewer is not None:
         viewer.start_run(run_label="DeepReefMap reconstruction", output_dir=str(output_dir))
@@ -970,7 +970,7 @@ def _build_manifest(
     segmentation_name: str,
     mapping_name: str,
     camera_profile_name: str,
-    classes_path: Path,
+    classes_path: Path | None,
     reference_cloud_size: int,
     metric_cloud_size: int,
     pixel_size_m: float | None,
@@ -990,7 +990,7 @@ def _build_manifest(
         "segmentation_model": segmentation_name,
         "mapping_backend": mapping_name,
         "camera_profile": camera_profile_name,
-        "classes": str(classes_path),
+        "classes": None if classes_path is None else str(Path(classes_path).resolve()),
         "semantic_reference_points": reference_cloud_size,
         "metric_points": metric_cloud_size,
         "pixel_size_m": pixel_size_m,

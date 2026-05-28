@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import numpy as np
 
 from deepreefmap.config.classes import load_classes
@@ -24,7 +22,7 @@ def _batch(frames: list[PreparedFrame]) -> FrameBatch:
 
 
 def test_warns_on_majority_background():
-    cc = load_classes(Path("configs/classes_coralscapes.yaml"))
+    cc = load_classes()
     background_id = cc.single_id_for_role("background")
     transect_id = cc.single_id_for_role("transect_line")
 
@@ -38,7 +36,7 @@ def test_warns_on_majority_background():
 
 
 def test_warns_on_missing_transect_line():
-    cc = load_classes(Path("configs/classes_coralscapes.yaml"))
+    cc = load_classes()
     sand_id = cc.name_to_id["sand"]
 
     h, w = 8, 8
@@ -50,7 +48,7 @@ def test_warns_on_missing_transect_line():
 
 
 def test_no_warnings_on_healthy_run():
-    cc = load_classes(Path("configs/classes_coralscapes.yaml"))
+    cc = load_classes()
     sand_id = cc.name_to_id["sand"]
     transect_id = cc.single_id_for_role("transect_line")
 
@@ -63,7 +61,7 @@ def test_no_warnings_on_healthy_run():
 
 
 def test_empty_batch_returns_empty():
-    cc = load_classes(Path("configs/classes_coralscapes.yaml"))
+    cc = load_classes()
     batch = FrameBatch(
         frames=(),
         intrinsics=np.eye(3, dtype=np.float32),

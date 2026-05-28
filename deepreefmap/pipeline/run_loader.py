@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from deepreefmap.config.classes import DEFAULT_CLASSES_PATH, ClassConfig, load_classes
+from deepreefmap.config.classes import ClassConfig, load_classes, resolve_manifest_classes
 from deepreefmap.io.exports import load_geometry_cloud
 from deepreefmap.io.scene_file import (
     SCENE_FILE_SUFFIX,
@@ -280,24 +280,8 @@ def _load_manifest(run_dir: Path) -> dict[str, Any]:
     return payload
 
 
-def _resolve_classes_path(run_dir: Path, manifest: dict[str, Any]) -> Path:
-    classes_path = Path(str(manifest.get("classes", "configs/classes_coralscapes.yaml")))
-    if classes_path.is_absolute() and classes_path.exists():
-        return classes_path
-
-    run_relative = run_dir / classes_path
-    if run_relative.exists():
-        return run_relative
-
-    if classes_path.exists():
-        return classes_path
-
-    # The default path falls back to the bundled package resource inside
-    # load_classes(), so it's fine even if no on-disk file is found.
-    if classes_path == DEFAULT_CLASSES_PATH:
-        return classes_path
-
-    raise FileNotFoundError(f"Classes config not found for run viewer: {classes_path}")
+def _resolve_classes_path(run_dir: Path, manifest: dict[str, Any]) -> Path | None:
+    return resolve_manifest_classes(manifest.get("classes"), run_dir)
 
 
 def _preprocess_sidecar_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:

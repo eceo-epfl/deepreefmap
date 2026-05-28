@@ -212,7 +212,7 @@ def _save_classes(root, classes_config: "ClassConfig") -> None:
     g.create_dataset("roles", data=roles, object_codec=JSONCodec())
     g.create_dataset("groups_intermediate", data=groups_int, object_codec=JSONCodec())
     g.create_dataset("groups_coarse", data=groups_coarse, object_codec=JSONCodec())
-    g.attrs["classes_path"] = str(classes_config.path)
+    g.attrs["classes_path"] = "" if classes_config.path is None else str(classes_config.path)
 
 
 def _save_mapping(root, mr: "MappingSequenceResult") -> None:
@@ -421,7 +421,8 @@ def _load_classes(root) -> "ClassConfig":
     roles = g["roles"][:]
     groups_int = g["groups_intermediate"][:]
     groups_coarse = g["groups_coarse"][:]
-    classes_path = Path(g.attrs.get("classes_path", ""))
+    classes_path_attr = str(g.attrs.get("classes_path", ""))
+    classes_path = Path(classes_path_attr) if classes_path_attr else None
 
     classes = []
     for i in range(len(ids)):
