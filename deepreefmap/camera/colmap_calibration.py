@@ -159,7 +159,9 @@ def calibrate_camera_profile(
             begin_s=begin_s,
             end_s=end_s,
         )
-        h, w = cv2.imread(str(sample_paths[0])).shape[:2]
+        sample_img = cv2.imread(str(sample_paths[0]))
+        assert sample_img is not None, f"Failed to read sample frame: {sample_paths[0]}"
+        h, w = sample_img.shape[:2]
 
         try:
             import pycolmap
@@ -185,7 +187,7 @@ def calibrate_camera_profile(
             extract_kwargs["camera_mode"] = pycolmap.CameraMode.SINGLE
         elif hasattr(reader_options, "single_camera"):
             reader_options.single_camera = True
-        pycolmap.extract_features(**extract_kwargs)
+        pycolmap.extract_features(**extract_kwargs)  # type: ignore[arg-type]  # pycolmap stubs reject the dynamically-built kwargs dict
         pycolmap.match_sequential(database_path=str(database_path))
         maps = pycolmap.incremental_mapping(database_path=str(database_path), image_path=str(image_dir), output_path=str(sparse_path))
         if not maps:
@@ -237,7 +239,7 @@ def calibrate_camera_profile(
             except Exception:
                 mean_reproj = None
 
-        diagnostics = {
+        diagnostics: dict[str, object] = {
             "n_input_frames": len(sample_paths),
             "n_registered_images": len(best_rec.images),
             "mean_reprojection_error_px": mean_reproj,
