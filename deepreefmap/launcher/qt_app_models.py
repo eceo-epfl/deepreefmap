@@ -183,7 +183,8 @@ class ModelManagementMixin:
     def _refresh_model_status(self) -> None:
         from deepreefmap.launcher.model_manager import all_known_models, check_hf_auth, is_model_cached
 
-        auth_user = check_hf_auth()
+        auth_user, can_gated = check_hf_auth()
+        self._can_read_gated = can_gated
         model_states = [(m, is_model_cached(m)) for m in all_known_models()]
         self._sig_model_status_done.emit(auth_user, model_states)
 
@@ -232,13 +233,33 @@ class ModelManagementMixin:
         self._hf_auth_user = auth_user
         self._last_model_states = list(model_states)
         self._update_models_button_status()
+        can_gated = getattr(self, "_can_read_gated", True)
         if auth_user:
-            self._hf_auth_label.setText(f"Logged in to Hugging Face as <b>{auth_user}</b>")
-            self._hf_auth_label.setToolTip(
-                f"Signed in to Hugging Face as {auth_user}. Click Log out to remove the saved token."
-            )
-            self._hf_auth_icon.setText(f'<span style="color:{SUCCESS}; font-weight:bold">●</span>')
-            self._hf_auth_icon.setToolTip("Signed in to Hugging Face")
+            if can_gated:
+                self._hf_auth_label.setText(f"Logged in to Hugging Face as <b>{auth_user}</b>")
+                self._hf_auth_label.setToolTip(
+                    f"Signed in to Hugging Face as {auth_user}. Click Log out to remove the saved token."
+                )
+                self._hf_auth_icon.setText(f'<span style="color:{SUCCESS}; font-weight:bold">●</span>')
+                self._hf_auth_icon.setToolTip("Signed in to Hugging Face")
+            else:
+                self._hf_auth_label.setText(
+                    f'Logged in as <b>{auth_user}</b> '
+                    f'<span style="color:{WARNING}">— token lacks gated repo access. '
+                    f'Edit your token at '
+                    f'<a href="https://huggingface.co/settings/tokens" style="color:{WARNING}">'
+                    f'huggingface.co/settings/tokens</a> and enable '
+                    f'"Read access to contents of all public gated repos".</span>'
+                )
+                self._hf_auth_label.setTextFormat(Qt.TextFormat.RichText)
+                self._hf_auth_label.setOpenExternalLinks(True)
+                self._hf_auth_label.setToolTip(
+                    "Your fine-grained token does not have the 'Read access to contents of all "
+                    "public gated repos you can access' permission. Edit the token on "
+                    "huggingface.co/settings/tokens to enable it."
+                )
+                self._hf_auth_icon.setText(f'<span style="color:{WARNING}; font-weight:bold">!</span>')
+                self._hf_auth_icon.setToolTip("Token missing gated repo permission")
             self._hf_auth_btn.setText("Log out")
             self._hf_auth_btn.setEnabled(True)
         else:

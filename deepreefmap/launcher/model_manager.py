@@ -290,13 +290,22 @@ def is_model_cached(info: ModelInfo) -> bool:
 
 
 
-def check_hf_auth() -> str | None:
+def check_hf_auth() -> tuple[str | None, bool]:
+    """Return (username_or_None, can_read_gated_repos)."""
     try:
         from huggingface_hub import HfApi
+
         user = HfApi().whoami()
-        return user.get("name") or user.get("fullname") or "authenticated"
+        name = user.get("name") or user.get("fullname") or "authenticated"
+        auth = user.get("auth", {})
+        token_info = auth.get("accessToken", {})
+        fg = token_info.get("fineGrained", {})
+        can_gated = fg.get("canReadGatedRepos", True)
+        if token_info.get("role") != "fineGrained":
+            can_gated = True
+        return name, can_gated
     except Exception:
-        return None
+        return None, False
 
 
 def check_disk_space(required_bytes: int = _MIN_FREE_BYTES) -> tuple[int, int]:
@@ -404,7 +413,7 @@ def hf_login(token: str) -> str:
     from huggingface_hub import login
 
     login(token=token, add_to_git_credential=False)
-    user = check_hf_auth()
+    user, _can_gated = check_hf_auth()
     if not user:
         raise RuntimeError("Login appeared to succeed but whoami() returned no user")
     return user
