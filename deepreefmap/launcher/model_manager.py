@@ -127,7 +127,7 @@ MAPPING_MODELS: list[ModelInfo] = [
         kind="mapping",
         hf_repos=["Junyi42/LoGeR"],
         gated=False,
-        description="LoGeR (high quality, CUDA required)",
+        description="LoGeR depth + pose estimation (CUDA required)",
         approx_size_mb=4787,
         materialise_to={
             "LoGeR/latest.pt": _LOGER_CKPTS / "LoGeR" / "latest.pt",

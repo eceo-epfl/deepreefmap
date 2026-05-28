@@ -323,12 +323,10 @@ class ModelManagementMixin:
             container = QWidget()
             hb = QHBoxLayout(container)
             hb.setContentsMargins(0, 0, 0, 0)
+            from deepreefmap.mapping.registry import LOGER_INSTALL_HINT
+
             label = QLabel('<span style="color:#888">install required</span>')
-            label.setToolTip(
-                "Install the LoGeR extra and submodule to enable:\n"
-                "    uv sync --extra loger\n"
-                "    git submodule update --init --recursive"
-            )
+            label.setToolTip(LOGER_INSTALL_HINT)
             hb.addWidget(label)
             return container
 

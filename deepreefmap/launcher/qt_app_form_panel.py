@@ -75,7 +75,11 @@ class FormPanelMixin:
 
     def _build_form_panel(self) -> QWidget:
         from deepreefmap.camera.intrinsics import available_profile_names
-        from deepreefmap.mapping.registry import list_mapping_backends, loger_available
+        from deepreefmap.mapping.registry import (
+            LOGER_INSTALL_HINT,
+            list_mapping_backends,
+            loger_available,
+        )
         from deepreefmap.segmentation.registry import list_segmentation_models
 
         profiles = available_profile_names() or ["gopro_hero_10"]
@@ -282,16 +286,11 @@ class FormPanelMixin:
         if not loger_available():
             map_model = self._map_combo.model()
             if isinstance(map_model, QStandardItemModel):
-                hint = (
-                    "Install the LoGeR extra and submodule to enable:\n"
-                    "    uv sync --extra loger\n"
-                    "    git submodule update --init --recursive"
-                )
                 for i in range(self._map_combo.count()):
                     if self._map_combo.itemText(i) in ("loger", "loger_star"):
                         item = map_model.item(i)
                         item.setEnabled(False)
-                        item.setData(hint, Qt.ItemDataRole.ToolTipRole)
+                        item.setData(LOGER_INSTALL_HINT, Qt.ItemDataRole.ToolTipRole)
         map_row.addWidget(self._map_combo, 1)
         self._map_status_btn = self._build_model_status_button(self._map_combo)
         map_row.addWidget(self._map_status_btn)
