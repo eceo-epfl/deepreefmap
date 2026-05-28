@@ -46,13 +46,13 @@ if TYPE_CHECKING:
 
     from deepreefmap.config.classes import ClassConfig
     from deepreefmap.io.scene_file import SceneFrameAccessor
-    from deepreefmap.launcher.log_view import LogView
-    from deepreefmap.launcher.qt_app_progress import ProgressModel
-    from deepreefmap.launcher.qt_pick_tooltip import PickCard
+    from deepreefmap.gui.log_view import LogView
+    from deepreefmap.gui.progress import ProgressModel
+    from deepreefmap.gui.pick_tooltip import PickCard
     from deepreefmap.pipeline.artifacts import SemanticPointCloud
     from deepreefmap.pointcloud.grid_ortho import OrthoGrid
-    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
-    from deepreefmap.visualization.sunburst_widget import SunburstWidget
+    from deepreefmap.gui.viewer import QtPointCloudViewer
+    from deepreefmap.gui.sunburst_widget import SunburstWidget
 
     class MixinBase(QWidget):
         # --- plain state -------------------------------------------------

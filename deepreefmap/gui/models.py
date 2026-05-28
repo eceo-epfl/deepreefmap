@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from deepreefmap.launcher._window_protocol import MixinBase
+from deepreefmap.gui._window_protocol import MixinBase
 
 import threading
 from typing import TYPE_CHECKING, cast
@@ -17,11 +17,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from deepreefmap.launcher.qt_app_hf_dialog import HfLoginDialog
-from deepreefmap.launcher.theme import DANGER_BG, SUCCESS, WARNING
+from deepreefmap.gui.hf_dialog import HfLoginDialog
+from deepreefmap.gui.theme import DANGER_BG, SUCCESS, WARNING
 
 if TYPE_CHECKING:
-    from deepreefmap.launcher.model_manager import ModelInfo
+    from deepreefmap.gui.model_manager import ModelInfo
 
 
 class ModelManagementMixin(MixinBase):
@@ -106,7 +106,7 @@ class ModelManagementMixin(MixinBase):
             btn.setToolTip("Open Models")
             btn.setStyleSheet("")
             return
-        from deepreefmap.launcher.qt_icons import check_icon, download_icon, lock_icon
+        from deepreefmap.gui.icons import check_icon, download_icon, lock_icon
 
         if cached:
             btn.setText("")
@@ -187,7 +187,7 @@ class ModelManagementMixin(MixinBase):
             )
 
     def _refresh_model_status(self) -> None:
-        from deepreefmap.launcher.model_manager import all_known_models, check_hf_auth, is_model_cached
+        from deepreefmap.gui.model_manager import all_known_models, check_hf_auth, is_model_cached
 
         auth_user, can_gated = check_hf_auth()
         self._can_read_gated = can_gated
@@ -199,7 +199,7 @@ class ModelManagementMixin(MixinBase):
         self._discover_btn.setText("Checking…")
 
         def _work() -> None:
-            from deepreefmap.launcher.model_manager import discover_models
+            from deepreefmap.gui.model_manager import discover_models
 
             names, error = discover_models()
             self._sig_discovery_done.emit(names, error)
@@ -345,7 +345,7 @@ class ModelManagementMixin(MixinBase):
         if not self._skip_seg_check.isChecked():
             seg = self._seg_combo.currentText()
             required.add(seg)
-            from deepreefmap.launcher.model_manager import DPT_BACKBONE_MAP
+            from deepreefmap.gui.model_manager import DPT_BACKBONE_MAP
 
             backbone = DPT_BACKBONE_MAP.get(seg)
             if backbone:
@@ -358,7 +358,7 @@ class ModelManagementMixin(MixinBase):
         self._recompute_submit_state()
 
     def _make_action_widget(self, info, cached: bool, auth_user: str | None) -> QWidget:
-        from deepreefmap.launcher.model_manager import model_available
+        from deepreefmap.gui.model_manager import model_available
 
         if not model_available(info):
             # Model needs an install extra that isn't present (LoGeR today).
@@ -435,7 +435,7 @@ class ModelManagementMixin(MixinBase):
             self._status_label.setText("Logging out of Hugging Face...")
 
             def _do_logout() -> None:
-                from deepreefmap.launcher.model_manager import hf_logout
+                from deepreefmap.gui.model_manager import hf_logout
 
                 try:
                     hf_logout()
@@ -457,7 +457,7 @@ class ModelManagementMixin(MixinBase):
         self._status_label.setText("Logging in to Hugging Face...")
 
         def _do_login() -> None:
-            from deepreefmap.launcher.model_manager import hf_login
+            from deepreefmap.gui.model_manager import hf_login
 
             try:
                 user = hf_login(token)
@@ -496,7 +496,7 @@ class ModelManagementMixin(MixinBase):
         QTimer.singleShot(3000, _revert)
 
     def _execute_delete(self, model_name: str) -> None:
-        from deepreefmap.launcher.model_manager import all_known_models, delete_model
+        from deepreefmap.gui.model_manager import all_known_models, delete_model
 
         info = next((m for m in all_known_models() if m.name == model_name), None)
         if info is None:
@@ -553,7 +553,7 @@ class ModelManagementMixin(MixinBase):
         threading.Thread(target=self._refresh_model_status, daemon=True).start()
 
     def _download_model(self, model_name: str) -> None:
-        from deepreefmap.launcher.model_manager import (
+        from deepreefmap.gui.model_manager import (
             DownloadCancelled,
             all_known_models,
             prefetch_model,

@@ -593,7 +593,7 @@ def run_reconstruction(
             if viewer is not None:
                 viewer.set_stage("outputs", "running", "Saving scene file")
             from deepreefmap.io.scene_file import save_scene_file, scene_file_name
-            from deepreefmap.visualization.final_cloud_index import build_final_cloud_index
+            from deepreefmap.pointcloud.final_cloud_index import build_final_cloud_index
 
             frame_order = [int(f.frame_index) for f in frame_batch.frames]
             fci = build_final_cloud_index(

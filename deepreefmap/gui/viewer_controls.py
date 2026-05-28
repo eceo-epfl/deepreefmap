@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from deepreefmap.launcher._window_protocol import MixinBase
+from deepreefmap.gui._window_protocol import MixinBase
 
 import json
 import logging
@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, SupportsInt, cast
 
 
-from deepreefmap.launcher.log_view import close_run_log_file
-from deepreefmap.launcher.qt_app_progress import (
+from deepreefmap.gui.log_view import close_run_log_file
+from deepreefmap.gui.progress import (
     _SETUP_MESSAGE_TO_PHASE,
     _STAGE_MESSAGE_TO_PHASE,
 )
@@ -477,7 +477,7 @@ class ViewerControlsMixin(MixinBase):
             return
         canvas = self._viewer._canvas_container
         if self._pick_card is None:
-            from deepreefmap.launcher.qt_pick_tooltip import PickCard
+            from deepreefmap.gui.pick_tooltip import PickCard
 
             self._pick_card = PickCard(canvas)
             self._pick_card.isolate_requested.connect(self._on_isolate_class)
@@ -614,7 +614,7 @@ class ViewerControlsMixin(MixinBase):
         buttons_row.setSpacing(6)
         buttons_row.setContentsMargins(0, 0, 0, 0)
 
-        from deepreefmap.launcher.qt_icons import (
+        from deepreefmap.gui.icons import (
             crosshair_icon,
             fit_icon,
             refresh_icon,

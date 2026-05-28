@@ -21,7 +21,7 @@ def launch_command(
     ),
 ) -> None:
     """Start the native Qt desktop launcher, optionally pre-loading a run."""
-    from deepreefmap.launcher.qt_app import launch
+    from deepreefmap.gui.app import launch
 
     launch(view_run_dir=run_dir)
 
@@ -203,7 +203,7 @@ def gen_scene(
     )
     from deepreefmap.io.scene_file import find_scene_file, save_scene_file, scene_file_name
     from deepreefmap.pipeline.run_loader import load_cached_run
-    from deepreefmap.visualization.final_cloud_index import build_final_cloud_index
+    from deepreefmap.pointcloud.final_cloud_index import build_final_cloud_index
 
     existing = find_scene_file(run_dir)
     if existing is not None and not force:

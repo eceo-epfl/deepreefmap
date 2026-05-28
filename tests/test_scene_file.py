@@ -24,7 +24,7 @@ from deepreefmap.pipeline.artifacts import (
     PreparedFrame,
     SemanticPointCloud,
 )
-from deepreefmap.visualization.final_cloud_index import FinalCloudIndex, build_final_cloud_index
+from deepreefmap.pointcloud.final_cloud_index import FinalCloudIndex, build_final_cloud_index
 
 
 # ---------------------------------------------------------------------------

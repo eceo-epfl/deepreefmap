@@ -19,7 +19,7 @@ import pytest
 # --- Model manager ---
 
 def test_model_list_has_all_expected_models():
-    from deepreefmap.launcher.model_manager import ALL_MODELS
+    from deepreefmap.gui.model_manager import ALL_MODELS
 
     names = {m.name for m in ALL_MODELS}
     assert "segformer-b2" in names
@@ -35,14 +35,14 @@ def test_model_list_has_all_expected_models():
     ],
 )
 def test_model_gated_flag(name, gated):
-    from deepreefmap.launcher.model_manager import ALL_MODELS
+    from deepreefmap.gui.model_manager import ALL_MODELS
 
     info = next(m for m in ALL_MODELS if m.name == name)
     assert info.gated is gated
 
 
 def test_cache_detection_returns_false_for_nonexistent():
-    from deepreefmap.launcher.model_manager import ModelInfo, is_model_cached
+    from deepreefmap.gui.model_manager import ModelInfo, is_model_cached
 
     fake = ModelInfo(
         name="fake",
@@ -55,7 +55,7 @@ def test_cache_detection_returns_false_for_nonexistent():
 
 
 def test_dinov3_dpt_entries_include_facebook_backbone():
-    from deepreefmap.launcher.model_manager import ALL_MODELS
+    from deepreefmap.gui.model_manager import ALL_MODELS
 
     expected = {
         "coralscapes-vit-s-dpt": "facebook/dinov3-vits16-pretrain-lvd1689m",
@@ -71,7 +71,7 @@ def test_dinov3_dpt_entries_include_facebook_backbone():
 
 
 def test_loger_entries_materialise_into_ckpts_dir():
-    from deepreefmap.launcher.model_manager import MAPPING_MODELS
+    from deepreefmap.gui.model_manager import MAPPING_MODELS
     from deepreefmap.mapping.registry import _LOGER_CKPTS
 
     by_name = {m.name: m for m in MAPPING_MODELS}
@@ -90,8 +90,8 @@ def test_loger_entries_materialise_into_ckpts_dir():
 
 
 def test_is_model_cached_requires_materialised_destinations(tmp_path, monkeypatch):
-    from deepreefmap.launcher import model_manager
-    from deepreefmap.launcher.model_manager import ModelInfo, is_model_cached
+    from deepreefmap.gui import model_manager
+    from deepreefmap.gui.model_manager import ModelInfo, is_model_cached
 
     fake_cache = tmp_path / "hf"
     repo_dir = fake_cache / "models--fake--repo"
@@ -114,8 +114,8 @@ def test_is_model_cached_requires_materialised_destinations(tmp_path, monkeypatc
 
 
 def test_prefetch_refuses_when_disk_is_low(tmp_path, monkeypatch):
-    from deepreefmap.launcher import model_manager
-    from deepreefmap.launcher.model_manager import (
+    from deepreefmap.gui import model_manager
+    from deepreefmap.gui.model_manager import (
         InsufficientDiskSpace,
         ModelInfo,
         prefetch_model,
@@ -141,7 +141,7 @@ def test_prefetch_refuses_when_disk_is_low(tmp_path, monkeypatch):
 # --- Version fetching ---
 
 def test_fetch_versions_mock_env(monkeypatch):
-    from deepreefmap.launcher.qt_app import _fetch_release_versions
+    from deepreefmap.gui.app import _fetch_release_versions
 
     monkeypatch.setenv("DEEPREEFMAP_MOCK_VERSIONS", "2.0.0,1.5.0,1.0.1")
     versions = _fetch_release_versions()
@@ -149,7 +149,7 @@ def test_fetch_versions_mock_env(monkeypatch):
 
 
 def test_fetch_versions_mock_empty(monkeypatch):
-    from deepreefmap.launcher.qt_app import _fetch_release_versions
+    from deepreefmap.gui.app import _fetch_release_versions
 
     monkeypatch.setenv("DEEPREEFMAP_MOCK_VERSIONS", "")
     versions = _fetch_release_versions()
@@ -169,14 +169,14 @@ def test_fetch_versions_mock_empty(monkeypatch):
     ],
 )
 def test_newer_releases_orders_and_filters(releases, current, expected):
-    from deepreefmap.launcher.qt_app import _newer_releases
+    from deepreefmap.gui.app import _newer_releases
 
     newer = _newer_releases(releases, current)
     assert [r["tag_name"] for r in newer] == expected
 
 
 def test_newer_releases_unparseable_current_falls_back_to_inequality():
-    from deepreefmap.launcher.qt_app import _newer_releases
+    from deepreefmap.gui.app import _newer_releases
 
     releases = [{"tag_name": "v1.0.0"}, {"tag_name": "v1.0.1"}]
     newer = _newer_releases(releases, "dev")
@@ -184,7 +184,7 @@ def test_newer_releases_unparseable_current_falls_back_to_inequality():
 
 
 def test_fetch_versions_real_404(monkeypatch):
-    from deepreefmap.launcher.qt_app import _fetch_release_versions
+    from deepreefmap.gui.app import _fetch_release_versions
 
     monkeypatch.delenv("DEEPREEFMAP_MOCK_VERSIONS", raising=False)
     monkeypatch.setenv("DEEPREEFMAP_GH_REPO", "nonexistent-org-xyz/nonexistent-repo-abc")
@@ -194,7 +194,7 @@ def test_fetch_versions_real_404(monkeypatch):
 
 def test_fetch_versions_parses_github_response():
     """Spin up a local HTTP server returning fake GitHub releases JSON."""
-    from deepreefmap.launcher.qt_app import _fetch_release_versions
+    from deepreefmap.gui.app import _fetch_release_versions
 
     releases = [
         {"tag_name": "v2.0.0", "draft": False},
@@ -217,7 +217,7 @@ def test_fetch_versions_parses_github_response():
     t = threading.Thread(target=server.handle_request, daemon=True)
     t.start()
 
-    import deepreefmap.launcher.qt_app_version as mod
+    import deepreefmap.gui.version as mod
     orig = mod._gh_releases_url
     mod._gh_releases_url = lambda: f"http://127.0.0.1:{port}/releases"
     try:
@@ -230,7 +230,7 @@ def test_fetch_versions_parses_github_response():
 
 
 def test_fetch_releases_mock_synthesises_assets(monkeypatch):
-    from deepreefmap.launcher.qt_app import _fetch_releases
+    from deepreefmap.gui.app import _fetch_releases
 
     monkeypatch.setenv("DEEPREEFMAP_MOCK_VERSIONS", "2.0.0,1.0.1")
     releases = _fetch_releases()
@@ -242,7 +242,7 @@ def test_fetch_releases_mock_synthesises_assets(monkeypatch):
 
 
 def test_fetch_releases_keeps_assets_from_github_response():
-    from deepreefmap.launcher.qt_app import _fetch_releases
+    from deepreefmap.gui.app import _fetch_releases
 
     releases = [
         {
@@ -273,7 +273,7 @@ def test_fetch_releases_keeps_assets_from_github_response():
     t = threading.Thread(target=server.handle_request, daemon=True)
     t.start()
 
-    import deepreefmap.launcher.qt_app_version as mod
+    import deepreefmap.gui.version as mod
     orig = mod._gh_releases_url
     mod._gh_releases_url = lambda: f"http://127.0.0.1:{port}/releases"
     try:
@@ -299,13 +299,13 @@ def test_fetch_releases_keeps_assets_from_github_response():
     ],
 )
 def test_resolve_asset_name(platform, expected):
-    from deepreefmap.launcher.binary_swap import resolve_asset_name
+    from deepreefmap.gui.binary_swap import resolve_asset_name
 
     assert resolve_asset_name(platform) == expected
 
 
 def test_resolve_asset_name_unsupported_raises():
-    from deepreefmap.launcher.binary_swap import BinarySwapError, resolve_asset_name
+    from deepreefmap.gui.binary_swap import BinarySwapError, resolve_asset_name
 
     with pytest.raises(BinarySwapError):
         resolve_asset_name("freebsd")
@@ -317,7 +317,7 @@ def test_apply_theme_sets_dark_palette(qapp):
     # the global stylesheet wraps in an empty-named QStyleSheetStyle proxy).
     from PySide6.QtGui import QPalette
 
-    from deepreefmap.launcher.theme import apply_theme
+    from deepreefmap.gui.theme import apply_theme
 
     prev_style = qapp.style().objectName()
     prev_palette = QPalette(qapp.palette())
@@ -338,14 +338,14 @@ def test_apply_theme_sets_dark_palette(qapp):
 def test_theme_semantic_constants_are_valid_hex():
     from PySide6.QtGui import QColor
 
-    from deepreefmap.launcher import theme
+    from deepreefmap.gui import theme
 
     for name in ("SUCCESS", "WARNING", "ERROR", "PRIMARY", "LINK", "UPDATE", "DANGER_BG"):
         assert QColor(getattr(theme, name)).isValid()
 
 
 def test_find_asset_url_returns_match():
-    from deepreefmap.launcher.binary_swap import BinarySwapError, find_asset_url
+    from deepreefmap.gui.binary_swap import BinarySwapError, find_asset_url
 
     rel = {
         "tag_name": "v1.0.0",
@@ -360,7 +360,7 @@ def test_find_asset_url_returns_match():
 
 
 def test_download_to_streams_chunks_and_reports_progress(tmp_path):
-    from deepreefmap.launcher.binary_swap import download_to
+    from deepreefmap.gui.binary_swap import download_to
 
     payload = b"x" * (200 * 1024)
 
@@ -396,7 +396,7 @@ def test_download_to_streams_chunks_and_reports_progress(tmp_path):
 
 
 def test_replace_binary_atomic_rename(tmp_path):
-    from deepreefmap.launcher.binary_swap import replace_binary
+    from deepreefmap.gui.binary_swap import replace_binary
 
     target = tmp_path / "current"
     target.write_bytes(b"old")
@@ -410,7 +410,7 @@ def test_replace_binary_atomic_rename(tmp_path):
 
 
 def test_pyapp_mock_path(monkeypatch):
-    from deepreefmap.launcher.qt_app import _pyapp_binary_path
+    from deepreefmap.gui.app import _pyapp_binary_path
 
     monkeypatch.setenv("DEEPREEFMAP_MOCK_PYAPP", "1")
     monkeypatch.delenv("PYAPP", raising=False)
@@ -418,7 +418,7 @@ def test_pyapp_mock_path(monkeypatch):
 
 
 def test_pyapp_no_env(monkeypatch):
-    from deepreefmap.launcher.qt_app import _pyapp_binary_path
+    from deepreefmap.gui.app import _pyapp_binary_path
 
     monkeypatch.delenv("DEEPREEFMAP_MOCK_PYAPP", raising=False)
     monkeypatch.delenv("PYAPP", raising=False)
@@ -428,7 +428,7 @@ def test_pyapp_no_env(monkeypatch):
 # --- Colorization helpers ---
 
 def test_colorize_seg_maps_classes():
-    from deepreefmap.visualization.qt_viewer import _colorize_seg
+    from deepreefmap.gui.viewer import _colorize_seg
 
     labels = np.array([[1, 2], [2, 1]], dtype=np.int32)
     colors = {1: (255, 0, 0), 2: (0, 255, 0)}
@@ -438,7 +438,7 @@ def test_colorize_seg_maps_classes():
 
 
 def test_colorize_seg_fallback_gray():
-    from deepreefmap.visualization.qt_viewer import _colorize_seg
+    from deepreefmap.gui.viewer import _colorize_seg
 
     labels = np.array([[99]], dtype=np.int32)
     result = _colorize_seg(labels, {})
@@ -446,7 +446,7 @@ def test_colorize_seg_fallback_gray():
 
 
 def test_colorize_depth_handles_nan():
-    from deepreefmap.visualization.qt_viewer import _colorize_depth
+    from deepreefmap.gui.viewer import _colorize_depth
 
     depth = np.array([[float("nan"), 1.0], [2.0, float("nan")]], dtype=np.float32)
     result = _colorize_depth(depth)
@@ -456,7 +456,7 @@ def test_colorize_depth_handles_nan():
 
 
 def test_colorize_depth_all_nan():
-    from deepreefmap.visualization.qt_viewer import _colorize_depth
+    from deepreefmap.gui.viewer import _colorize_depth
 
     depth = np.full((3, 3), float("nan"), dtype=np.float32)
     result = _colorize_depth(depth)
@@ -471,7 +471,7 @@ def test_colorize_depth_all_nan():
     ],
 )
 def test_to_rgba_normalizes_by_dtype(rgb, expected_r):
-    from deepreefmap.visualization.qt_viewer import _to_rgba
+    from deepreefmap.gui.viewer import _to_rgba
 
     rgba = _to_rgba(rgb)
     assert rgba.shape == (1, 4)
@@ -482,7 +482,7 @@ def test_to_rgba_normalizes_by_dtype(rgb, expected_r):
 # --- Frustum geometry ---
 
 def test_build_frustum_lines_shape():
-    from deepreefmap.visualization.qt_viewer import _build_frustum_lines
+    from deepreefmap.gui.viewer import _build_frustum_lines
 
     pose = np.eye(4, dtype=np.float64)
     lines = _build_frustum_lines(pose, fov_y=1.0, aspect=1.5)
@@ -491,7 +491,7 @@ def test_build_frustum_lines_shape():
 
 
 def test_build_frustum_lines_origin_at_pose_position():
-    from deepreefmap.visualization.qt_viewer import _build_frustum_lines
+    from deepreefmap.gui.viewer import _build_frustum_lines
 
     pose = np.eye(4, dtype=np.float64)
     pose[:3, 3] = [10.0, 20.0, 30.0]
@@ -503,7 +503,7 @@ def test_build_frustum_lines_origin_at_pose_position():
 
 
 def test_estimate_world_up_points_toward_cameras():
-    from deepreefmap.visualization.qt_viewer import _estimate_world_up
+    from deepreefmap.gui.viewer import _estimate_world_up
 
     rng = np.random.default_rng(0)
     # Flat substrate in the XY plane; cameras hover above it along +Z.
@@ -523,7 +523,7 @@ def test_estimate_world_up_points_toward_cameras():
 
 
 def test_compute_transect_view_aligns_along_camera_path():
-    from deepreefmap.visualization.qt_viewer import _compute_transect_view
+    from deepreefmap.gui.viewer import _compute_transect_view
 
     # Cameras drift along world +X from -5 to +5; points scatter around the line.
     cam_origins = np.stack([
@@ -554,7 +554,7 @@ def test_compute_transect_view_aligns_along_camera_path():
 
 
 def test_compute_transect_view_falls_back_for_degenerate_data():
-    from deepreefmap.visualization.qt_viewer import _compute_transect_view
+    from deepreefmap.gui.viewer import _compute_transect_view
 
     # Single point — PCA degenerates; helper must still return finite numbers.
     pts = np.array([[1.0, 2.0, 3.0]], dtype=np.float64)
@@ -567,14 +567,14 @@ def test_compute_transect_view_falls_back_for_degenerate_data():
 # --- Depth-buffer pick pixel selection ---
 
 def test_select_pick_pixel_all_background_returns_none():
-    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+    from deepreefmap.gui.viewer import QtPointCloudViewer
 
     z = np.ones((5, 5), dtype=np.float32)  # far plane everywhere == nothing drawn
     assert QtPointCloudViewer._select_pick_pixel(z, (2, 2)) is None
 
 
 def test_select_pick_pixel_snaps_to_only_foreground_pixel():
-    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+    from deepreefmap.gui.viewer import QtPointCloudViewer
 
     z = np.ones((5, 5), dtype=np.float32)
     z[1, 3] = 0.4  # one covered pixel at (col=3, row=1), cursor a few px away
@@ -582,14 +582,14 @@ def test_select_pick_pixel_snaps_to_only_foreground_pixel():
 
 
 def test_select_pick_pixel_prefers_pixel_under_cursor():
-    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+    from deepreefmap.gui.viewer import QtPointCloudViewer
 
     z = np.full((5, 5), 0.5, dtype=np.float32)  # everything covered
     assert QtPointCloudViewer._select_pick_pixel(z, (2, 2)) == (2, 2)
 
 
 def test_select_pick_pixel_breaks_distance_ties_by_depth():
-    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+    from deepreefmap.gui.viewer import QtPointCloudViewer
 
     # Two covered pixels equidistant from the cursor; the front-most (smaller
     # depth) wins so picks land on the visible surface, not one behind it.
@@ -614,7 +614,7 @@ def qapp():
 
 
 def test_viewer_widget_creates(qapp):
-    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+    from deepreefmap.gui.viewer import QtPointCloudViewer
 
     viewer = QtPointCloudViewer(class_colors={1: (255, 0, 0)}, class_names={1: "test"})
     assert viewer.n_frames == 0
@@ -622,7 +622,7 @@ def test_viewer_widget_creates(qapp):
 
 
 def test_viewer_show_point_cloud(qapp):
-    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+    from deepreefmap.gui.viewer import QtPointCloudViewer
 
     viewer = QtPointCloudViewer()
     xyz = np.random.rand(100, 3).astype(np.float32)
@@ -631,7 +631,7 @@ def test_viewer_show_point_cloud(qapp):
 
 
 def test_viewer_empty_cloud_noop(qapp):
-    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+    from deepreefmap.gui.viewer import QtPointCloudViewer
 
     viewer = QtPointCloudViewer()
     viewer.show_point_cloud(np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint8))
@@ -640,7 +640,7 @@ def test_viewer_empty_cloud_noop(qapp):
 def test_window_creates(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
     from deepreefmap.config.classes import load_classes
-    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+    from deepreefmap.gui.app import DeepReefMapWindow
 
     cc = load_classes()
     window = DeepReefMapWindow(cc, None)
@@ -652,7 +652,7 @@ def test_overlay_has_reset_button_and_r_shortcut_triggers_view_reset(qapp):
     from PySide6.QtGui import QKeySequence, QShortcut
 
     from deepreefmap.config.classes import load_classes
-    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+    from deepreefmap.gui.app import DeepReefMapWindow
 
     cc = load_classes()
     window = DeepReefMapWindow(cc, None)
@@ -682,7 +682,7 @@ def test_overlay_has_reset_button_and_r_shortcut_triggers_view_reset(qapp):
 def test_legend_overlay_reorder_places_rows(qapp):
     from PySide6.QtWidgets import QWidget
 
-    from deepreefmap.visualization.qt_viewer import LegendOverlay
+    from deepreefmap.gui.viewer import LegendOverlay
 
     parent = QWidget()
     ov = LegendOverlay(parent)
@@ -701,7 +701,7 @@ def test_legend_overlay_reorder_places_rows(qapp):
 def test_legend_sort_selected_first_puts_checked_above_unchecked(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
     from deepreefmap.config.classes import load_classes
-    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+    from deepreefmap.gui.app import DeepReefMapWindow
 
     cc = load_classes()
     window = DeepReefMapWindow(cc, None)
@@ -721,7 +721,7 @@ def test_legend_sort_selected_first_puts_checked_above_unchecked(qapp):
 def test_legend_sort_header_click_toggles_direction(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
     from deepreefmap.config.classes import load_classes
-    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+    from deepreefmap.gui.app import DeepReefMapWindow
 
     cc = load_classes()
     window = DeepReefMapWindow(cc, None)
@@ -739,7 +739,7 @@ def test_legend_sort_header_click_toggles_direction(qapp):
 def test_pie_click_toggles_selection(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
     from deepreefmap.config.classes import load_classes
-    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+    from deepreefmap.gui.app import DeepReefMapWindow
 
     cc = load_classes()
     window = DeepReefMapWindow(cc, None)
@@ -762,7 +762,7 @@ def test_master_checkbox_select_deselect_and_partial(qapp):
     from PySide6.QtCore import Qt
 
     from deepreefmap.config.classes import load_classes
-    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+    from deepreefmap.gui.app import DeepReefMapWindow
 
     cc = load_classes()
     window = DeepReefMapWindow(cc, None)
@@ -784,7 +784,7 @@ def test_master_checkbox_select_deselect_and_partial(qapp):
 def test_sunburst_reflects_selection(qapp, monkeypatch):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
     from deepreefmap.config.classes import load_classes
-    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+    from deepreefmap.gui.app import DeepReefMapWindow
 
     cc = load_classes()
     window = DeepReefMapWindow(cc, None)
@@ -820,13 +820,13 @@ def test_sunburst_reflects_selection(qapp, monkeypatch):
     ],
 )
 def test_parse_timestamp_range(text, expected):
-    from deepreefmap.launcher.qt_app import _parse_timestamp_range
+    from deepreefmap.gui.app import _parse_timestamp_range
 
     assert _parse_timestamp_range(text) == expected
 
 
 def test_load_batch_csv_parses_rows(tmp_path):
-    from deepreefmap.launcher.qt_app import _load_batch_csv
+    from deepreefmap.gui.app import _load_batch_csv
 
     csv_path = tmp_path / "jobs.csv"
     csv_path.write_text(
@@ -848,7 +848,7 @@ def test_load_batch_csv_parses_rows(tmp_path):
 
 
 def test_load_batch_csv_case_insensitive_columns(tmp_path):
-    from deepreefmap.launcher.qt_app import _load_batch_csv
+    from deepreefmap.gui.app import _load_batch_csv
 
     csv_path = tmp_path / "jobs.csv"
     csv_path.write_text(
@@ -860,7 +860,7 @@ def test_load_batch_csv_case_insensitive_columns(tmp_path):
 
 
 def test_load_batch_csv_rejects_missing_columns(tmp_path):
-    from deepreefmap.launcher.qt_app import _load_batch_csv
+    from deepreefmap.gui.app import _load_batch_csv
 
     csv_path = tmp_path / "jobs.csv"
     csv_path.write_text("videos,timestamps\nx.mp4,0-10\n")
@@ -869,7 +869,7 @@ def test_load_batch_csv_rejects_missing_columns(tmp_path):
 
 
 def test_load_batch_csv_skips_blank_rows(tmp_path):
-    from deepreefmap.launcher.qt_app import _load_batch_csv
+    from deepreefmap.gui.app import _load_batch_csv
 
     csv_path = tmp_path / "jobs.csv"
     csv_path.write_text(
@@ -883,7 +883,7 @@ def test_load_batch_csv_skips_blank_rows(tmp_path):
 
 
 def test_load_batch_csv_rejects_excel(tmp_path):
-    from deepreefmap.launcher.qt_app import _load_batch_csv
+    from deepreefmap.gui.app import _load_batch_csv
 
     bogus = tmp_path / "jobs.xlsx"
     bogus.write_bytes(b"not actually excel")
@@ -896,7 +896,7 @@ def test_load_batch_csv_rejects_excel(tmp_path):
 def test_loger_options_collected_from_form(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
     from deepreefmap.config.classes import load_classes
-    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+    from deepreefmap.gui.app import DeepReefMapWindow
 
     cc = load_classes()
     window = DeepReefMapWindow(cc, None)
@@ -919,7 +919,7 @@ def test_loger_options_collected_from_form(qapp):
 def test_loger_panel_visibility_follows_backend(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
     from deepreefmap.config.classes import load_classes
-    from deepreefmap.launcher.qt_app import DeepReefMapWindow
+    from deepreefmap.gui.app import DeepReefMapWindow
 
     cc = load_classes()
     window = DeepReefMapWindow(cc, None)
@@ -950,7 +950,7 @@ def _fake_geometry_scene():
 
 
 def test_geometry_scene_enables_timeline(qapp):
-    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+    from deepreefmap.gui.viewer import QtPointCloudViewer
 
     viewer = QtPointCloudViewer()
     fb, mr, xyz, rgb = _fake_geometry_scene()
@@ -964,7 +964,7 @@ def test_geometry_scene_enables_timeline(qapp):
 
 
 def test_geometry_scene_clears_back_to_empty(qapp):
-    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+    from deepreefmap.gui.viewer import QtPointCloudViewer
 
     viewer = QtPointCloudViewer()
     fb, mr, xyz, rgb = _fake_geometry_scene()

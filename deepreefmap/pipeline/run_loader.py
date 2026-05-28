@@ -25,7 +25,7 @@ from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, Se
 from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_reference_cloud
 
 if TYPE_CHECKING:
-    from deepreefmap.visualization.final_cloud_index import FinalCloudIndex
+    from deepreefmap.pointcloud.final_cloud_index import FinalCloudIndex
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +238,7 @@ def _generate_scene_file_async(run_dir: Path, result: LoadedRun) -> None:
     def _worker() -> None:
         try:
             from deepreefmap.io.scene_file import save_scene_file
-            from deepreefmap.visualization.final_cloud_index import build_final_cloud_index
+            from deepreefmap.pointcloud.final_cloud_index import build_final_cloud_index
 
             frame_order = [int(f.frame_index) for f in result.frame_batch.frames]
             class_colors = result.classes_config.id_to_color

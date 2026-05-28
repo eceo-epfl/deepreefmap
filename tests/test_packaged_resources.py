@@ -40,7 +40,7 @@ def test_bundled_fonts_are_present() -> None:
     # fonts (the macOS/Linux size mismatch this was meant to fix).
     from importlib import resources
 
-    from deepreefmap.launcher.fonts import _FONT_FILES
+    from deepreefmap.gui.fonts import _FONT_FILES
 
     fonts_dir = resources.files("deepreefmap.resources").joinpath("fonts")
     for name in _FONT_FILES:

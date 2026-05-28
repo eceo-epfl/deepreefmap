@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from deepreefmap.launcher._window_protocol import MixinBase
+from deepreefmap.gui._window_protocol import MixinBase
 
 import logging
 import threading
@@ -33,16 +33,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from deepreefmap.launcher.log_view import LogView, install_qt_log_handler
-from deepreefmap.launcher.qt_app_past_runs import _PastRunCardDelegate
-from deepreefmap.launcher.qt_app_progress import (
+from deepreefmap.gui.log_view import LogView, install_qt_log_handler
+from deepreefmap.gui.past_runs import _PastRunCardDelegate
+from deepreefmap.gui.progress import (
     _LOAD_PHASES,
     _RECON_PHASES,
     ProgressModel,
 )
-from deepreefmap.launcher.qt_app_version import _current_version
-from deepreefmap.launcher.theme import WARN_BG, WARN_BORDER, WARN_TEXT
-from deepreefmap.visualization.sunburst_widget import SunburstWidget
+from deepreefmap.gui.version import _current_version
+from deepreefmap.gui.theme import WARN_BG, WARN_BORDER, WARN_TEXT
+from deepreefmap.gui.sunburst_widget import SunburstWidget
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +178,7 @@ class FormPanelMixin(MixinBase):
 
         # "+" icon button on the far left of the top bar starts a fresh
         # reconstruction (clears the viewer + resets the past-run selection).
-        from deepreefmap.launcher.qt_icons import plus_icon
+        from deepreefmap.gui.icons import plus_icon
 
         self._new_run_btn = QPushButton()
         self._new_run_btn.setIcon(plus_icon(20))
@@ -326,7 +326,7 @@ class FormPanelMixin(MixinBase):
         label_row.setContentsMargins(0, 0, 0, 0)
         label_row.setSpacing(4)
         label_row.addWidget(QLabel("Output root"))
-        from deepreefmap.launcher.qt_icons import arrow_right_icon
+        from deepreefmap.gui.icons import arrow_right_icon
 
         root_open_btn = QPushButton()
         root_open_btn.setIcon(arrow_right_icon(18))
@@ -1195,7 +1195,7 @@ class FormPanelMixin(MixinBase):
         if self._skip_seg_check.isChecked():
             self._gated_warning.setVisible(False)
             return
-        from deepreefmap.launcher.model_manager import DPT_BACKBONE_MAP
+        from deepreefmap.gui.model_manager import DPT_BACKBONE_MAP
 
         backbone_name = DPT_BACKBONE_MAP.get(seg_name)
         if not backbone_name:

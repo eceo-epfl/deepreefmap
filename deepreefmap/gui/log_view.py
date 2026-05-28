@@ -78,7 +78,7 @@ class LogView(QWidget):
         self._text = QPlainTextEdit()
         self._text.setReadOnly(True)
         self._text.setMaximumBlockCount(_MAX_LINES)
-        from deepreefmap.launcher.fonts import MONO_FONT_FAMILY
+        from deepreefmap.gui.fonts import MONO_FONT_FAMILY
 
         font = QFont(MONO_FONT_FAMILY)
         font.setStyleHint(QFont.StyleHint.TypeWriter)

@@ -21,7 +21,7 @@ import numpy as np
 if TYPE_CHECKING:
     from deepreefmap.config.classes import ClassConfig
     from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult
-    from deepreefmap.visualization.final_cloud_index import FinalCloudIndex
+    from deepreefmap.pointcloud.final_cloud_index import FinalCloudIndex
 
 logger = logging.getLogger(__name__)
 
@@ -439,7 +439,7 @@ def _load_classes(root) -> "ClassConfig":
 
 
 def _load_fci(root) -> "FinalCloudIndex":
-    from deepreefmap.visualization.final_cloud_index import FinalCloudIndex
+    from deepreefmap.pointcloud.final_cloud_index import FinalCloudIndex
 
     g = root["final_cloud_index"]
     frame_order = tuple(int(x) for x in g["frame_order"][:])

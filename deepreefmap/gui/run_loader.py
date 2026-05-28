@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from deepreefmap.launcher._window_protocol import MixinBase
+from deepreefmap.gui._window_protocol import MixinBase
 
 import logging
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from deepreefmap.launcher.log_view import close_run_log_file, open_run_log_file
-from deepreefmap.launcher.qt_app_progress import _LOAD_STAGE_TO_PHASE, _STAGE_MESSAGE_TO_PHASE
+from deepreefmap.gui.log_view import close_run_log_file, open_run_log_file
+from deepreefmap.gui.progress import _LOAD_STAGE_TO_PHASE, _STAGE_MESSAGE_TO_PHASE
 
 if TYPE_CHECKING:
     from deepreefmap.pipeline.run_loader import LoadedRun
@@ -361,7 +361,7 @@ class RunLoadingMixin(MixinBase):
             and result.final_cloud_index is not None
             and (ortho_cloud is None or len(ortho_cloud) == 0)
         ):
-            from deepreefmap.visualization.final_cloud_index import reconstruct_cloud_from_index
+            from deepreefmap.pointcloud.final_cloud_index import reconstruct_cloud_from_index
             ortho_cloud = reconstruct_cloud_from_index(result.final_cloud_index)
             ortho_classes = result.classes_config
 

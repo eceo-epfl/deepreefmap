@@ -1,7 +1,7 @@
 import pytest
 
-from deepreefmap.launcher.model_families import synthesize_model_info
-from deepreefmap.launcher.model_manager import (
+from deepreefmap.gui.model_families import synthesize_model_info
+from deepreefmap.gui.model_manager import (
     ALL_MODELS,
     ModelInfo,
     model_available,

@@ -32,8 +32,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from deepreefmap.visualization.final_cloud_index import FinalCloudIndex, build_final_cloud_index
-from deepreefmap.visualization.live_frame_cloud import (
+from deepreefmap.pointcloud.final_cloud_index import FinalCloudIndex, build_final_cloud_index
+from deepreefmap.gui.live_frame_cloud import (
     LiveFrameCloudCache,
     build_enabled_label_lut,
     mask_points_by_enabled_lut,

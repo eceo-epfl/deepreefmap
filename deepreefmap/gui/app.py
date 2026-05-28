@@ -19,24 +19,24 @@ from PySide6.QtWidgets import (
 )
 
 from deepreefmap.config.classes import ClassConfig
-from deepreefmap.launcher.theme import BANNER_BG, BANNER_BORDER, BANNER_TEXT
-from deepreefmap.launcher.qt_app_batch import (  # noqa: F401  re-exported for tests
+from deepreefmap.gui.theme import BANNER_BG, BANNER_BORDER, BANNER_TEXT
+from deepreefmap.gui.batch import (  # noqa: F401  re-exported for tests
     BatchMixin,
     _load_batch_csv,
     _parse_timestamp_range,
 )
-from deepreefmap.launcher.qt_app_form_panel import FormPanelMixin
-from deepreefmap.launcher.qt_app_models import ModelManagementMixin
-from deepreefmap.launcher.qt_app_past_runs import (
+from deepreefmap.gui.form_panel import FormPanelMixin
+from deepreefmap.gui.models import ModelManagementMixin
+from deepreefmap.gui.past_runs import (
     PastRunsMixin,
 )
-from deepreefmap.launcher.qt_app_results import ResultsMixin
-from deepreefmap.launcher.qt_app_run_loader import RunLoadingMixin
-from deepreefmap.launcher.qt_app_viewer_ctl import ViewerControlsMixin
-from deepreefmap.launcher.qt_app_progress import (
+from deepreefmap.gui.results import ResultsMixin
+from deepreefmap.gui.run_loader import RunLoadingMixin
+from deepreefmap.gui.viewer_controls import ViewerControlsMixin
+from deepreefmap.gui.progress import (
     ProgressBarsMixin,
 )
-from deepreefmap.launcher.qt_app_version import (  # noqa: F401  re-exported for tests
+from deepreefmap.gui.version import (  # noqa: F401  re-exported for tests
     VersionCheckMixin,
     _current_version,
     _fetch_release_versions,
@@ -104,7 +104,7 @@ class DeepReefMapWindow(
         # adopts a long path string), and the window gets stuck at that width.
         self.setMinimumSize(720, 480)
 
-        from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
+        from deepreefmap.gui.viewer import QtPointCloudViewer
 
         self._viewer = QtPointCloudViewer(
             class_colors=classes_config.id_to_color,
@@ -195,8 +195,8 @@ def launch(classes_path: Path | None = None, view_run_dir: Path | None = None) -
     QApplication.setApplicationName("DeepReefMap")
     QApplication.setApplicationDisplayName("DeepReefMap")
     qt_app = cast(QApplication, QApplication.instance() or QApplication(sys.argv))
-    from deepreefmap.launcher.fonts import apply_app_fonts
-    from deepreefmap.launcher.theme import apply_theme
+    from deepreefmap.gui.fonts import apply_app_fonts
+    from deepreefmap.gui.theme import apply_theme
 
     apply_app_fonts(qt_app)
     apply_theme(qt_app)

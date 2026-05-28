@@ -19,8 +19,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from deepreefmap.launcher.theme import ERROR
-from deepreefmap.launcher.binary_swap import (
+from deepreefmap.gui.theme import ERROR
+from deepreefmap.gui.binary_swap import (
     BinarySwapError,
     download_to,
     find_asset_url,

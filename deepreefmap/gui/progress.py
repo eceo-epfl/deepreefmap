@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from deepreefmap.launcher._window_protocol import MixinBase
+from deepreefmap.gui._window_protocol import MixinBase
 
 from PySide6.QtWidgets import QApplication
 

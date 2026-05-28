@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from deepreefmap.launcher._window_protocol import MixinBase
+from deepreefmap.gui._window_protocol import MixinBase
 
 import json
 import logging
@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtGui import QColor
 
-from deepreefmap.launcher.theme import UPDATE
+from deepreefmap.gui.theme import UPDATE
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +200,7 @@ class VersionCheckMixin(MixinBase):
         self._update_btn.setVisible(True)
 
     def _on_update(self) -> None:
-        from deepreefmap.launcher.update_dialog import UpdateProgressDialog
+        from deepreefmap.gui.update_dialog import UpdateProgressDialog
 
         pyapp_bin = _pyapp_binary_path()
         if pyapp_bin is None:
