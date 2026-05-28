@@ -318,7 +318,7 @@ class LegendOverlay(QWidget):
             LegendOverlay QToolButton {
                 color: #e8e8e8;
                 background-color: rgba(255, 255, 255, 20);
-                border: 1px solid rgba(255, 255, 255, 50);
+                border: 1px solid rgba(255, 255, 255, 60);
                 border-radius: 3px;
                 font-size: 10px;
                 padding: 0px;

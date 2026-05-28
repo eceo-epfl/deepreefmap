@@ -259,6 +259,9 @@ class ViewerControlsMixin:
         ov_conf = getattr(self, "_ov_conf_container", None)
         if ov_conf is not None:
             ov_conf.setVisible(visible)
+        ov_toggle = getattr(self, "_ov_toggle_container", None)
+        if ov_toggle is not None:
+            ov_toggle.setVisible(visible)
 
     def _build_legend(self) -> None:
         cc = self._classes_config
@@ -567,6 +570,12 @@ class ViewerControlsMixin:
                 border: 1px solid #4aa3ff;
                 color: #ffffff;
             }
+            QWidget#pick_mode_overlay QToolButton#ov_secondary {
+                font-size: 10px;
+                font-weight: normal;
+                padding: 3px 8px;
+                border-radius: 3px;
+            }
             QWidget#pick_mode_overlay QLabel#pick_mode_shortcut {
                 color: #aaa;
                 font-size: 10px;
@@ -663,14 +672,14 @@ class ViewerControlsMixin:
         controls_container.setObjectName("overlay_controls")
         controls_container.setVisible(False)
         ctrl_layout = QVBoxLayout(controls_container)
-        ctrl_layout.setContentsMargins(0, 2, 0, 0)
-        ctrl_layout.setSpacing(3)
+        ctrl_layout.setContentsMargins(0, 4, 0, 0)
+        ctrl_layout.setSpacing(2)
 
-        # Point size row
-        _lbl_w = 32
+        # --- Slider group ---
+        _lbl_w = 90
         ps_row = QHBoxLayout()
         ps_row.setSpacing(4)
-        ps_lbl = QLabel("Pt", overlay)
+        ps_lbl = QLabel("Point size", overlay)
         ps_lbl.setFixedWidth(_lbl_w)
         ps_lbl.setStyleSheet("color: #aaa; font-size: 10px;")
         ps_row.addWidget(ps_lbl)
@@ -680,28 +689,14 @@ class ViewerControlsMixin:
         ov_pt_slider.setFixedHeight(16)
         ps_row.addWidget(ov_pt_slider, 1)
         ov_pt_readout = QLabel("2.0", overlay)
-        ov_pt_readout.setStyleSheet("color: #ccc; font-size: 10px; min-width: 24px;")
+        ov_pt_readout.setFixedWidth(30)
+        ov_pt_readout.setStyleSheet("color: #ccc; font-size: 10px;")
         ps_row.addWidget(ov_pt_readout)
-
-        ov_sem_btn = QToolButton(overlay)
-        ov_sem_btn.setText("Class colours")
-        ov_sem_btn.setCheckable(True)
-        ov_sem_btn.setChecked(True)
-        ov_sem_btn.setToolTip("On: colour by semantic class. Off: original camera RGB.")
-        ps_row.addWidget(ov_sem_btn)
-
-        ov_acc_btn = QToolButton(overlay)
-        ov_acc_btn.setText("All frames")
-        ov_acc_btn.setCheckable(True)
-        ov_acc_btn.setChecked(True)
-        ov_acc_btn.setToolTip("On: show all frames up to current. Off: current frame only.")
-        ps_row.addWidget(ov_acc_btn)
         ctrl_layout.addLayout(ps_row)
 
-        # Confidence row
         conf_row = QHBoxLayout()
         conf_row.setSpacing(4)
-        conf_lbl = QLabel("Conf", overlay)
+        conf_lbl = QLabel("Min confidence", overlay)
         conf_lbl.setFixedWidth(_lbl_w)
         conf_lbl.setStyleSheet("color: #aaa; font-size: 10px;")
         conf_row.addWidget(conf_lbl)
@@ -711,14 +706,40 @@ class ViewerControlsMixin:
         ov_conf_slider.setFixedHeight(16)
         conf_row.addWidget(ov_conf_slider, 1)
         ov_conf_readout = QLabel("0%", overlay)
-        ov_conf_readout.setStyleSheet("color: #ccc; font-size: 10px; min-width: 24px;")
+        ov_conf_readout.setFixedWidth(30)
+        ov_conf_readout.setStyleSheet("color: #ccc; font-size: 10px;")
         conf_row.addWidget(ov_conf_readout)
-        conf_row.addStretch()
         ov_conf_container = QWidget(overlay)
+        conf_row.setContentsMargins(0, 0, 0, 0)
         ov_conf_container.setLayout(conf_row)
         ctrl_layout.addWidget(ov_conf_container)
 
-        # Playback row
+        # --- Display toggle group ---
+        ctrl_layout.addSpacing(4)
+
+        toggle_row = QHBoxLayout()
+        toggle_row.setSpacing(4)
+        ov_sem_btn = QToolButton(overlay)
+        ov_sem_btn.setObjectName("ov_secondary")
+        ov_sem_btn.setText("Class colours")
+        ov_sem_btn.setCheckable(True)
+        ov_sem_btn.setChecked(True)
+        ov_sem_btn.setToolTip("On: colour by semantic class. Off: original camera RGB.")
+        toggle_row.addWidget(ov_sem_btn, 1)
+        ov_acc_btn = QToolButton(overlay)
+        ov_acc_btn.setObjectName("ov_secondary")
+        ov_acc_btn.setText("All frames")
+        ov_acc_btn.setCheckable(True)
+        ov_acc_btn.setChecked(True)
+        ov_acc_btn.setToolTip("On: show all frames up to current. Off: current frame only.")
+        toggle_row.addWidget(ov_acc_btn, 1)
+        ov_toggle_container = QWidget(overlay)
+        ov_toggle_container.setLayout(toggle_row)
+        ctrl_layout.addWidget(ov_toggle_container)
+
+        # --- Playback group ---
+        ctrl_layout.addSpacing(4)
+
         play_row = QHBoxLayout()
         play_row.setSpacing(4)
         ov_play_btn = QToolButton(overlay)
@@ -733,21 +754,21 @@ class ViewerControlsMixin:
         ov_fps_spin.setRange(1, 60)
         ov_fps_spin.setValue(8)
         ov_fps_spin.setFixedWidth(52)
+        ov_fps_spin.setFixedHeight(22)
         play_row.addWidget(ov_fps_spin)
-
         ov_follow_btn = QToolButton(overlay)
+        ov_follow_btn.setObjectName("ov_secondary")
         ov_follow_btn.setText("Follow")
         ov_follow_btn.setCheckable(True)
         ov_follow_btn.setToolTip("Auto-snap camera to current frame pose")
-        play_row.addWidget(ov_follow_btn)
-
+        play_row.addWidget(ov_follow_btn, 1)
         ov_frustum_btn = QToolButton(overlay)
+        ov_frustum_btn.setObjectName("ov_secondary")
         ov_frustum_btn.setText("Frustums")
         ov_frustum_btn.setCheckable(True)
         ov_frustum_btn.setChecked(True)
         ov_frustum_btn.setToolTip("Show / hide camera frustum wireframes")
-        play_row.addWidget(ov_frustum_btn)
-        play_row.addStretch()
+        play_row.addWidget(ov_frustum_btn, 1)
         ctrl_layout.addLayout(play_row)
 
         layout.addWidget(controls_container)
@@ -762,6 +783,7 @@ class ViewerControlsMixin:
         self._ov_conf_slider = ov_conf_slider
         self._ov_conf_readout = ov_conf_readout
         self._ov_conf_container = ov_conf_container
+        self._ov_toggle_container = ov_toggle_container
         self._ov_play_btn = ov_play_btn
         self._ov_fps_spin = ov_fps_spin
         self._ov_follow_btn = ov_follow_btn
