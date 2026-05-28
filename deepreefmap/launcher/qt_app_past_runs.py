@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from deepreefmap.launcher._window_protocol import MixinBase
+
 import json
 import logging
 import os
@@ -227,7 +229,7 @@ class _PastRunCardDelegate(QStyledItemDelegate):
         painter.restore()
 
 
-class PastRunsMixin:
+class PastRunsMixin(MixinBase):
     """DeepReefMapWindow methods for the past-runs dropdown, banner, and rename UI."""
 
     def _refresh_past_runs_combo(self) -> None:

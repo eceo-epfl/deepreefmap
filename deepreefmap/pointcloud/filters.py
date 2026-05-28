@@ -38,7 +38,7 @@ def _pack_voxel_key(ix: np.ndarray, iy: np.ndarray, iz: np.ndarray) -> np.ndarra
 
 
 class _GrowableArray2D:
-    def __init__(self, cols: int, dtype: np.dtype) -> None:
+    def __init__(self, cols: int, dtype: np.typing.DTypeLike) -> None:
         self.cols = int(cols)
         self.dtype = dtype
         self._data = np.zeros((512, self.cols), dtype=dtype)
@@ -69,7 +69,7 @@ class _GrowableArray2D:
 
 
 class _GrowableArray1D:
-    def __init__(self, dtype: np.dtype) -> None:
+    def __init__(self, dtype: np.typing.DTypeLike) -> None:
         self.dtype = dtype
         self._data = np.zeros(512, dtype=dtype)
         self.size = 0

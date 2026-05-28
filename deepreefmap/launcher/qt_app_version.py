@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from deepreefmap.launcher._window_protocol import MixinBase
+
 import json
 import logging
 import os
@@ -138,7 +140,7 @@ def _current_version() -> str:
         return "0.0.0"
 
 
-class VersionCheckMixin:
+class VersionCheckMixin(MixinBase):
     """DeepReefMapWindow methods for checking GitHub releases and installing updates."""
 
     def _check_for_update(self) -> None:

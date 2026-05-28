@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from deepreefmap.launcher._window_protocol import MixinBase
+
 import logging
 import threading
 from pathlib import Path
@@ -109,7 +111,7 @@ def _load_batch_csv(path: Path) -> list[_BatchJob]:
     return jobs
 
 
-class BatchMixin:
+class BatchMixin(MixinBase):
     """DeepReefMapWindow methods that drive CSV-driven batch reconstruction."""
 
     def _on_batch_clicked(self) -> None:

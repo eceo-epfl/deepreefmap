@@ -343,7 +343,7 @@ name = "cuda-bindings"
 version = "13.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder", marker = "extra == 'extra-11-deepreefmap-cuda' or extra != 'extra-11-deepreefmap-rocm'" },
+    { name = "cuda-pathfinder", marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b6/f7/a4a9491d73ea5622da0e66d3a2bd581b2b6e7456a3faa871835f47155616/cuda_bindings-13.3.0-cp310-cp310-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:326b31d88314068f0ead48141222d7ada094f4013723dd924af9db10150fa472", size = 6071925, upload-time = "2026-05-27T03:58:55.336Z" },
@@ -375,34 +375,34 @@ wheels = [
 
 [package.optional-dependencies]
 cudart = [
-    { name = "nvidia-cuda-runtime", marker = "(sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "nvidia-cuda-runtime", marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version >= '3.11' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 cufft = [
-    { name = "nvidia-cufft", marker = "(sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "nvidia-cufft", marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version >= '3.11' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 cufile = [
     { name = "nvidia-cufile", marker = "(sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti", marker = "(sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "nvidia-cuda-cupti", marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version >= '3.11' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 curand = [
-    { name = "nvidia-curand", marker = "(sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "nvidia-curand", marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version >= '3.11' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 cusolver = [
-    { name = "nvidia-cusolver", marker = "(sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "nvidia-cusolver", marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version >= '3.11' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse", marker = "(sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "nvidia-cusparse", marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version >= '3.11' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "(sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "nvidia-nvjitlink", marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version >= '3.11' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "(sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "nvidia-cuda-nvrtc", marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version >= '3.11' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx", marker = "(sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "nvidia-nvtx", marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version >= '3.11' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'linux' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform == 'linux' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 
 [[package]]
@@ -491,6 +491,8 @@ dev = [
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "types-pyyaml" },
+    { name = "types-tqdm" },
 ]
 gopro = [
     { name = "py-gpmf-parser", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform != 'linux' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
@@ -547,6 +549,8 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.67.3" },
     { name = "transformers", specifier = ">=5.8.0" },
     { name = "typer", specifier = ">=0.25.1" },
+    { name = "types-pyyaml", marker = "extra == 'dev'" },
+    { name = "types-tqdm", marker = "extra == 'dev'" },
     { name = "wandb", marker = "extra == 'train'", specifier = ">=0.20.0" },
     { name = "zarr", specifier = ">=2.18,<3" },
 ]
@@ -1427,7 +1431,7 @@ name = "nvidia-cublas"
 version = "13.1.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cuda-nvrtc", marker = "extra == 'extra-11-deepreefmap-cuda' or extra != 'extra-11-deepreefmap-rocm'" },
+    { name = "nvidia-cuda-nvrtc", marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/a1/0bd24ee8c8d03adac032fd2909426a00c88f8c57961b1277ded97f91119f/nvidia_cublas-13.1.1.3-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:b7a210458267ac818974c53038fbec2e969d5c99f305ab15c72522fa9f001dd5", size = 542848918, upload-time = "2026-04-08T18:46:22.985Z" },
@@ -1470,7 +1474,7 @@ name = "nvidia-cudnn-cu13"
 version = "9.20.0.48"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", marker = "extra == 'extra-11-deepreefmap-cuda' or extra != 'extra-11-deepreefmap-rocm'" },
+    { name = "nvidia-cublas", marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/56/c5/83384d846b2fd17c44bd499b36c75a45ed4f095fbbb2252294e89cea5c5c/nvidia_cudnn_cu13-9.20.0.48-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:e31454ae00094b0c55319d9d15b6fa2fc50a9e1c0f5c8c80fb75258234e731e1", size = 444574296, upload-time = "2026-03-09T19:28:27.751Z" },
@@ -1483,7 +1487,7 @@ name = "nvidia-cufft"
 version = "12.0.0.61"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink", marker = "extra == 'extra-11-deepreefmap-cuda' or extra != 'extra-11-deepreefmap-rocm'" },
+    { name = "nvidia-nvjitlink", marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8b/ae/f417a75c0259e85c1d2f83ca4e960289a5f814ed0cea74d18c353d3e989d/nvidia_cufft-12.0.0.61-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:2708c852ef8cd89d1d2068bdbece0aa188813a0c934db3779b9b1faa8442e5f5", size = 214053554, upload-time = "2025-09-04T08:31:38.196Z" },
@@ -1515,9 +1519,9 @@ name = "nvidia-cusolver"
 version = "12.0.4.66"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", marker = "extra == 'extra-11-deepreefmap-cuda' or extra != 'extra-11-deepreefmap-rocm'" },
-    { name = "nvidia-cusparse", marker = "extra == 'extra-11-deepreefmap-cuda' or extra != 'extra-11-deepreefmap-rocm'" },
-    { name = "nvidia-nvjitlink", marker = "extra == 'extra-11-deepreefmap-cuda' or extra != 'extra-11-deepreefmap-rocm'" },
+    { name = "nvidia-cublas", marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "nvidia-cusparse", marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "nvidia-nvjitlink", marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/c3/b30c9e935fc01e3da443ec0116ed1b2a009bb867f5324d3f2d7e533e776b/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:02c2457eaa9e39de20f880f4bd8820e6a1cfb9f9a34f820eb12a155aa5bc92d2", size = 223467760, upload-time = "2025-09-04T08:33:04.222Z" },
@@ -1530,7 +1534,7 @@ name = "nvidia-cusparse"
 version = "12.6.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink", marker = "extra == 'extra-11-deepreefmap-cuda' or extra != 'extra-11-deepreefmap-rocm'" },
+    { name = "nvidia-nvjitlink", marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-11-deepreefmap-rocm') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-11-deepreefmap-cuda') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-11-deepreefmap-rocm') or (sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/94/5c26f33738ae35276672f12615a64bd008ed5be6d1ebcb23579285d960a9/nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:80bcc4662f23f1054ee334a15c72b8940402975e0eab63178fc7e670aa59472c", size = 162155568, upload-time = "2025-09-04T08:33:42.864Z" },
@@ -1869,7 +1873,7 @@ version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
-    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and sys_platform != 'emscripten' and sys_platform != 'win32') or (python_full_version < '3.11' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'emscripten' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform == 'win32' and extra == 'extra-11-deepreefmap-cuda' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/0b/2a00e75a281c0de0839a1e210eebee566cc62c35d59264c8fe00b6c75df3/py_gpmf_parser-0.1.1-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:993836967dc540f8419e69b94e23599944f71f70ffdc0b2c8ee1db037bd4cfbd", size = 2224375, upload-time = "2025-08-16T13:46:48.987Z" },
@@ -2972,6 +2976,39 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e4/51/9aed62104cea109b820bbd6c14245af756112017d309da813ef107d42e7e/typer-0.25.1.tar.gz", hash = "sha256:9616eb8853a09ffeabab1698952f33c6f29ffdbceb4eaeecf571880e8d7664cc", size = 122276, upload-time = "2026-04-30T19:32:16.964Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3f/f9/2b3ff4e56e5fa7debfaf9eb135d0da96f3e9a1d5b27222223c7296336e5f/typer-0.25.1-py3-none-any.whl", hash = "sha256:75caa44ed46a03fb2dab8808753ffacdbfea88495e74c85a28c5eefcf5f39c89", size = 58409, upload-time = "2026-04-30T19:32:18.271Z" },
+]
+
+[[package]]
+name = "types-pyyaml"
+version = "6.0.12.20260518"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b8/83/4a1afc3fbfcf5b8d46fc390cd95ed6b0dc9010a265f4e9f46314efffa37a/types_pyyaml-6.0.12.20260518.tar.gz", hash = "sha256:d917f83fb38462550338c1297faedd860b3ec83912b96b1e3d73255f7473e466", size = 17850, upload-time = "2026-05-18T06:01:58.675Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/06/a2/c01db32be2ae7d6a1689972f3c492b149ee4e164b12fdfd9f64b50888215/types_pyyaml-6.0.12.20260518-py3-none-any.whl", hash = "sha256:d2150f75a231c9fe9c7463bd29487d93e60bac90400287351384bc2284eba7cd", size = 20312, upload-time = "2026-05-18T06:01:57.368Z" },
+]
+
+[[package]]
+name = "types-requests"
+version = "2.33.0.20260518"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e0/01/c5a19253fe1ac159159ddf9a3a07cec8bb5e486ec4d9002ad2821da0e5d2/types_requests-2.33.0.20260518.tar.gz", hash = "sha256:df7bd3bfe0ca8402dfb841e7d9be714bb5578203283d66d7dc4ef69343449a5e", size = 24752, upload-time = "2026-05-18T06:07:37.966Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1c/bc/b139710a3b6018f7fb2b9508b35c8af564e61bf2bf4fa619d088f3e16f85/types_requests-2.33.0.20260518-py3-none-any.whl", hash = "sha256:626d697d1adaaff76e2044dc8c5c051d8f21abc157bdfe204a75558076fe0bf0", size = 21391, upload-time = "2026-05-18T06:07:37.044Z" },
+]
+
+[[package]]
+name = "types-tqdm"
+version = "4.67.3.20260518"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "types-requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/72/8c/8216f9030027dc96c776b0307cb06da9f3c3756ef00e98f1eb332e04a33c/types_tqdm-4.67.3.20260518.tar.gz", hash = "sha256:1f0cf61de56a76a454fbe2c6cc48d05e483470a38f8a9071893b923e7be47190", size = 18208, upload-time = "2026-05-18T06:08:04.417Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/59/dbe84f71186645b821cf63f71fc746e1455fbce074594a86f486bee8dc89/types_tqdm-4.67.3.20260518-py3-none-any.whl", hash = "sha256:4969f5b97257c6d082c163d7a0715fffe7a83cb6863e108eac45c3fb82305a68", size = 24586, upload-time = "2026-05-18T06:08:03.568Z" },
 ]
 
 [[package]]

@@ -1,18 +1,28 @@
 from __future__ import annotations
 
+from deepreefmap.launcher._window_protocol import MixinBase
+
 import json
 import logging
 import threading
 from pathlib import Path
 
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QFileDialog, QProgressDialog
 
+if TYPE_CHECKING:
+    from deepreefmap.config.classes import ClassConfig
+    from deepreefmap.pipeline.artifacts import SemanticPointCloud
+    from deepreefmap.pointcloud.grid_ortho import OrthoGrid
+    from deepreefmap.postproc.ortho_outputs import TransectCropParams
+
 logger = logging.getLogger(__name__)
 
 
-class ResultsMixin:
+class ResultsMixin(MixinBase):
     """DeepReefMapWindow methods for the results panel: ortho preview, crop, exports, cover."""
 
     def _show_results(self, output_dir: str) -> None:
@@ -55,9 +65,9 @@ class ResultsMixin:
 
     def _set_ortho_sources(
         self,
-        cloud: object | None,
-        base_grid: object | None,
-        classes_config: object | None,
+        cloud: SemanticPointCloud | None,
+        base_grid: OrthoGrid | None,
+        classes_config: ClassConfig | None,
     ) -> None:
         self._ortho_cloud = cloud
         self._base_ortho_grid = base_grid
@@ -92,11 +102,11 @@ class ResultsMixin:
         img = QImage(arr.tobytes(), w, h, w * 3, QImage.Format.Format_RGB888).copy()
         pix = QPixmap.fromImage(img)
         if pix.width() > max_width:
-            pix = pix.scaledToWidth(max_width, Qt.SmoothTransformation)
+            pix = pix.scaledToWidth(max_width, Qt.TransformationMode.SmoothTransformation)
         return pix
 
     @staticmethod
-    def _labels_to_rgb(labels: object, classes_config: object | None):
+    def _labels_to_rgb(labels: object, classes_config: ClassConfig | None):
         import numpy as np
 
         labels_arr = np.asarray(labels, dtype=np.int32)
@@ -133,8 +143,8 @@ class ResultsMixin:
             self._viewer.legend_overlay.reposition()
         self._apply_viewer_crop_filter(crop)
 
-    def _apply_viewer_crop_filter(self, crop: object | None) -> None:
-        if self._base_ortho_grid is None:
+    def _apply_viewer_crop_filter(self, crop: TransectCropParams | None) -> None:
+        if self._base_ortho_grid is None or self._ortho_classes_config is None:
             return
         if not hasattr(self._viewer, "set_point_filter"):
             return
@@ -351,12 +361,11 @@ class ResultsMixin:
             else:
                 self._status_label.setText(f"QC render failed: {error}")
 
-        self._sig_qc_render_progress.connect(
-            lambda cur, total: (
-                progress.setMaximum(max(total, 1)),
-                progress.setValue(cur),
-            )
-        )
+        def _on_qc_progress(cur: int, total: int) -> None:
+            progress.setMaximum(max(total, 1))
+            progress.setValue(cur)
+
+        self._sig_qc_render_progress.connect(_on_qc_progress)
         self._sig_qc_render_done.connect(_on_done)
 
         def _worker() -> None:

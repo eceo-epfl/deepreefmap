@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable, Protocol
 
 import cv2
 import imageio.v3 as iio
@@ -32,7 +32,31 @@ from deepreefmap.segmentation.registry import create_segmentation_model
 from deepreefmap.telemetry.gopro import extract_gravity_vectors_for_video_selection
 from deepreefmap.pointcloud.unprojection import depth_to_points
 
+if TYPE_CHECKING:
+    import torch
+
 logger = logging.getLogger(__name__)
+
+
+class RunViewer(Protocol):
+    """Stage-by-stage viewer contract the orchestrator drives during a run.
+
+    Implemented structurally by the Qt viewer (`visualization/qt_viewer.py`).
+    """
+
+    def start_run(self, run_label: str, output_dir: str) -> None: ...
+    def set_stage(self, stage: str, status: str, message: str | None = None) -> None: ...
+    def update_progress(
+        self,
+        stage: str,
+        current: int,
+        total: int | None = None,
+        message: str | None = None,
+        frame_index: int | None = None,
+    ) -> None: ...
+    def set_data(self, **kwargs: object) -> None: ...
+    def mark_outputs_ready(self, output_dir: str, output_files: list[str]) -> None: ...
+    def fail_run(self, stage: str, error_message: str) -> None: ...
 
 
 class ReconstructionCancelled(Exception):
@@ -73,7 +97,7 @@ def run_reconstruction(
     processing_height: int | None = None,
     skip_segmentation: bool = False,
     refine_intrinsics_from_mapper: bool = False,
-    viewer: object | None = None,
+    viewer: RunViewer | None = None,
     run_name: str | None = None,
     cancel_event: threading.Event | None = None,
     pause_event: threading.Event | None = None,
@@ -954,7 +978,7 @@ def _estimate_selected_frame_count(
     return total
 
 
-def _release_segmentation_gpu_memory(segmentation: object | None, device: object | None = None) -> None:
+def _release_segmentation_gpu_memory(segmentation: object | None, device: "torch.device | None" = None) -> None:
     """Best-effort release of segmentation model GPU allocations before mapping."""
     if segmentation is None:
         return

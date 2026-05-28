@@ -129,7 +129,9 @@ class UpdateProgressDialog(QDialog):
         except Exception:
             logger.exception("Failed to relaunch %s", self._binary_path)
         self.accept()
-        QApplication.instance().quit()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
     def _worker_main(self) -> None:
         if os.environ.get("DEEPREEFMAP_MOCK_PYAPP"):

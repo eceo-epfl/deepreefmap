@@ -35,7 +35,7 @@ class PickCard(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setCursor(Qt.SizeAllCursor)
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
         self._drag_offset: QPoint | None = None
         self.setStyleSheet(
             """
@@ -84,7 +84,7 @@ class PickCard(QFrame):
         close_btn.setText("×")
         close_btn.setFixedSize(16, 16)
         close_btn.setToolTip("Close")
-        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.clicked.connect(self.close_requested.emit)
         header.addWidget(self._swatch)
         header.addWidget(self._name_label, 1)
@@ -101,17 +101,17 @@ class PickCard(QFrame):
         actions = QHBoxLayout()
         actions.setSpacing(6)
         self._goto_btn = QPushButton("Go to frame")
-        self._goto_btn.setCursor(Qt.PointingHandCursor)
+        self._goto_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._goto_btn.clicked.connect(self._emit_goto)
         self._goto_btn.setVisible(False)
         self._zoom_btn = QPushButton("Zoom to point")
-        self._zoom_btn.setCursor(Qt.PointingHandCursor)
+        self._zoom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._zoom_btn.clicked.connect(self._emit_zoom)
         self._isolate_btn = QPushButton("Isolate class")
-        self._isolate_btn.setCursor(Qt.PointingHandCursor)
+        self._isolate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._isolate_btn.clicked.connect(self._emit_isolate)
         self._show_all_btn = QPushButton("Show all")
-        self._show_all_btn.setCursor(Qt.PointingHandCursor)
+        self._show_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._show_all_btn.clicked.connect(self.show_all_requested.emit)
         actions.addWidget(self._goto_btn)
         actions.addWidget(self._zoom_btn)
@@ -162,15 +162,15 @@ class PickCard(QFrame):
         # Clicks on child buttons are routed to the button (it consumes them),
         # so this only fires when the user grabs the card background, header,
         # or one of the read-only labels — exactly the "draggable" surface.
-        if ev.button() == Qt.LeftButton:
+        if ev.button() == Qt.MouseButton.LeftButton:
             self._drag_offset = ev.position().toPoint()
-            self.setCursor(Qt.ClosedHandCursor)
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
             ev.accept()
             return
         super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev: QMouseEvent) -> None:
-        if self._drag_offset is None or not (ev.buttons() & Qt.LeftButton):
+        if self._drag_offset is None or not (ev.buttons() & Qt.MouseButton.LeftButton):
             super().mouseMoveEvent(ev)
             return
         parent = self.parentWidget()
@@ -186,9 +186,9 @@ class PickCard(QFrame):
         ev.accept()
 
     def mouseReleaseEvent(self, ev: QMouseEvent) -> None:
-        if ev.button() == Qt.LeftButton and self._drag_offset is not None:
+        if ev.button() == Qt.MouseButton.LeftButton and self._drag_offset is not None:
             self._drag_offset = None
-            self.setCursor(Qt.SizeAllCursor)
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
             ev.accept()
             return
         super().mouseReleaseEvent(ev)

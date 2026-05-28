@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from deepreefmap.pipeline.orchestrator import _build_manifest
 from deepreefmap.pipeline.run_loader import _world_points_fallback_warning
@@ -95,17 +96,14 @@ def test_world_points_warning_for_loger_missing_points() -> None:
     assert "depth-unprojection" in msg
 
 
-def test_no_world_points_warning_for_scsfmlearner() -> None:
-    mr = SimpleNamespace(world_points=None)
-    assert _world_points_fallback_warning({"mapping_backend": "scsfmlearner"}, mr) is None
-
-
-def test_no_world_points_warning_when_points_present() -> None:
-    mr = SimpleNamespace(world_points=np.zeros((1, 2, 2, 3), dtype=np.float32))
-    assert _world_points_fallback_warning({"mapping_backend": "loger_star"}, mr) is None
-
-
-def test_no_world_points_warning_when_geometry_source_is_depth() -> None:
-    mr = SimpleNamespace(world_points=None)
-    manifest = {"mapping_backend": "loger", "geometry_source": "depth_unprojection"}
+@pytest.mark.parametrize(
+    "manifest, world_points",
+    [
+        ({"mapping_backend": "scsfmlearner"}, None),
+        ({"mapping_backend": "loger_star"}, np.zeros((1, 2, 2, 3), dtype=np.float32)),
+        ({"mapping_backend": "loger", "geometry_source": "depth_unprojection"}, None),
+    ],
+)
+def test_no_world_points_warning(manifest, world_points) -> None:
+    mr = SimpleNamespace(world_points=world_points)
     assert _world_points_fallback_warning(manifest, mr) is None

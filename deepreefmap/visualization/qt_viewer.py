@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, SupportsInt, cast
 
 import numpy as np
 
 if TYPE_CHECKING:
     import pyvista as pv
-    from pyvistaqt import QtInteractor
+
+    from deepreefmap.config.classes import ClassConfig
+    from deepreefmap.pipeline.artifacts import (
+        FrameBatch,
+        MappingSequenceResult,
+        SemanticPointCloud,
+    )
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
@@ -374,7 +380,7 @@ class LegendOverlay(QWidget):
         name_cell_layout.addStretch(1)
         self._sort_grid.addWidget(name_cell, 0, 1)
         self._sort_grid.addWidget(
-            self._make_sort_header("size", "Points"), 0, 2, Qt.AlignRight | Qt.AlignVCenter
+            self._make_sort_header("size", "Points"), 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
         # Empty col-3 cell mirroring the row "Only" button column so "Points"
         # lines up over the counts; its width is set from a real button in
@@ -385,10 +391,10 @@ class LegendOverlay(QWidget):
 
         self._scroll = QScrollArea(self)
         self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.NoFrame)
-        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self._inner = QWidget()
         self._inner.setObjectName("legend_inner")
         self._grid = QGridLayout(self._inner)
@@ -426,7 +432,7 @@ class LegendOverlay(QWidget):
         # Fixed height keeps the donut compact and makes the height budgeting in
         # reposition() deterministic, so it can never overlap the rows below.
         widget.setFixedHeight(170)
-        self.layout().insertWidget(1, widget, 0)
+        cast("QVBoxLayout", self.layout()).insertWidget(1, widget, 0)
         self._sunburst = widget
 
     def _make_sort_header(self, key: str, label: str) -> QToolButton:
@@ -478,8 +484,8 @@ class LegendOverlay(QWidget):
 
     def reorder(self, ordered_ids: list[int]) -> None:
         """Re-lay out the existing rows in `ordered_ids` order, no recreation."""
-        for widgets in self._rows.values():
-            for w in widgets:
+        for row_widgets in self._rows.values():
+            for w in row_widgets:
                 self._grid.removeWidget(w)
         row = 0
         for cid in ordered_ids:
@@ -503,6 +509,8 @@ class LegendOverlay(QWidget):
         """
         while grid.count():
             item = grid.takeAt(0)
+            if item is None:
+                continue
             w = item.widget()
             if w is not None:
                 w.setParent(None)
@@ -549,7 +557,7 @@ class LegendOverlay(QWidget):
             cb.toggled.connect(on_toggle)
             count_label = QLabel()
             count_label.setObjectName("legend_count")
-            count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            count_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if class_counts is not None and cid in class_counts:
                 n = int(class_counts[cid])
                 count_label.setText(_format_point_count(n))
@@ -659,15 +667,15 @@ class QtPointCloudViewer(QWidget):
         self._output_dir: Path | None = None
 
         self._rgb_label = QLabel()
-        self._rgb_label.setAlignment(Qt.AlignCenter)
+        self._rgb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._rgb_label.setMinimumHeight(120)
         self._rgb_label.setStyleSheet("background-color: #1a1a1a;")
         self._seg_label = QLabel()
-        self._seg_label.setAlignment(Qt.AlignCenter)
+        self._seg_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._seg_label.setMinimumHeight(120)
         self._seg_label.setStyleSheet("background-color: #1a1a1a;")
         self._depth_label = QLabel()
-        self._depth_label.setAlignment(Qt.AlignCenter)
+        self._depth_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._depth_label.setMinimumHeight(120)
         self._depth_label.setStyleSheet("background-color: #1a1a1a;")
         self._frames_panel = QWidget()
@@ -695,11 +703,11 @@ class QtPointCloudViewer(QWidget):
         slider_label = QLabel("Frame")
         slider_label.setStyleSheet("color: #ccc; font-weight: bold;")
         slider_layout.addWidget(slider_label)
-        self.frame_slider = QSlider(Qt.Horizontal)
+        self.frame_slider = QSlider(Qt.Orientation.Horizontal)
         self.frame_slider.setRange(0, 0)
         self.frame_slider.setValue(0)
         self.frame_slider.setMinimumHeight(34)
-        self.frame_slider.setTickPosition(QSlider.TicksBelow)
+        self.frame_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.frame_slider.setTickInterval(0)
         self.frame_slider.setStyleSheet(
             """
@@ -736,7 +744,7 @@ class QtPointCloudViewer(QWidget):
         self._frame_readout.setStyleSheet(
             'color: #e8e8e8; font-family: "JetBrains Mono"; min-width: 80px;'
         )
-        self._frame_readout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._frame_readout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         slider_layout.addWidget(self._frame_readout)
         # Keep the readout in sync with the slider regardless of who moves it.
         self.frame_slider.valueChanged.connect(self._update_frame_readout)
@@ -745,7 +753,7 @@ class QtPointCloudViewer(QWidget):
         )
         frames_outer.addWidget(slider_row)
 
-        self._main_splitter = QSplitter(Qt.Vertical)
+        self._main_splitter = QSplitter(Qt.Orientation.Vertical)
         self._canvas_container = QWidget()
         self._canvas_layout = QVBoxLayout(self._canvas_container)
         self._canvas_layout.setContentsMargins(0, 0, 0, 0)
@@ -766,18 +774,18 @@ class QtPointCloudViewer(QWidget):
         self.legend_overlay.repaint_requested.connect(self._render_canvas_safe)
         self._canvas_container.installEventFilter(self)
 
-        self._plotter: QtInteractor | None = None
+        self._plotter: Any = None
 
-        self._simple_actor = None
-        self._live_actor = None
+        self._simple_actor: Any = None
+        self._live_actor: Any = None
         self._live_polydata: pv.PolyData | None = None
-        self._class_actors: dict[int, object] = {}
+        self._class_actors: dict[int, Any] = {}
         self._class_polydata: dict[int, pv.PolyData] = {}
-        self._frustum_actors: dict[int, object] = {}
-        self._frustum_batch_actor: object | None = None
-        self._frustum_batch_pd: object | None = None
-        self._frustum_highlight_actor: object | None = None
-        self._frustum_highlight_pd: object | None = None
+        self._frustum_actors: dict[int, Any] = {}
+        self._frustum_batch_actor: Any = None
+        self._frustum_batch_pd: Any = None
+        self._frustum_highlight_actor: Any = None
+        self._frustum_highlight_pd: Any = None
         self._frustum_frame_ids: list[int] = []
         self._frustum_fid_to_idx: dict[int, int] = {}
         self._frustum_all_pts: list[np.ndarray] = []
@@ -785,8 +793,8 @@ class QtPointCloudViewer(QWidget):
 
         self._final_index: FinalCloudIndex | None = None
         self._live_cache: LiveFrameCloudCache | None = None
-        self._frame_batch = None
-        self._mapping_result = None
+        self._frame_batch: FrameBatch | None = None
+        self._mapping_result: MappingSequenceResult | None = None
         self._max_label_id = 0
         # Geometry-only mode: a single static RGB cloud with a frustum/image
         # timeline but no semantic per-class partitioning (no FinalCloudIndex).
@@ -804,8 +812,8 @@ class QtPointCloudViewer(QWidget):
         self._point_filter: Callable[[np.ndarray], np.ndarray] | None = None
 
         self._pick_2d_actors: list[object] = []
-        self._pick_line_sources: list[object] = []
-        self._pick_ring_sources: list[object] = []
+        self._pick_line_sources: list[Any] = []
+        self._pick_ring_sources: list[Any] = []
         # Crosshair ticks stored as (line_source, ox1, oy1, ox2, oy2): pixel
         # offsets from the anchor so update_pick_anchor can reposition them.
         self._pick_tick_sources: list[tuple[Any, float, float, float, float]] = []
@@ -817,7 +825,7 @@ class QtPointCloudViewer(QWidget):
         self._pick_press_pos: tuple[int, int] | None = None
         self._pick_drag_detected: bool = False
 
-        self._frame_panel_cache: dict[int, np.ndarray] = {}
+        self._frame_panel_cache: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
 
         self._sig_start_run.connect(self._on_start_run)
         self._sig_set_stage.connect(self._on_set_stage)
@@ -1148,7 +1156,7 @@ class QtPointCloudViewer(QWidget):
             return
         if enabled:
             try:
-                self._canvas_container.setCursor(Qt.CrossCursor)
+                self._canvas_container.setCursor(Qt.CursorShape.CrossCursor)
             except Exception:
                 pass
             self._pick_mode_enabled = True
@@ -1165,8 +1173,9 @@ class QtPointCloudViewer(QWidget):
         """Left-click in pick mode landed on the background (no point under cursor)."""
         self.point_picked_clear.emit()
         if self._status_callback is not None:
-            self._status_callback("No point under cursor")
-            QTimer.singleShot(1500, lambda: self._status_callback(""))
+            cb = self._status_callback
+            cb("No point under cursor")
+            QTimer.singleShot(1500, lambda: cb(""))
 
     def _process_pick(self, mesh, point_id) -> None:  # type: ignore[no-untyped-def]
         """Commit a deferred pick after confirming it was a click, not a drag."""
@@ -1635,10 +1644,10 @@ class QtPointCloudViewer(QWidget):
 
     def load_scene_data(
         self,
-        frame_batch: object,
-        mapping_result: object,
-        reference_cloud: object,
-        classes_config: object,
+        frame_batch: FrameBatch,
+        mapping_result: MappingSequenceResult,
+        reference_cloud: SemanticPointCloud,
+        classes_config: ClassConfig,
     ) -> None:
         import pyvista as pv
 
@@ -1697,10 +1706,10 @@ class QtPointCloudViewer(QWidget):
 
     def load_scene_data_indexed(
         self,
-        frame_batch: object,
-        mapping_result: object,
+        frame_batch: FrameBatch,
+        mapping_result: MappingSequenceResult,
         final_cloud_index: FinalCloudIndex,
-        classes_config: object,
+        classes_config: ClassConfig,
     ) -> None:
         """Like load_scene_data but accepts a pre-built FinalCloudIndex."""
         import pyvista as pv
@@ -1755,8 +1764,8 @@ class QtPointCloudViewer(QWidget):
 
     def load_geometry_scene(
         self,
-        frame_batch: object,
-        mapping_result: object,
+        frame_batch: FrameBatch,
+        mapping_result: MappingSequenceResult,
         geometry_xyz: np.ndarray,
         geometry_rgb: np.ndarray,
     ) -> None:
@@ -1872,7 +1881,7 @@ class QtPointCloudViewer(QWidget):
             "setup_progress", message=message, current=int(current), total=int(total)
         )
 
-    def _build_frustums(self, frame_batch: object, mapping_result: object) -> None:
+    def _build_frustums(self, frame_batch: FrameBatch, mapping_result: MappingSequenceResult) -> None:
         if self._plotter is None:
             return
         self._emit_setup("Building camera frustums", 0, 1)
@@ -2157,6 +2166,8 @@ class QtPointCloudViewer(QWidget):
         point_size: float,
     ) -> None:
         try:
+            if self._live_cache is None:
+                raise RuntimeError("live cache not initialised")
             xyz_u, rgb_u, lab_u, conf_u = self._live_cache.get_unmasked(t)
         except Exception:
             xyz_u = _EMPTY_XYZ
@@ -2290,7 +2301,7 @@ class QtPointCloudViewer(QWidget):
             if self._frustum_highlight_actor is not None:
                 show_hl = visible and current_frame is not None and current_frame in self._frustum_fid_to_idx
                 self._frustum_highlight_actor.SetVisibility(bool(show_hl))
-                if show_hl:
+                if show_hl and current_frame is not None:
                     idx = self._frustum_fid_to_idx[current_frame]
                     pts = self._frustum_all_pts[idx]
                     new_pd = _make_line_segments_polydata(pts)
@@ -2353,10 +2364,10 @@ class QtPointCloudViewer(QWidget):
     @staticmethod
     def _paint_label(label: QLabel, image: np.ndarray) -> None:
         h, w, _ = image.shape
-        qimg = QImage(np.ascontiguousarray(image).data, w, h, 3 * w, QImage.Format_RGB888)
+        qimg = QImage(np.ascontiguousarray(image).data, w, h, 3 * w, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(qimg)
         target = max(1, min(w, label.width() or w))
-        label.setPixmap(pixmap.scaledToWidth(target, Qt.SmoothTransformation))
+        label.setPixmap(pixmap.scaledToWidth(target, Qt.TransformationMode.SmoothTransformation))
 
     def _compose_frame_panel(
         self, t: int,
@@ -2365,6 +2376,8 @@ class QtPointCloudViewer(QWidget):
 
         fi = self._final_index
         if fi is None or len(fi.frame_order) == 0:
+            return None
+        if self._frame_batch is None or self._mapping_result is None:
             return None
         tt = int(np.clip(t, 0, len(fi.frame_order) - 1))
         frame_idx = int(fi.frame_order[tt])
@@ -2403,6 +2416,8 @@ class QtPointCloudViewer(QWidget):
     def _show_live_preprocess_frame(self, frame_index: int) -> None:
         import cv2
 
+        if self._output_dir is None:
+            return
         stem = f"{frame_index:08d}"
         frame_path = self._output_dir / "frames" / f"{stem}.png"
         labels_path = self._output_dir / "labels" / f"{stem}.npy"
@@ -2448,7 +2463,7 @@ class QtPointCloudViewer(QWidget):
     def fail_run(self, stage: str, error_message: str) -> None:
         self._sig_fail_run.emit(stage, error_message)
 
-    def close(self) -> None:
+    def close(self) -> None:  # type: ignore[override]  # routes shutdown through a signal; bool return unused
         self._sig_close.emit()
 
     def wait_forever(self) -> None:
@@ -2470,7 +2485,7 @@ class QtPointCloudViewer(QWidget):
     @Slot(str, int, object, object, object)
     def _on_update_progress(self, stage: str, current: int, total: object, message: object, frame_index: object) -> None:
         if stage == "preprocess" and frame_index is not None and self._output_dir is not None:
-            self._show_live_preprocess_frame(int(frame_index))
+            self._show_live_preprocess_frame(int(cast("SupportsInt", frame_index)))
         self._notify_status("update_progress", stage=stage, current=current, total=total, message=message)
 
     @Slot(object)

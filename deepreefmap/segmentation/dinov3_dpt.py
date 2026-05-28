@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 import importlib.util
 
 import numpy as np
@@ -20,8 +21,8 @@ class DinoV3DPTWrapper(SegmentationModel):
         self.name = repo_id
         self.default_resolution = resolution
         self._repo_id = repo_id
-        self._model = None
-        self._device = None
+        self._model: Any = None
+        self._device: torch.device | None = None
         self._requested_device = device
 
     def _lazy_load(self) -> None:
@@ -45,6 +46,7 @@ class DinoV3DPTWrapper(SegmentationModel):
 
     def predict_batch(self, images_rgb: Sequence[np.ndarray]) -> list[SegmentationOutput]:
         self._lazy_load()
+        assert self._device is not None
         import torch
         from PIL import Image
 
@@ -62,6 +64,6 @@ class DinoV3DPTWrapper(SegmentationModel):
         outputs = []
         for pred, image_rgb in zip(preds, images_rgb, strict=True):
             if pred.shape != image_rgb.shape[:2]:
-                pred = np.array(Image.fromarray(pred).resize((image_rgb.shape[1], image_rgb.shape[0]), resample=Image.NEAREST))
+                pred = np.array(Image.fromarray(pred).resize((image_rgb.shape[1], image_rgb.shape[0]), resample=Image.Resampling.NEAREST))
             outputs.append(SegmentationOutput(labels=pred))
         return outputs

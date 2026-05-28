@@ -1,3 +1,5 @@
+import pytest
+
 from deepreefmap.launcher.model_families import synthesize_model_info
 from deepreefmap.launcher.model_manager import (
     ALL_MODELS,
@@ -44,10 +46,16 @@ def test_synthesize_segformer_is_ungated_no_backbone():
     assert info.hf_repos == ["EPFL-ECEO/segformer-b4-finetuned-coralscapes-1024-1024"]
 
 
-def test_synthesize_unknown_repo_is_skipped():
-    assert synthesize_model_info("EPFL-ECEO/deepreefmap-sfm-net") is None
-    assert synthesize_model_info("EPFL-ECEO/coralscapes-vit-g-dpt") is None
-    assert synthesize_model_info("EPFL-ECEO/some-other-repo") is None
+@pytest.mark.parametrize(
+    "repo",
+    [
+        "EPFL-ECEO/deepreefmap-sfm-net",
+        "EPFL-ECEO/coralscapes-vit-g-dpt",
+        "EPFL-ECEO/some-other-repo",
+    ],
+)
+def test_synthesize_unknown_repo_is_skipped(repo):
+    assert synthesize_model_info(repo) is None
 
 
 def test_register_then_create_dispatches_by_family():

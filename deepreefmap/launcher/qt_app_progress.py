@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from deepreefmap.launcher._window_protocol import MixinBase
+
 from PySide6.QtWidgets import QApplication
 
 
@@ -158,7 +160,7 @@ _STAGE_MESSAGE_TO_PHASE: dict[str, str] = {
 }
 
 
-class ProgressBarsMixin:
+class ProgressBarsMixin(MixinBase):
     """DeepReefMapWindow methods that drive the per-step + unified progress bars."""
 
     def _begin_progress(self, model: ProgressModel) -> None:

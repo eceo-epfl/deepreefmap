@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Sequence, SupportsFloat, cast
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPaintEvent, QPen, QPixmap
@@ -50,7 +50,7 @@ class SunburstWidget(QWidget):
         self._selected_ids: frozenset[int] = frozenset()
         self._selection_active: bool = False
         self.setMinimumHeight(220)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
         self.setToolTipDuration(8000)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -104,12 +104,12 @@ class SunburstWidget(QWidget):
         # Sort by fraction descending so the biggest slices land on the right
         # side of the ring — easier to read at a glance.
         items: list[tuple[int, str, float, tuple[int, int, int]]] = []
-        for class_id_str, entry in (cover.get("classes") or {}).items():
+        for class_id_str, entry in cast("dict[str, dict[str, object]]", cover.get("classes") or {}).items():
             try:
                 cid = int(class_id_str)
             except (TypeError, ValueError):
                 continue
-            frac = float(entry.get("fraction", 0.0))
+            frac = float(cast(SupportsFloat, entry.get("fraction", 0.0)))
             if frac <= 0:
                 continue
             items.append(

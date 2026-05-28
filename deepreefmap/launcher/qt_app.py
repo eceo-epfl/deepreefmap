@@ -6,6 +6,7 @@ import signal
 import sys
 import threading
 from pathlib import Path
+from typing import cast
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QSurfaceFormat
 from PySide6.QtWidgets import (
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from deepreefmap.config.classes import ClassConfig
 from deepreefmap.launcher.theme import BANNER_BG, BANNER_BORDER, BANNER_TEXT
 from deepreefmap.launcher.qt_app_batch import (  # noqa: F401  re-exported for tests
     BatchMixin,
@@ -73,7 +75,7 @@ class DeepReefMapWindow(
     _sig_qc_render_done = Signal(bool, str)
     _sig_discovery_done = Signal(object, object)
 
-    def __init__(self, classes_config: object, classes_path: Path | None) -> None:
+    def __init__(self, classes_config: ClassConfig, classes_path: Path | None) -> None:
         super().__init__()
         self._classes_config = classes_config
         self._classes_path = classes_path
@@ -124,7 +126,7 @@ class DeepReefMapWindow(
         top_bar = self._build_top_bar()
         log_panel = self._build_log_panel()
 
-        splitter = QSplitter(Qt.Horizontal)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(form_panel)
         splitter.addWidget(self._viewer)
         splitter.setSizes([440, 960])
@@ -137,7 +139,7 @@ class DeepReefMapWindow(
         # bottom of the window, alongside the form + 3D viewer above it. Hidden
         # initially; the top-bar Log button drives visibility, and _on_submit
         # auto-opens it when a run starts.
-        self._central_vsplitter = QSplitter(Qt.Vertical)
+        self._central_vsplitter = QSplitter(Qt.Orientation.Vertical)
         self._central_vsplitter.addWidget(splitter)
         self._central_vsplitter.addWidget(log_panel)
         self._central_vsplitter.setSizes([700, 220])
@@ -192,7 +194,7 @@ def launch(classes_path: Path | None = None, view_run_dir: Path | None = None) -
     QSurfaceFormat.setDefaultFormat(fmt)
     QApplication.setApplicationName("DeepReefMap")
     QApplication.setApplicationDisplayName("DeepReefMap")
-    qt_app = QApplication.instance() or QApplication(sys.argv)
+    qt_app = cast(QApplication, QApplication.instance() or QApplication(sys.argv))
     from deepreefmap.launcher.fonts import apply_app_fonts
     from deepreefmap.launcher.theme import apply_theme
 

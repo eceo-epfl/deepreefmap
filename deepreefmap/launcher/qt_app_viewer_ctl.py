@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from deepreefmap.launcher._window_protocol import MixinBase
+
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING, SupportsInt, cast
 
 
 from deepreefmap.launcher.log_view import close_run_log_file
@@ -11,10 +14,15 @@ from deepreefmap.launcher.qt_app_progress import (
     _STAGE_MESSAGE_TO_PHASE,
 )
 
+if TYPE_CHECKING:
+    from deepreefmap.config.classes import ClassConfig
+    from deepreefmap.pipeline.artifacts import SemanticPointCloud
+    from deepreefmap.pointcloud.grid_ortho import OrthoGrid
+
 logger = logging.getLogger(__name__)
 
 
-class ViewerControlsMixin:
+class ViewerControlsMixin(MixinBase):
     """DeepReefMapWindow methods for app mode, playback, legend, and viewer status routing."""
 
     def _set_app_mode(self, mode: str) -> None:
@@ -431,7 +439,7 @@ class ViewerControlsMixin:
     def _snap_camera_to_current_frame(self) -> None:
         if not hasattr(self, "_frame_slider"):
             return
-        backoff = float(getattr(self, "_camera_backoff_spin", None).value()) if hasattr(self, "_camera_backoff_spin") else 0.0
+        backoff = float(self._camera_backoff_spin.value()) if hasattr(self, "_camera_backoff_spin") else 0.0
         self._viewer.view_from_frame_pose(int(self._frame_slider.value()), backoff_m=backoff)
 
     def _on_frustum_picked(self, frame_idx: int) -> None:
@@ -650,15 +658,15 @@ class ViewerControlsMixin:
         hints_row.setContentsMargins(0, 0, 0, 0)
         hint = QLabel("P  ·  Esc", overlay)
         hint.setObjectName("pick_mode_shortcut")
-        hint.setAlignment(Qt.AlignHCenter)
+        hint.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         hints_row.addWidget(hint, 1)
         reset_hint = QLabel("R", overlay)
         reset_hint.setObjectName("pick_mode_shortcut")
-        reset_hint.setAlignment(Qt.AlignHCenter)
+        reset_hint.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         hints_row.addWidget(reset_hint, 1)
         fit_hint = QLabel("F", overlay)
         fit_hint.setObjectName("pick_mode_shortcut")
-        fit_hint.setAlignment(Qt.AlignHCenter)
+        fit_hint.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         hints_row.addWidget(fit_hint, 1)
         layout.addLayout(hints_row)
 
@@ -683,7 +691,7 @@ class ViewerControlsMixin:
         ps_lbl.setFixedWidth(_lbl_w)
         ps_lbl.setStyleSheet("color: #aaa; font-size: 10px;")
         ps_row.addWidget(ps_lbl)
-        ov_pt_slider = QSlider(Qt.Horizontal, overlay)
+        ov_pt_slider = QSlider(Qt.Orientation.Horizontal, overlay)
         ov_pt_slider.setRange(5, 200)
         ov_pt_slider.setValue(20)
         ov_pt_slider.setFixedHeight(16)
@@ -700,7 +708,7 @@ class ViewerControlsMixin:
         conf_lbl.setFixedWidth(_lbl_w)
         conf_lbl.setStyleSheet("color: #aaa; font-size: 10px;")
         conf_row.addWidget(conf_lbl)
-        ov_conf_slider = QSlider(Qt.Horizontal, overlay)
+        ov_conf_slider = QSlider(Qt.Orientation.Horizontal, overlay)
         ov_conf_slider.setRange(0, 100)
         ov_conf_slider.setValue(0)
         ov_conf_slider.setFixedHeight(16)
@@ -839,13 +847,11 @@ class ViewerControlsMixin:
         reset_btn.clicked.connect(_on_reset_clicked)
         fit_btn.clicked.connect(_on_fit_clicked)
 
-        QShortcut(QKeySequence("P"), self, activated=lambda: btn.toggle())
-        QShortcut(QKeySequence("R"), self, activated=_on_reset_clicked)
-        QShortcut(QKeySequence("F"), self, activated=_on_fit_clicked)
-        QShortcut(
-            QKeySequence(Qt.Key_Escape),
-            self,
-            activated=lambda: btn.setChecked(False) if btn.isChecked() else None,
+        QShortcut(QKeySequence("P"), self).activated.connect(lambda: btn.toggle())
+        QShortcut(QKeySequence("R"), self).activated.connect(_on_reset_clicked)
+        QShortcut(QKeySequence("F"), self).activated.connect(_on_fit_clicked)
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self).activated.connect(
+            lambda: btn.setChecked(False) if btn.isChecked() else None
         )
 
         overlay.adjustSize()
@@ -1000,8 +1006,8 @@ class ViewerControlsMixin:
             else:
                 self._apply_progress(phase_key, label, 0, 0)
         elif event == "update_progress":
-            current = int(kwargs.get("current", 0) or 0)
-            total = int(kwargs.get("total", 0) or 0)
+            current = int(cast(SupportsInt, kwargs.get("current", 0) or 0))
+            total = int(cast(SupportsInt, kwargs.get("total", 0) or 0))
             stage = str(kwargs.get("stage", ""))
             label = _STAGE_LABELS.get(stage, stage) or "Working"
             if total:
@@ -1015,9 +1021,9 @@ class ViewerControlsMixin:
                     self._set_semantic_only_controls_visible(False)
                 self._on_viewer_control_changed()
             self._apply_progress("viewer_finalise", "Reconstruction complete", 1, 1)
-            ortho_cloud = kwargs.get("ortho_cloud")
-            ortho_grid = kwargs.get("ortho_grid")
-            cc = kwargs.get("classes_config") or self._classes_config
+            ortho_cloud = cast("SemanticPointCloud | None", kwargs.get("ortho_cloud"))
+            ortho_grid = cast("OrthoGrid | None", kwargs.get("ortho_grid"))
+            cc = cast("ClassConfig", kwargs.get("classes_config") or self._classes_config)
             if ortho_cloud is not None and len(ortho_cloud) > 1:
                 try:
                     if ortho_grid is None:
@@ -1041,8 +1047,8 @@ class ViewerControlsMixin:
                     logger.exception("Failed to build live ortho preview")
         elif event == "setup_progress":
             message = str(kwargs.get("message", "Setting up viewer"))
-            current = int(kwargs.get("current", 0) or 0)
-            total = int(kwargs.get("total", 0) or 0)
+            current = int(cast(SupportsInt, kwargs.get("current", 0) or 0))
+            total = int(cast(SupportsInt, kwargs.get("total", 0) or 0))
             phase_key = _SETUP_MESSAGE_TO_PHASE.get(message, "viewer_index_cloud")
             # flush=True because viewer-setup happens on the GUI thread: without
             # an explicit processEvents the user sees the bars freeze.

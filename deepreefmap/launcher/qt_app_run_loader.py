@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+from deepreefmap.launcher._window_protocol import MixinBase
+
 import logging
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from deepreefmap.launcher.log_view import close_run_log_file, open_run_log_file
 from deepreefmap.launcher.qt_app_progress import _LOAD_STAGE_TO_PHASE, _STAGE_MESSAGE_TO_PHASE
 
+if TYPE_CHECKING:
+    from deepreefmap.pipeline.run_loader import LoadedRun
+
 logger = logging.getLogger(__name__)
 
 
-class RunLoadingMixin:
+class RunLoadingMixin(MixinBase):
     """DeepReefMapWindow methods for submitting pipeline runs and loading cached runs."""
 
     def _cancel_load(self) -> None:
@@ -79,7 +85,7 @@ class RunLoadingMixin:
             "replacement_radius_override": self._rr_override_spin.value() or None,
         }
 
-        mapping_name = kwargs["mapping_name"]
+        mapping_name = str(kwargs["mapping_name"])
         loger_options = self._collect_loger_options(mapping_name)
         if loger_options is not None:
             kwargs["mapping_options"] = loger_options
@@ -270,7 +276,7 @@ class RunLoadingMixin:
         phase_key = _LOAD_STAGE_TO_PHASE.get(stage, stage)
         self._apply_progress(phase_key, label, current=cur, total=tot)
 
-    def _apply_loaded_run(self, result: object, run_dir_str: str, error: str) -> None:
+    def _apply_loaded_run(self, result: LoadedRun | None, run_dir_str: str, error: str) -> None:
         import time as _time
         from deepreefmap.pipeline.run_loader import GEOMETRY_ONLY_MODE
 
@@ -280,7 +286,7 @@ class RunLoadingMixin:
 
         if self._load_cancelled:
             self._reset_progress_bars()
-            if hasattr(result, "scene_accessor") and result.scene_accessor is not None:
+            if result is not None and result.scene_accessor is not None:
                 result.scene_accessor.close()
             return
 
@@ -303,19 +309,19 @@ class RunLoadingMixin:
             mr = result.mapping_result
             if fb is not None and mr is not None and result.geometry_xyz is not None:
                 self._viewer.load_geometry_scene(
-                    fb, mr, result.geometry_xyz, result.geometry_rgb,
+                    fb, mr, result.geometry_xyz, result.geometry_rgb,  # type: ignore[arg-type]  # TODO(stage2): unify FrameBatch/LazyFrameBatch + optional geometry_rgb
                 )
                 self._show_viewer_controls()
                 self._set_semantic_only_controls_visible(False)
                 self._on_viewer_control_changed()
             else:
-                self._viewer.show_point_cloud(result.geometry_xyz, result.geometry_rgb)
+                self._viewer.show_point_cloud(result.geometry_xyz, result.geometry_rgb)  # type: ignore[arg-type]  # TODO(stage2): optional geometry arrays
         elif getattr(result, "from_scene_file", False) and result.final_cloud_index is not None:
             fb = result.frame_batch
             mr = result.mapping_result
             if fb is not None and mr is not None:
                 self._viewer.load_scene_data_indexed(
-                    fb, mr, result.final_cloud_index, self._classes_config,
+                    fb, mr, result.final_cloud_index, self._classes_config,  # type: ignore[arg-type]  # TODO(stage2): unify FrameBatch/LazyFrameBatch
                 )
                 _t2 = _time.monotonic()
                 logger.info("[timing] load_scene_data_indexed: %.3fs", _t2 - _t1)
@@ -331,7 +337,7 @@ class RunLoadingMixin:
             fb = result.frame_batch
             mr = result.mapping_result
             if cloud is not None and fb is not None and mr is not None:
-                self._viewer.load_scene_data(fb, mr, cloud, self._classes_config)
+                self._viewer.load_scene_data(fb, mr, cloud, self._classes_config)  # type: ignore[arg-type]  # TODO(stage2): unify FrameBatch/LazyFrameBatch
                 _t2 = _time.monotonic()
                 logger.info("[timing] load_scene_data: %.3fs", _t2 - _t1)
                 self._build_legend()

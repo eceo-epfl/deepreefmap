@@ -6,7 +6,7 @@ import json
 import logging
 from pathlib import Path
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -23,6 +23,9 @@ from deepreefmap.io.scene_file import (
 from deepreefmap.pipeline import resume as resume_mod
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, SemanticPointCloud
 from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_reference_cloud
+
+if TYPE_CHECKING:
+    from deepreefmap.visualization.final_cloud_index import FinalCloudIndex
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +47,7 @@ class LoadedRun:
     geometry_rgb: np.ndarray | None = None
     from_scene_file: bool = False
     scene_accessor: SceneFrameAccessor | None = None
-    final_cloud_index: object | None = None
+    final_cloud_index: FinalCloudIndex | None = None
     world_points_warning: str | None = None
 
 
@@ -248,7 +251,7 @@ def _generate_scene_file_async(run_dir: Path, result: LoadedRun) -> None:
                 manifest=result.manifest,
                 classes_config=result.classes_config,
                 mapping_result=result.mapping_result,
-                frame_batch=result.frame_batch,
+                frame_batch=result.frame_batch,  # type: ignore[arg-type]  # TODO(stage2): unify FrameBatch/LazyFrameBatch
                 final_cloud_index=fci,
                 run_dir=run_dir,
             )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 import inspect
 import logging
 import sys
@@ -10,6 +11,9 @@ import yaml
 
 import cv2
 import numpy as np
+
+if TYPE_CHECKING:
+    import torch
 
 from deepreefmap.camera.intrinsics import scale_intrinsics
 from deepreefmap.mapping.base import FrameEstimate, MappingBackend
@@ -57,7 +61,7 @@ class LoGeRBackend(MappingBackend):
         turn_off_ttt: bool = False,
         turn_off_swa: bool = False,
         backend_id: str = "loger",
-        device: object | None = None,
+        device: "torch.device | str | None" = None,
     ) -> None:
         self.name = backend_id
         self.default_window_size = window_size
@@ -67,9 +71,9 @@ class LoGeRBackend(MappingBackend):
         self._target_resolution = target_resolution
         self._k = np.eye(3, dtype=np.float32)
         self._image_size: tuple[int, int] | None = None
-        self._model = None
-        self._device = "cuda"
-        self._torch = None
+        self._model: Any = None
+        self._device: Any = "cuda"
+        self._torch: Any = None
         self._requested_device = device
         self._se3 = se3
         self._sim3 = sim3
@@ -112,7 +116,7 @@ class LoGeRBackend(MappingBackend):
                 and param.kind
                 in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
             }
-            for key, value in mcfg.items():
+            for key, value in cast("dict[str, object]", mcfg).items():
                 if key in valid:
                     model_kwargs[key] = value
 
@@ -182,7 +186,7 @@ class LoGeRBackend(MappingBackend):
                 "window_size": self.default_window_size,
                 "overlap_size": self._overlap_size,
                 "sim3": self._sim3,
-                "se3": self._se3 or bool((self._config.get("model", {}) or {}).get("se3", False)),
+                "se3": self._se3 or bool(cast("dict[str, object]", self._config.get("model", {}) or {}).get("se3", False)),
                 "turn_off_ttt": self._turn_off_ttt,
                 "turn_off_swa": self._turn_off_swa,
             }

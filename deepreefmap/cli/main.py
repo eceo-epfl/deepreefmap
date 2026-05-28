@@ -232,7 +232,7 @@ def gen_scene(
         manifest=result.manifest,
         classes_config=result.classes_config,
         mapping_result=result.mapping_result,
-        frame_batch=result.frame_batch,
+        frame_batch=result.frame_batch,  # type: ignore[arg-type]  # TODO(stage2): unify FrameBatch/LazyFrameBatch
         final_cloud_index=fci,
         run_dir=run_dir,
     )

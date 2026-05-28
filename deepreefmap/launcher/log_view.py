@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QUrl, Signal
+from PySide6.QtCore import QObject, QUrl, Signal, SignalInstance
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -34,7 +34,7 @@ class QtLogHandler(logging.Handler):
         self._signal = _LogSignal()
 
     @property
-    def line_signal(self) -> Signal:
+    def line_signal(self) -> SignalInstance:
         return self._signal.line
 
     def emit(self, record: logging.LogRecord) -> None:

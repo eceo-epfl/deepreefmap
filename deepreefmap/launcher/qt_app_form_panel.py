@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from deepreefmap.launcher._window_protocol import MixinBase
+
 import logging
 import threading
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtCore import QFileSystemWatcher, QSettings, QSize, QStandardPaths, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QStandardItemModel
@@ -17,6 +20,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -24,6 +28,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QStyle,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -70,7 +75,7 @@ def _separator() -> QWidget:
     return line
 
 
-class FormPanelMixin:
+class FormPanelMixin(MixinBase):
     """DeepReefMapWindow methods that build and drive the sidebar form panel + top toolbar."""
 
     def _build_form_panel(self) -> QWidget:
@@ -93,7 +98,7 @@ class FormPanelMixin:
 
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setAlignment(Qt.AlignTop)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # Four-tab sidebar: Run (setup form / live log), Results (viewer
         # controls + results panel for a loaded run), Models (HF auth +
@@ -112,15 +117,15 @@ class FormPanelMixin:
         self._run_tab = QWidget()
         run_layout = QVBoxLayout(self._run_tab)
         run_layout.setContentsMargins(4, 6, 4, 4)
-        run_layout.setAlignment(Qt.AlignTop)
+        run_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._viewer_tab = QWidget()
         viewer_layout = QVBoxLayout(self._viewer_tab)
         viewer_layout.setContentsMargins(4, 6, 4, 4)
-        viewer_layout.setAlignment(Qt.AlignTop)
+        viewer_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._models_tab = QWidget()
         models_layout = QVBoxLayout(self._models_tab)
         models_layout.setContentsMargins(4, 6, 4, 4)
-        models_layout.setAlignment(Qt.AlignTop)
+        models_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._updates_tab = QWidget()
         updates_layout = QVBoxLayout(self._updates_tab)
         updates_layout.setContentsMargins(4, 6, 4, 4)
@@ -144,7 +149,7 @@ class FormPanelMixin:
         # alongside the form during a run instead of replacing it.
         self._setup_page = QWidget()
         setup_layout = QVBoxLayout(self._setup_page)
-        setup_layout.setAlignment(Qt.AlignTop)
+        setup_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         setup_layout.setContentsMargins(0, 0, 0, 0)
         run_layout.addWidget(self._setup_page)
 
@@ -158,7 +163,7 @@ class FormPanelMixin:
         # facts + input video, so the user can preview metadata before clicking.
         self._past_runs_combo.setItemDelegate(_PastRunCardDelegate(self._past_runs_combo))
         view = self._past_runs_combo.view()
-        view.setSpacing(0)
+        cast(QListView, view).setSpacing(0)
         # Popup minimum width is computed from font metrics so it scales with
         # system DPI / font size (Windows scaling, Linux Hi-DPI, etc.).
         em = max(1, view.fontMetrics().height())
@@ -694,7 +699,7 @@ class FormPanelMixin:
         conf_layout = QVBoxLayout(self._confidence_box)
         conf_layout.setContentsMargins(0, 0, 0, 0)
         conf_layout.addWidget(QLabel("Min confidence (%)"))
-        self._confidence_slider = QSlider(Qt.Horizontal)
+        self._confidence_slider = QSlider(Qt.Orientation.Horizontal)
         self._confidence_slider.setRange(0, 100)
         self._confidence_slider.setValue(0)
         self._confidence_slider.valueChanged.connect(self._on_viewer_control_changed)
@@ -743,7 +748,7 @@ class FormPanelMixin:
         # The legend lives as a floating overlay on the 3D canvas; this dict
         # is populated by _build_legend and queried by _enabled_class_set.
         self._legend_toggles: dict[int, QCheckBox] = {}
-        self._legend_solo_buttons: dict[int, object] = {}
+        self._legend_solo_buttons: dict[int, QToolButton] = {}
         # Legend sort state: column "selected" (visibility), "name", or "size",
         # plus a direction. _legend_order_cache lets _apply_legend_sort skip
         # reflows when the resulting order is unchanged.
@@ -759,12 +764,12 @@ class FormPanelMixin:
         ortho_row = QHBoxLayout()
         ortho_row.setSpacing(4)
         self._ortho_rgb_preview = QLabel("RGB ortho")
-        self._ortho_rgb_preview.setAlignment(Qt.AlignCenter)
+        self._ortho_rgb_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._ortho_rgb_preview.setMinimumSize(160, 100)
         self._ortho_rgb_preview.setStyleSheet("background-color: #1a1a1a; color: #666;")
         ortho_row.addWidget(self._ortho_rgb_preview, 1)
         self._ortho_seg_preview = QLabel("Seg ortho")
-        self._ortho_seg_preview.setAlignment(Qt.AlignCenter)
+        self._ortho_seg_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._ortho_seg_preview.setMinimumSize(160, 100)
         self._ortho_seg_preview.setStyleSheet("background-color: #1a1a1a; color: #666;")
         ortho_row.addWidget(self._ortho_seg_preview, 1)
@@ -780,7 +785,7 @@ class FormPanelMixin:
         self._results_transect_length.setSingleStep(0.1)
         self._results_transect_length.setValue(0.0)
         crop_layout.addWidget(self._results_transect_length, 0, 1)
-        self._results_transect_slider = QSlider(Qt.Horizontal)
+        self._results_transect_slider = QSlider(Qt.Orientation.Horizontal)
         self._results_transect_slider.setRange(0, 10000)
         crop_layout.addWidget(self._results_transect_slider, 1, 0, 1, 2)
         crop_layout.addWidget(QLabel("Crop width (m)"), 2, 0)
@@ -790,7 +795,7 @@ class FormPanelMixin:
         self._results_crop_width.setSingleStep(0.1)
         self._results_crop_width.setValue(0.0)
         crop_layout.addWidget(self._results_crop_width, 2, 1)
-        self._results_crop_slider = QSlider(Qt.Horizontal)
+        self._results_crop_slider = QSlider(Qt.Orientation.Horizontal)
         self._results_crop_slider.setRange(0, 5000)
         crop_layout.addWidget(self._results_crop_slider, 3, 0, 1, 2)
         self._crop_box = crop_box
@@ -930,19 +935,19 @@ class FormPanelMixin:
         self._active_run_manifest: dict | None = None
         self._load_cancelled = False
 
-        self._base_ortho_grid: object | None = None
-        self._ortho_cloud: object | None = None
-        self._ortho_classes_config: object | None = None
-        self._current_ortho_grid: object | None = None
+        self._base_ortho_grid = None
+        self._ortho_cloud = None
+        self._ortho_classes_config = None
+        self._current_ortho_grid = None
         self._results_output_dir: Path | None = None
         self._ortho_crop_refresh_pending = False
 
         self._settings = QSettings("ECEO", "deepreefmap")
-        last_video = self._settings.value("last_video_path", "", type=str)
+        last_video = cast(str, self._settings.value("last_video_path", "", type=str))
         if last_video and Path(last_video).exists():
             self._video_input.setText(last_video)
             self._auto_probe_video_duration(last_video)
-        saved_root = self._settings.value("output_root_dir", "", type=str)
+        saved_root = cast(str, self._settings.value("output_root_dir", "", type=str))
         if saved_root:
             self._out_root_input.setText(saved_root)
         self._update_effective_dir_label()
@@ -955,7 +960,7 @@ class FormPanelMixin:
         # opens instantly. A stale half-finished last_run_dir is cleared so
         # it doesn't appear at the top of the combo as the most recent entry
         # only to error out on click.
-        last_run = self._settings.value("last_run_dir", "", type=str)
+        last_run = cast(str, self._settings.value("last_run_dir", "", type=str))
         if last_run:
             last_run_path = Path(last_run)
             if not ((last_run_path / "run_manifest.json").exists()
@@ -1003,7 +1008,7 @@ class FormPanelMixin:
         # NoFrame removes the QScrollArea's default beveled border so the
         # sidebar blends into the main window instead of looking like a panel
         # inside a panel.
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
         # Allow the user to drag the splitter to collapse the form down to a
         # small minimum. Removing the hard min lets the 3D viewport take as
         # much space as they want.

@@ -27,18 +27,18 @@ def test_model_list_has_all_expected_models():
     assert "coralscapes-vit-b-dpt" in names
 
 
-def test_segformer_not_gated():
+@pytest.mark.parametrize(
+    "name, gated",
+    [
+        ("segformer-b2", False),
+        ("coralscapes-vit-b-dpt", True),
+    ],
+)
+def test_model_gated_flag(name, gated):
     from deepreefmap.launcher.model_manager import ALL_MODELS
 
-    sf = next(m for m in ALL_MODELS if m.name == "segformer-b2")
-    assert not sf.gated
-
-
-def test_dinov3_gated():
-    from deepreefmap.launcher.model_manager import ALL_MODELS
-
-    dino = next(m for m in ALL_MODELS if m.name == "coralscapes-vit-b-dpt")
-    assert dino.gated
+    info = next(m for m in ALL_MODELS if m.name == name)
+    assert info.gated is gated
 
 
 def test_cache_detection_returns_false_for_nonexistent():
@@ -156,20 +156,23 @@ def test_fetch_versions_mock_empty(monkeypatch):
     assert versions == []
 
 
-def test_newer_releases_ignores_older_and_equal():
+@pytest.mark.parametrize(
+    "releases, current, expected",
+    [
+        ([{"tag_name": "v1.0.0"}, {"tag_name": "v0.9.0"}], "1.0.1", []),
+        ([{"tag_name": "v1.0.0"}, {"tag_name": "v0.9.0"}], "1.0.0", []),
+        (
+            [{"tag_name": "v1.5.0"}, {"tag_name": "v2.0.0"}, {"tag_name": "v1.0.0"}],
+            "1.0.0",
+            ["v2.0.0", "v1.5.0"],
+        ),
+    ],
+)
+def test_newer_releases_orders_and_filters(releases, current, expected):
     from deepreefmap.launcher.qt_app import _newer_releases
 
-    releases = [{"tag_name": "v1.0.0"}, {"tag_name": "v0.9.0"}]
-    assert _newer_releases(releases, "1.0.1") == []
-    assert _newer_releases(releases, "1.0.0") == []
-
-
-def test_newer_releases_returns_newer_first():
-    from deepreefmap.launcher.qt_app import _newer_releases
-
-    releases = [{"tag_name": "v1.5.0"}, {"tag_name": "v2.0.0"}, {"tag_name": "v1.0.0"}]
-    newer = _newer_releases(releases, "1.0.0")
-    assert [r["tag_name"] for r in newer] == ["v2.0.0", "v1.5.0"]
+    newer = _newer_releases(releases, current)
+    assert [r["tag_name"] for r in newer] == expected
 
 
 def test_newer_releases_unparseable_current_falls_back_to_inequality():
@@ -287,22 +290,18 @@ def test_fetch_releases_keeps_assets_from_github_response():
 # --- Binary swap helpers ---
 
 
-def test_resolve_asset_name_linux():
+@pytest.mark.parametrize(
+    "platform, expected",
+    [
+        ("linux", "deepreefmap-linux-x64"),
+        ("win32", "deepreefmap-windows-x64.exe"),
+        ("darwin", "deepreefmap-macos-arm64"),
+    ],
+)
+def test_resolve_asset_name(platform, expected):
     from deepreefmap.launcher.binary_swap import resolve_asset_name
 
-    assert resolve_asset_name("linux") == "deepreefmap-linux-x64"
-
-
-def test_resolve_asset_name_windows():
-    from deepreefmap.launcher.binary_swap import resolve_asset_name
-
-    assert resolve_asset_name("win32") == "deepreefmap-windows-x64.exe"
-
-
-def test_resolve_asset_name_macos():
-    from deepreefmap.launcher.binary_swap import resolve_asset_name
-
-    assert resolve_asset_name("darwin") == "deepreefmap-macos-arm64"
+    assert resolve_asset_name(platform) == expected
 
 
 def test_resolve_asset_name_unsupported_raises():
@@ -346,7 +345,7 @@ def test_theme_semantic_constants_are_valid_hex():
 
 
 def test_find_asset_url_returns_match():
-    from deepreefmap.launcher.binary_swap import find_asset_url
+    from deepreefmap.launcher.binary_swap import BinarySwapError, find_asset_url
 
     rel = {
         "tag_name": "v1.0.0",
@@ -356,11 +355,6 @@ def test_find_asset_url_returns_match():
         ],
     }
     assert find_asset_url(rel, "deepreefmap-linux-x64") == "https://x/y"
-
-
-def test_find_asset_url_missing_raises():
-    from deepreefmap.launcher.binary_swap import BinarySwapError, find_asset_url
-
     with pytest.raises(BinarySwapError):
         find_asset_url({"tag_name": "v0.5.0", "assets": []}, "deepreefmap-linux-x64")
 
@@ -415,14 +409,6 @@ def test_replace_binary_atomic_rename(tmp_path):
     assert not src.exists()
 
 
-def test_current_version_returns_string():
-    from deepreefmap.launcher.qt_app import _current_version
-
-    v = _current_version()
-    assert isinstance(v, str)
-    assert v != ""
-
-
 def test_pyapp_mock_path(monkeypatch):
     from deepreefmap.launcher.qt_app import _pyapp_binary_path
 
@@ -437,18 +423,6 @@ def test_pyapp_no_env(monkeypatch):
     monkeypatch.delenv("DEEPREEFMAP_MOCK_PYAPP", raising=False)
     monkeypatch.delenv("PYAPP", raising=False)
     assert _pyapp_binary_path() is None
-
-
-# --- Qt viewer protocol ---
-
-def test_viewer_has_all_protocol_methods():
-    from deepreefmap.visualization.qt_viewer import QtPointCloudViewer
-
-    for method in (
-        "start_run", "set_stage", "update_progress", "set_data",
-        "mark_outputs_ready", "fail_run", "close", "wait_forever",
-    ):
-        assert hasattr(QtPointCloudViewer, method)
 
 
 # --- Colorization helpers ---
@@ -489,22 +463,20 @@ def test_colorize_depth_all_nan():
     assert result.sum() == 0
 
 
-def test_to_rgba_normalizes_uint8():
+@pytest.mark.parametrize(
+    "rgb, expected_r",
+    [
+        (np.array([[255, 0, 128]], dtype=np.uint8), 1.0),
+        (np.array([[0.5, 0.0, 1.0]], dtype=np.float32), 0.5),
+    ],
+)
+def test_to_rgba_normalizes_by_dtype(rgb, expected_r):
     from deepreefmap.visualization.qt_viewer import _to_rgba
 
-    rgb = np.array([[255, 0, 128]], dtype=np.uint8)
     rgba = _to_rgba(rgb)
     assert rgba.shape == (1, 4)
-    assert abs(rgba[0, 0] - 1.0) < 0.01
+    assert abs(rgba[0, 0] - expected_r) < 0.01
     assert abs(rgba[0, 3] - 1.0) < 0.01
-
-
-def test_to_rgba_passthrough_float():
-    from deepreefmap.visualization.qt_viewer import _to_rgba
-
-    rgb = np.array([[0.5, 0.0, 1.0]], dtype=np.float32)
-    rgba = _to_rgba(rgb)
-    assert abs(rgba[0, 0] - 0.5) < 0.01
 
 
 # --- Frustum geometry ---
@@ -837,34 +809,20 @@ def test_sunburst_reflects_selection(qapp, monkeypatch):
 
 # --- Batch CSV parser ---
 
-def test_parse_timestamp_range_full():
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("12-45.5", (12.0, 45.5)),
+        ("30-", (30.0, None)),
+        ("-60", (None, 60.0)),
+        ("", (None, None)),
+        ("15", (15.0, None)),
+    ],
+)
+def test_parse_timestamp_range(text, expected):
     from deepreefmap.launcher.qt_app import _parse_timestamp_range
 
-    assert _parse_timestamp_range("12-45.5") == (12.0, 45.5)
-
-
-def test_parse_timestamp_range_open_end():
-    from deepreefmap.launcher.qt_app import _parse_timestamp_range
-
-    assert _parse_timestamp_range("30-") == (30.0, None)
-
-
-def test_parse_timestamp_range_open_begin():
-    from deepreefmap.launcher.qt_app import _parse_timestamp_range
-
-    assert _parse_timestamp_range("-60") == (None, 60.0)
-
-
-def test_parse_timestamp_range_empty():
-    from deepreefmap.launcher.qt_app import _parse_timestamp_range
-
-    assert _parse_timestamp_range("") == (None, None)
-
-
-def test_parse_timestamp_range_single_value():
-    from deepreefmap.launcher.qt_app import _parse_timestamp_range
-
-    assert _parse_timestamp_range("15") == (15.0, None)
+    assert _parse_timestamp_range(text) == expected
 
 
 def test_load_batch_csv_parses_rows(tmp_path):

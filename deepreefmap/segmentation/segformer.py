@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -20,9 +21,9 @@ class SegformerWrapper(SegmentationModel):
         self.name = repo_id
         self.default_resolution = resolution
         self._repo_id = repo_id
-        self._processor = None
-        self._model = None
-        self._device = None
+        self._processor: Any = None
+        self._model: Any = None
+        self._device: torch.device | None = None
         self._requested_device = device
 
     def _lazy_load(self) -> None:
@@ -34,10 +35,12 @@ class SegformerWrapper(SegmentationModel):
 
         from deepreefmap.device import resolve_device
 
-        self._device = self._requested_device or resolve_device()
+        device = self._requested_device or resolve_device()
+        self._device = device
         try:
             self._processor = SegformerImageProcessor.from_pretrained(self._repo_id)
-            self._model = SegformerForSemanticSegmentation.from_pretrained(self._repo_id).to(self._device).eval()
+            model: Any = SegformerForSemanticSegmentation.from_pretrained(self._repo_id)
+            self._model = model.to(device).eval()
             return
         except Exception:
             # Some model repos ship id2label/label2id with non-string values, which
@@ -63,13 +66,15 @@ class SegformerWrapper(SegmentationModel):
         config_path.write_text(json.dumps(cfg))
         config = SegformerConfig.from_dict(cfg)
         self._processor = SegformerImageProcessor.from_pretrained(root)
-        self._model = SegformerForSemanticSegmentation.from_pretrained(root, config=config).to(self._device).eval()
+        model = SegformerForSemanticSegmentation.from_pretrained(root, config=config)
+        self._model = model.to(device).eval()
 
     def predict(self, image_rgb: np.ndarray) -> SegmentationOutput:
         return self.predict_batch([image_rgb])[0]
 
     def predict_batch(self, images_rgb: Sequence[np.ndarray]) -> list[SegmentationOutput]:
         self._lazy_load()
+        assert self._device is not None
         import torch
         from PIL import Image
 

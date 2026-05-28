@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sized
 from pathlib import Path
+from typing import cast
 
 import imageio.v3 as iio
 import numpy as np
@@ -101,7 +103,7 @@ def _extract_gravity_stream(video_path: Path) -> GravityStream | None:
 
 
 def _coerce_gravity_stream(stream: object) -> GravityStream | None:
-    if stream is None or len(stream) == 0:
+    if stream is None or len(cast(Sized, stream)) == 0:
         return None
     if isinstance(stream, tuple) and len(stream) == 2:
         grav_raw, timestamps_raw = stream

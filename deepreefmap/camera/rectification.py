@@ -9,8 +9,8 @@ from deepreefmap.camera.intrinsics import CameraProfile
 class Rectifier:
     def __init__(self, profile: CameraProfile) -> None:
         self.profile = profile
-        self._map1 = None
-        self._map2 = None
+        self._map1: np.ndarray | None = None
+        self._map2: np.ndarray | None = None
         self._roi: tuple[int, int, int, int] | None = None
 
     def _init_maps(self, image_size: tuple[int, int]) -> None:
@@ -82,6 +82,7 @@ class Rectifier:
             return image_rgb
         if self._map1 is None or self._map2 is None:
             self._init_maps((w, h))
+        assert self._map1 is not None and self._map2 is not None
         rect = cv2.remap(image_rgb, self._map1, self._map2, interpolation=cv2.INTER_LINEAR)
         if self._roi is not None:
             x, y, rw, rh = self._roi

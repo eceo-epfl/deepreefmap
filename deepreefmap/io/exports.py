@@ -119,9 +119,9 @@ def load_geometry_cloud(path: Path) -> tuple[np.ndarray, np.ndarray]:
         if "format binary_little_endian" not in header_text:
             raise ValueError(f"Unsupported PLY format in {path}: header was {header_text!r}")
         n = 0
-        for line in header_text.splitlines():
-            if line.startswith("element vertex "):
-                n = int(line.split()[2])
+        for header_line in header_text.splitlines():
+            if header_line.startswith("element vertex "):
+                n = int(header_line.split()[2])
                 break
         struct_dtype = np.dtype(
             [

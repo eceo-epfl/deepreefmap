@@ -92,7 +92,7 @@ def scale_intrinsics(
 def _read_profile_text(name: str, path: Path) -> str:
     if path.exists():
         return path.read_text()
-    resource = resources.files("deepreefmap.resources").joinpath("camera_profiles", f"{name}.json")
+    resource = resources.files("deepreefmap.resources").joinpath("camera_profiles").joinpath(f"{name}.json")
     if resource.is_file():
         return resource.read_text()
     raise FileNotFoundError(f"Camera profile not found: {path}")

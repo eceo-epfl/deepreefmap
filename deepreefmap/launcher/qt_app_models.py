@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from deepreefmap.launcher._window_protocol import MixinBase
+
 import threading
+from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -17,11 +20,14 @@ from PySide6.QtWidgets import (
 from deepreefmap.launcher.qt_app_hf_dialog import HfLoginDialog
 from deepreefmap.launcher.theme import DANGER_BG, SUCCESS, WARNING
 
+if TYPE_CHECKING:
+    from deepreefmap.launcher.model_manager import ModelInfo
 
-class ModelManagementMixin:
+
+class ModelManagementMixin(MixinBase):
     """DeepReefMapWindow methods for HF auth, model status, download, and delete."""
 
-    def _find_model_state(self, model_name: str) -> tuple[object, bool]:
+    def _find_model_state(self, model_name: str) -> tuple[ModelInfo | None, bool]:
         for state_info, state_cached in self._last_model_states:
             if state_info.name == model_name:
                 return state_info, state_cached
@@ -46,7 +52,7 @@ class ModelManagementMixin:
         if target is not None:
             self._flash_model_row(target)
 
-    def _flash_model_row(self, label: QLabel) -> None:
+    def _flash_model_row(self, label: QWidget) -> None:
         prev = label.styleSheet()
         label.setStyleSheet(
             "QLabel { background-color: rgba(232, 160, 74, 60);"
@@ -294,9 +300,11 @@ class ModelManagementMixin:
         self._delete_armed.clear()
         while self._models_grid.count():
             item = self._models_grid.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.deleteLater()
+            if item is None:
+                continue
+            iw = item.widget()
+            if iw is not None:
+                iw.deleteLater()
 
         required = self._required_model_names()
         ordered_states = sorted(
@@ -407,8 +415,8 @@ class ModelManagementMixin:
             btn.clicked.connect(self._on_hf_auth_button)
         else:
             prior_error = self._download_errors.get(info.name)
-            label = "Retry" if prior_error else "Download"
-            btn = QPushButton(label)
+            btn_text = "Retry" if prior_error else "Download"
+            btn = QPushButton(btn_text)
             btn.setFixedWidth(110)
             if prior_error:
                 # Surface the failure at the row so it survives the next
@@ -517,7 +525,7 @@ class ModelManagementMixin:
         idx = self._models_grid.indexOf(old)
         if idx < 0:
             return
-        row, col, _, _ = self._models_grid.getItemPosition(idx)
+        row, col, _, _ = cast("tuple[int, int, int, int]", self._models_grid.getItemPosition(idx))
         self._models_grid.removeWidget(old)
         old.deleteLater()
         bar = QProgressBar()

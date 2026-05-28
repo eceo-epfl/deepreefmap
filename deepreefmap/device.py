@@ -54,7 +54,7 @@ def estimate_segmentation_batch_size(
             free, _total = torch.cuda.mem_get_info(device)
         elif device.type == "mps":
             free = torch.mps.driver_allocated_memory()
-            total = torch.mps.recommended_max_working_set_size()
+            total = torch.mps.recommended_max_working_set_size()  # type: ignore[attr-defined]  # torch.mps stubs omit this
             free = max(0, total - free)
         else:
             free = 4 * 1024**3

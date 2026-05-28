@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 import csv
 import json
 import logging
@@ -26,7 +26,7 @@ def save_cover_csv(path: Path, cover: dict[str, object]) -> None:
     """Write the fine-grained cover dict produced by compute_benthic_cover."""
     classes_block = cover.get("classes") if isinstance(cover, dict) else None
     rows: list[tuple[int, str, float, float]] = []
-    if classes_block:
+    if isinstance(classes_block, dict):
         for class_id_str, entry in classes_block.items():
             try:
                 cid = int(class_id_str)
@@ -151,7 +151,7 @@ def render_offline_video_placeholder(
     if first is None:
         raise RuntimeError(f"Failed to read first cached frame: {frame_paths[0]}")
     h, w = first.shape[:2]
-    writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), 10, (w * 2, h * 2))
+    writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), 10, (w * 2, h * 2))  # type: ignore[attr-defined]  # cv2 stubs omit VideoWriter_fourcc
     legend_cache: dict[tuple[int, ...], np.ndarray] = {}
 
     n_frames = len(frame_paths[: len(depths)])
@@ -160,7 +160,7 @@ def render_offline_video_placeholder(
     # When a progress_callback is provided (GUI usage) we skip the tqdm bar to
     # avoid double progress reporting and let the caller drive its own widget.
     if progress_callback is None:
-        progress: object = tqdm(iterable, desc="render-video", unit="frame", total=n_frames)
+        progress: Any = tqdm(iterable, desc="render-video", unit="frame", total=n_frames)
     else:
         progress = iterable
     for idx, frame_path in progress:

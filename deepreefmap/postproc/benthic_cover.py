@@ -1,3 +1,5 @@
+from typing import SupportsFloat, cast
+
 import numpy as np
 
 from deepreefmap.config.classes import COVER_LEVELS, ClassConfig
@@ -17,9 +19,10 @@ def aggregate_cover(
     if level not in COVER_LEVELS:
         raise ValueError(f"Unknown cover level: {level!r}")
     classes_block = cover.get("classes") if isinstance(cover, dict) else None
-    if not classes_block:
+    if not isinstance(classes_block, dict):
         return {}
-    denom = float(cover.get("denominator", 0.0)) if isinstance(cover, dict) else 0.0
+    denom_raw = cover.get("denominator", 0.0) if isinstance(cover, dict) else 0.0
+    denom = float(cast(SupportsFloat, denom_raw))
     grouped: dict[str, float] = {}
     for class_id_str, entry in classes_block.items():
         try:
