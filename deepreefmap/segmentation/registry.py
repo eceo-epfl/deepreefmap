@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
+import torch
 
 if TYPE_CHECKING:
     from deepreefmap.segmentation.base import SegmentationModel
@@ -40,7 +41,9 @@ def register_segmentation_model(
     _REPOS[name] = (repo_id, family)
 
 
-def create_segmentation_model(name: str) -> SegmentationModel:
+def create_segmentation_model(
+    name: str, device: torch.device | None = None
+) -> SegmentationModel:
     from deepreefmap.segmentation.base import SegmentationModel, SegmentationOutput
     from deepreefmap.segmentation.dinov3_dpt import DinoV3DPTWrapper
     from deepreefmap.segmentation.segformer import SegformerWrapper
@@ -62,9 +65,9 @@ def create_segmentation_model(name: str) -> SegmentationModel:
         raise ValueError(f"Unsupported segmentation model: {name}")
     repo_id, family = _REPOS.get(name, ("", "dummy"))
     if family == "segformer":
-        return SegformerWrapper(repo_id, _MODELS[name])
+        return SegformerWrapper(repo_id, _MODELS[name], device=device)
     if family == "dpt":
-        return DinoV3DPTWrapper(repo_id, _MODELS[name])
+        return DinoV3DPTWrapper(repo_id, _MODELS[name], device=device)
     return _DummySegmentation(name=name, resolution=_MODELS[name])
 
 

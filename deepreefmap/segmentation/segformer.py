@@ -5,28 +5,36 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from deepreefmap.segmentation.base import SegmentationModel, SegmentationOutput
 
 
 class SegformerWrapper(SegmentationModel):
-    def __init__(self, repo_id: str, resolution: tuple[int, int] = (1024, 1024)) -> None:
+    def __init__(
+        self,
+        repo_id: str,
+        resolution: tuple[int, int] = (1024, 1024),
+        device: torch.device | None = None,
+    ) -> None:
         self.name = repo_id
         self.default_resolution = resolution
         self._repo_id = repo_id
         self._processor = None
         self._model = None
         self._device = None
+        self._requested_device = device
 
     def _lazy_load(self) -> None:
         if self._model is not None:
             return
-        import torch
         from huggingface_hub import snapshot_download
         from transformers import SegformerConfig
         from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
 
-        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        from deepreefmap.device import resolve_device
+
+        self._device = self._requested_device or resolve_device()
         try:
             self._processor = SegformerImageProcessor.from_pretrained(self._repo_id)
             self._model = SegformerForSemanticSegmentation.from_pretrained(self._repo_id).to(self._device).eval()
@@ -69,7 +77,9 @@ class SegformerWrapper(SegmentationModel):
             return []
 
         images = [Image.fromarray(image_rgb) for image_rgb in images_rgb]
-        with torch.no_grad():
+        from deepreefmap.device import autocast_context
+
+        with torch.no_grad(), autocast_context(self._device):
             inputs = self._processor(images=images, return_tensors="pt")
             inputs = {k: v.to(self._device) for k, v in inputs.items()}
             outputs = self._model(**inputs)

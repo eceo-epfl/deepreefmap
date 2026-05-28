@@ -69,6 +69,11 @@ def run_reconstruction(
     output_dir.mkdir(parents=True, exist_ok=True)
     run_started_at = datetime.now(timezone.utc).isoformat()
 
+    from deepreefmap.device import resolve_device
+
+    device = resolve_device()
+    logger.info("Compute device: %s", device)
+
     logger.info("Loading classes from %s", classes_path if classes_path is not None else "built-in")
     classes_config = load_classes(classes_path)
     if viewer is not None:
@@ -112,7 +117,7 @@ def run_reconstruction(
                 logger.info("Skip segmentation enabled: rectified frames will be saved without semantic labels.")
         elif not prep_hit:
             logger.info("Loading segmentation model '%s'", segmentation_name)
-            segmentation = create_segmentation_model(segmentation_name)
+            segmentation = create_segmentation_model(segmentation_name, device=device)
         else:
             segmentation = None
             logger.info("Resume: preprocess cache hit, skipping segmentation model load.")
@@ -153,7 +158,7 @@ def run_reconstruction(
                 prep_hit = False
                 if not skip_segmentation:
                     logger.info("Loading segmentation model '%s'", segmentation_name)
-                    segmentation = create_segmentation_model(segmentation_name)
+                    segmentation = create_segmentation_model(segmentation_name, device=device)
             else:
                 logger.info("Resume: loaded %d preprocessed frames from %s", len(frame_batch.frames), output_dir)
         if frame_batch is None:
@@ -182,7 +187,7 @@ def run_reconstruction(
                         "clip_counts": list(frame_batch.clip_counts),
                     },
                 )
-        _release_segmentation_gpu_memory(segmentation)
+        _release_segmentation_gpu_memory(segmentation, device)
         segmentation = None
         frame_count = len(frame_batch.frames)
         if frame_count == 0:
@@ -251,7 +256,7 @@ def run_reconstruction(
                     viewer.set_stage("mapping", "completed", "Loaded from cache")
         if mapping_result is None:
             logger.info("Initializing mapping backend '%s'", mapping_name)
-            mapping = create_mapping_backend(mapping_name, **(mapping_options or {}))
+            mapping = create_mapping_backend(mapping_name, device=device, **(mapping_options or {}))
             mapping.initialize(image_size=processing_image_size, intrinsics=processing_intrinsics)
             logger.info("Running mapping backend '%s' on %d prepared frames...", mapping_name, frame_count)
             if viewer is not None:
@@ -917,7 +922,7 @@ def _estimate_selected_frame_count(
     return total
 
 
-def _release_segmentation_gpu_memory(segmentation: object | None) -> None:
+def _release_segmentation_gpu_memory(segmentation: object | None, device: object | None = None) -> None:
     """Best-effort release of segmentation model GPU allocations before mapping."""
     if segmentation is None:
         return
@@ -933,15 +938,21 @@ def _release_segmentation_gpu_memory(segmentation: object | None) -> None:
                 setattr(segmentation, attr_name, None)
             except Exception:
                 pass
-    gc.collect()
-    try:
-        import torch
+    del segmentation
+    if device is not None:
+        from deepreefmap.device import release_device_memory
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
-    except Exception:
-        pass
+        release_device_memory(device)
+    else:
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception:
+            pass
 
 
 def _rel(output_dir: Path, path: Path | None) -> str | None:

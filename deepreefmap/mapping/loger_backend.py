@@ -56,6 +56,7 @@ class LoGeRBackend(MappingBackend):
         turn_off_ttt: bool = False,
         turn_off_swa: bool = False,
         backend_id: str = "loger",
+        device: object | None = None,
     ) -> None:
         self.name = backend_id
         self.default_window_size = window_size
@@ -68,6 +69,7 @@ class LoGeRBackend(MappingBackend):
         self._model = None
         self._device = "cuda"
         self._torch = None
+        self._requested_device = device
         self._se3 = se3
         self._sim3 = sim3
         self._turn_off_ttt = turn_off_ttt
@@ -78,13 +80,18 @@ class LoGeRBackend(MappingBackend):
         import torch
         from loger.models.pi3 import Pi3
 
-        if not torch.cuda.is_available():
+        from deepreefmap.device import resolve_device
+
+        if self._requested_device is not None:
+            device = torch.device(self._requested_device)
+        else:
+            device = resolve_device()
+        if device.type == "cpu":
             raise RuntimeError(
-                "LoGeR requires CUDA, but no CUDA device is available. "
-                "Run on a GPU host or pick a different mapping backend."
+                "LoGeR requires a GPU (CUDA, ROCm, or MPS), but only CPU is available."
             )
         self._torch = torch
-        self._device = "cuda"
+        self._device = device
         if not Path(self._model_path).exists():
             raise FileNotFoundError(
                 f"LoGeR checkpoint not found: {self._model_path}. "
@@ -165,8 +172,10 @@ class LoGeRBackend(MappingBackend):
                 target_h,
                 time.monotonic() - t_resize,
             )
-            batch = np.stack(resized, axis=0).astype(np.float32) / 255.0
-            batch_t = torch.from_numpy(batch).permute(0, 3, 1, 2).unsqueeze(0).to(self._device)
+            batch = np.stack(resized, axis=0).astype(np.float16) / np.float16(255.0)
+            batch_t = torch.from_numpy(batch).permute(0, 3, 1, 2).unsqueeze(0)
+            batch_t = batch_t.to(dtype=torch.float32, device=self._device)
+            del batch
             forward_kwargs = {
                 "window_size": self.default_window_size,
                 "overlap_size": self._overlap_size,
@@ -175,8 +184,9 @@ class LoGeRBackend(MappingBackend):
                 "turn_off_ttt": self._turn_off_ttt,
                 "turn_off_swa": self._turn_off_swa,
             }
-            capability = torch.cuda.get_device_capability(self._device)[0]
-            dtype = torch.bfloat16 if capability >= 8 else torch.float16
+            from deepreefmap.device import autocast_context, get_autocast_dtype
+
+            dtype = get_autocast_dtype(self._device)
             logger.info(
                 "LoGeR inference running on %s with autocast dtype=%s (%d frames)...",
                 self._device,
@@ -184,11 +194,20 @@ class LoGeRBackend(MappingBackend):
                 total_frames,
             )
             t_infer = time.monotonic()
-            with torch.no_grad(), torch.amp.autocast(device_type="cuda", enabled=True, dtype=dtype):
-                out = model(
-                    batch_t,
-                    **forward_kwargs,
-                )
+            with torch.no_grad(), autocast_context(self._device):
+                try:
+                    out = model(
+                        batch_t,
+                        **forward_kwargs,
+                    )
+                except (NotImplementedError, RuntimeError) as exc:
+                    if self._device.type != "mps" or "not currently implemented for the MPS device" not in str(exc):
+                        raise
+                    logger.warning("LoGeR op unsupported on MPS, retrying on CPU: %s", exc)
+                    model = model.cpu()
+                    batch_t = batch_t.cpu()
+                    self._device = torch.device("cpu")
+                    out = model(batch_t, **forward_kwargs)
             logger.info("LoGeR inference finished in %.1fs", time.monotonic() - t_infer)
 
             if not isinstance(out, dict):
