@@ -276,13 +276,10 @@ class FormPanelMixin:
         map_row.setSpacing(4)
         self._map_combo = QComboBox()
         self._map_combo.addItems(map_backends)
-        idx = self._map_combo.findText("scsfmlearner")
+        default_map = "loger" if loger_available() else "scsfmlearner"
+        idx = self._map_combo.findText(default_map)
         if idx >= 0:
             self._map_combo.setCurrentIndex(idx)
-        # LoGeR needs `--extra loger` + the vendored submodule. When either is
-        # missing, keep the options visible but disabled (greyed, unselectable)
-        # with a tooltip on how to enable them, rather than letting the user
-        # pick a backend that crashes at run time.
         if not loger_available():
             map_model = self._map_combo.model()
             if isinstance(map_model, QStandardItemModel):
@@ -358,6 +355,11 @@ class FormPanelMixin:
         self._advanced_toggle = QCheckBox("Advanced settings")
         self._advanced_toggle.toggled.connect(self._on_advanced_toggled)
         setup_layout.addWidget(self._advanced_toggle)
+        self._vram_notice = QLabel()
+        self._vram_notice.setWordWrap(True)
+        self._vram_notice.setStyleSheet("color: #e0a030; font-size: 11px; margin: 2px 0 4px 0;")
+        self._vram_notice.setVisible(False)
+        setup_layout.addWidget(self._vram_notice)
 
         self._advanced_panel = QWidget()
         adv_layout = QVBoxLayout(self._advanced_panel)
@@ -378,10 +380,111 @@ class FormPanelMixin:
         self._crop_width.setValue(0.0)
         self._crop_width.setSuffix(" m")
         adv_layout.addWidget(self._crop_width)
+        adv_layout.addWidget(QLabel("Processing width"))
+        self._proc_width_spin = QSpinBox()
+        self._proc_width_spin.setRange(256, 3840)
+        self._proc_width_spin.setSingleStep(32)
+        self._proc_width_spin.setValue(1376)
+        self._proc_width_spin.setToolTip("Width to resize frames to before segmentation and mapping.")
+        adv_layout.addWidget(self._proc_width_spin)
+        adv_layout.addWidget(QLabel("Processing height"))
+        self._proc_height_spin = QSpinBox()
+        self._proc_height_spin.setRange(256, 2160)
+        self._proc_height_spin.setSingleStep(32)
+        self._proc_height_spin.setValue(768)
+        self._proc_height_spin.setToolTip("Height to resize frames to before segmentation and mapping.")
+        adv_layout.addWidget(self._proc_height_spin)
+        adv_layout.addWidget(QLabel("Segmentation batch size"))
+        self._batch_size_spin = QSpinBox()
+        self._batch_size_spin.setRange(1, 16)
+        self._vram_auto_batch = self._auto_batch_size()
+        self._batch_size_spin.setValue(self._vram_auto_batch)
+        self._batch_size_spin.setToolTip(
+            "Frames segmented per GPU batch. Lower values use less VRAM."
+        )
+        self._batch_size_spin.valueChanged.connect(self._on_vram_param_changed)
+        adv_layout.addWidget(self._batch_size_spin)
+        self._vram_auto_label = QLabel()
+        self._vram_auto_label.setWordWrap(True)
+        self._vram_auto_label.setStyleSheet("color: #e0a030; font-size: 11px;")
+        adv_layout.addWidget(self._vram_auto_label)
+        self._reset_defaults_btn = QPushButton("Reset to defaults")
+        self._reset_defaults_btn.setToolTip("Discard VRAM-optimised values and restore CLI defaults.")
+        self._reset_defaults_btn.clicked.connect(self._reset_advanced_defaults)
+        adv_layout.addWidget(self._reset_defaults_btn)
+        self._using_vram_estimates = self._vram_auto_batch != 4
+        self._update_vram_notices()
+        adv_layout.addWidget(QLabel("Grid bins (ortho resolution)"))
+        self._grid_bins_spin = QSpinBox()
+        self._grid_bins_spin.setRange(100, 10000)
+        self._grid_bins_spin.setSingleStep(100)
+        self._grid_bins_spin.setValue(2000)
+        self._grid_bins_spin.setToolTip("Number of bins for the ortho projection grid.")
+        adv_layout.addWidget(self._grid_bins_spin)
+        adv_layout.addWidget(QLabel("Replacement radius factor — 0 = auto"))
+        self._rr_factor_spin = QDoubleSpinBox()
+        self._rr_factor_spin.setRange(0.0, 10.0)
+        self._rr_factor_spin.setDecimals(2)
+        self._rr_factor_spin.setSingleStep(0.1)
+        self._rr_factor_spin.setValue(0.0)
+        self._rr_factor_spin.setToolTip("Multiplier on the auto replacement radius. 0 = use auto estimate.")
+        adv_layout.addWidget(self._rr_factor_spin)
+        adv_layout.addWidget(QLabel("Replacement radius estimation frames"))
+        self._rr_est_frames_spin = QSpinBox()
+        self._rr_est_frames_spin.setRange(1, 200)
+        self._rr_est_frames_spin.setValue(30)
+        self._rr_est_frames_spin.setToolTip("Number of leading depth maps used to estimate the default replacement radius.")
+        adv_layout.addWidget(self._rr_est_frames_spin)
+        adv_layout.addWidget(QLabel("Replacement radius override (m) — 0 = auto"))
+        self._rr_override_spin = QDoubleSpinBox()
+        self._rr_override_spin.setRange(0.0, 10.0)
+        self._rr_override_spin.setDecimals(4)
+        self._rr_override_spin.setSingleStep(0.001)
+        self._rr_override_spin.setValue(0.0)
+        self._rr_override_spin.setToolTip("Absolute replacement voxel size in meters. 0 = use auto estimate.")
+        adv_layout.addWidget(self._rr_override_spin)
         self._tsdf_check = QCheckBox("Enable TSDF")
         adv_layout.addWidget(self._tsdf_check)
+        self._require_gravity_check = QCheckBox("Require gravity telemetry")
+        self._require_gravity_check.setToolTip("Fail if GoPro gravity telemetry cannot be loaded.")
+        adv_layout.addWidget(self._require_gravity_check)
         self._skip_seg_check = QCheckBox("Skip segmentation")
         adv_layout.addWidget(self._skip_seg_check)
+
+        # SCSfMLearner-specific knobs — only shown when scsfmlearner is selected.
+        self._scs_panel = QWidget()
+        scs_layout = QVBoxLayout(self._scs_panel)
+        scs_layout.setContentsMargins(0, 6, 0, 0)
+        scs_layout.setSpacing(2)
+        scs_layout.addWidget(QLabel("SCSfMLearner width"))
+        self._scs_width_spin = QSpinBox()
+        self._scs_width_spin.setRange(64, 2048)
+        self._scs_width_spin.setSingleStep(32)
+        self._scs_width_spin.setValue(512)
+        scs_layout.addWidget(self._scs_width_spin)
+        scs_layout.addWidget(QLabel("SCSfMLearner height"))
+        self._scs_height_spin = QSpinBox()
+        self._scs_height_spin.setRange(64, 2048)
+        self._scs_height_spin.setSingleStep(32)
+        self._scs_height_spin.setValue(256)
+        scs_layout.addWidget(self._scs_height_spin)
+        scs_layout.addWidget(QLabel("SCSfMLearner checkpoint (optional override)"))
+        scs_ckpt_row = QHBoxLayout()
+        scs_ckpt_row.setContentsMargins(0, 0, 0, 0)
+        scs_ckpt_row.setSpacing(4)
+        self._scs_checkpoint_input = QLineEdit()
+        self._scs_checkpoint_input.setPlaceholderText("Default: EPFL-ECEO/deepreefmap-sfm-net")
+        scs_ckpt_row.addWidget(self._scs_checkpoint_input, 1)
+        scs_ckpt_btn = QPushButton()
+        scs_ckpt_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        scs_ckpt_btn.setIconSize(QSize(18, 18))
+        scs_ckpt_btn.setFixedSize(28, 28)
+        scs_ckpt_btn.setToolTip("Browse for a SCSfMLearner .pt checkpoint…")
+        scs_ckpt_btn.clicked.connect(self._browse_scs_checkpoint)
+        scs_ckpt_row.addWidget(scs_ckpt_btn)
+        scs_layout.addLayout(scs_ckpt_row)
+        self._scs_panel.setVisible(False)
+        adv_layout.addWidget(self._scs_panel)
 
         # LoGeR-specific knobs — only shown when a LoGeR backend is selected.
         self._loger_panel = QWidget()
@@ -918,7 +1021,9 @@ class FormPanelMixin:
         self._advanced_panel.setVisible(checked)
 
     def _on_mapping_backend_changed(self, _value: object = "") -> None:
-        self._loger_panel.setVisible(self._map_combo.currentText() in ("loger", "loger_star"))
+        backend = self._map_combo.currentText()
+        self._loger_panel.setVisible(backend in ("loger", "loger_star"))
+        self._scs_panel.setVisible(backend == "scsfmlearner")
 
     def _collect_loger_options(self, mapping_name: str) -> dict | None:
         """Build the LoGeR mapping_options dict from the form, or None for other backends."""
@@ -938,21 +1043,63 @@ class FormPanelMixin:
         if path:
             self._loger_model_path_input.setText(path)
 
-    def _cuda_available(self) -> bool:
-        """Cached GPU check. torch import is deferred and only paid once.
+    def _browse_scs_checkpoint(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select SCSfMLearner checkpoint", "", "Checkpoints (*.pt *.pth);;All files (*)"
+        )
+        if path:
+            self._scs_checkpoint_input.setText(path)
 
-        A ROCm torch build reports cuda as available too, so this gates both
-        NVIDIA and AMD GPUs without any backend-specific branch.
-        """
-        cached = getattr(self, "_cuda_available_cache", None)
+    def _auto_batch_size(self) -> int:
+        try:
+            from deepreefmap.device import estimate_segmentation_batch_size, resolve_device
+
+            return estimate_segmentation_batch_size(resolve_device())
+        except Exception:
+            return 4
+
+    def _update_vram_notices(self) -> None:
+        if self._using_vram_estimates:
+            self._vram_auto_label.setText(
+                f"(experimental) Batch size set to {self._vram_auto_batch} based on detected GPU VRAM."
+            )
+            self._vram_auto_label.setVisible(True)
+            self._vram_notice.setText(
+                "VRAM-optimised values have been applied — check the advanced tab."
+            )
+            self._vram_notice.setVisible(True)
+            self._batch_size_spin.setStyleSheet("border: 1px solid #e0a030;")
+        else:
+            self._vram_auto_label.setVisible(False)
+            self._vram_notice.setVisible(False)
+            self._batch_size_spin.setStyleSheet("")
+
+    def _on_vram_param_changed(self) -> None:
+        if self._using_vram_estimates and self._batch_size_spin.value() != self._vram_auto_batch:
+            self._using_vram_estimates = False
+            self._update_vram_notices()
+
+    def _reset_advanced_defaults(self) -> None:
+        self._proc_width_spin.setValue(1376)
+        self._proc_height_spin.setValue(768)
+        self._batch_size_spin.setValue(4)
+        self._grid_bins_spin.setValue(2000)
+        self._rr_factor_spin.setValue(0.0)
+        self._rr_est_frames_spin.setValue(30)
+        self._rr_override_spin.setValue(0.0)
+        self._using_vram_estimates = False
+        self._update_vram_notices()
+
+    def _gpu_available(self) -> bool:
+        cached = getattr(self, "_gpu_available_cache", None)
         if cached is None:
             try:
-                import torch
+                from deepreefmap.device import resolve_device
 
-                cached = bool(torch.cuda.is_available())
+                cached = resolve_device().type != "cpu"
             except Exception:
                 cached = False
-            self._cuda_available_cache = cached
+            self._gpu_available_cache = cached
         return cached
 
     def _recompute_submit_state(self) -> None:
@@ -972,8 +1119,8 @@ class FormPanelMixin:
         if missing and self._last_model_states:
             reasons.append(f"download required model{'s' if len(missing) > 1 else ''}: {', '.join(missing)}")
 
-        if self._map_combo.currentText() in ("loger", "loger_star") and not self._cuda_available():
-            reasons.append("LoGeR needs a CUDA/ROCm GPU (none detected)")
+        if self._map_combo.currentText() in ("loger", "loger_star") and not self._gpu_available():
+            reasons.append("LoGeR needs a GPU (none detected)")
 
         ok = not reasons
         self._submit_btn.setEnabled(ok)

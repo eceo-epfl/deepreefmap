@@ -69,12 +69,30 @@ class RunLoadingMixin:
             "run_name": run_name,
             "begin_s": begin_s,
             "end_s": end_s,
+            "processing_width": self._proc_width_spin.value(),
+            "processing_height": self._proc_height_spin.value(),
+            "preprocess_batch_size": self._batch_size_spin.value(),
+            "grid_bins": self._grid_bins_spin.value(),
+            "require_gravity_telemetry": self._require_gravity_check.isChecked(),
+            "replacement_radius_factor": self._rr_factor_spin.value() or None,
+            "replacement_radius_estimation_frames": self._rr_est_frames_spin.value(),
+            "replacement_radius_override": self._rr_override_spin.value() or None,
         }
 
-        loger_options = self._collect_loger_options(kwargs["mapping_name"])
+        mapping_name = kwargs["mapping_name"]
+        loger_options = self._collect_loger_options(mapping_name)
         if loger_options is not None:
             kwargs["mapping_options"] = loger_options
             kwargs["refine_intrinsics_from_mapper"] = self._refine_intrinsics_check.isChecked()
+        elif mapping_name == "scsfmlearner":
+            scs_opts: dict[str, object] = {
+                "target_width": self._scs_width_spin.value(),
+                "target_height": self._scs_height_spin.value(),
+            }
+            scs_ckpt = self._scs_checkpoint_input.text().strip()
+            if scs_ckpt:
+                scs_opts["checkpoint_path"] = scs_ckpt
+            kwargs["mapping_options"] = scs_opts
 
         self._set_form_enabled(False)
         self._begin_progress(self._recon_model)
