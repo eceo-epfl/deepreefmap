@@ -14,9 +14,25 @@ class BinarySwapError(RuntimeError):
     pass
 
 
+def _is_rocm_build() -> bool:
+    pyapp = os.environ.get("PYAPP")
+    if pyapp and "rocm" in Path(pyapp).name:
+        return True
+    try:
+        import torch
+
+        if torch.cuda.is_available() and hasattr(torch.version, "hip"):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def resolve_asset_name(platform: str | None = None) -> str:
     p = (platform or sys.platform).lower()
     if p.startswith("linux"):
+        if _is_rocm_build():
+            return "deepreefmap-linux-x64-rocm"
         return "deepreefmap-linux-x64"
     if p.startswith("win"):
         return "deepreefmap-windows-x64.exe"

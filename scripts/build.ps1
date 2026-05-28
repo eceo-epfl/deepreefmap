@@ -83,7 +83,9 @@ $env:PYAPP_PROJECT_PATH = $wheelPath
 # Install loger + gopro extras into the bundled venv (PyApp appends [features] to the
 # embedded wheel). py-gpmf-parser (gopro) is marker-gated to linux/x86_64, so on
 # Windows it is simply skipped; loger pulls einops/roma/etc. for the LoGeR backend.
-$env:PYAPP_PROJECT_FEATURES = "loger,gopro"
+$features = "loger,gopro"
+if ($env:TORCH_VARIANT -eq "rocm") { $features = "$features,rocm" }
+$env:PYAPP_PROJECT_FEATURES = $features
 $env:PYAPP_EXEC_SPEC = "deepreefmap.launcher.qt_app:launch"
 $env:PYAPP_PYTHON_VERSION = "3.11"
 $env:PYAPP_FULL_ISOLATION = "1"

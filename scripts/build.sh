@@ -4,6 +4,7 @@ set -e
 # Output artifact name. Defaults to the linux name; the macOS CI job passes
 # deepreefmap-macos-arm64. The PyApp flow below is otherwise platform-agnostic.
 OUTPUT_NAME="${1:-${OUTPUT_NAME:-deepreefmap-linux-x64}}"
+TORCH_VARIANT="${2:-${TORCH_VARIANT:-default}}"
 
 rm -f dist/*.whl dist/*.tar.gz
 # The wheel vendors LoGeR's `loger` package from this submodule (see pyproject
@@ -68,14 +69,15 @@ fn exec_gui(mut command: Command) -> Result<()> {
 }
 RUST
 
-# PYAPP_PROJECT_FEATURES installs the loger + gopro extras into the bundled venv so
-# the LoGeR backend and GoPro telemetry work in the binary; PyApp appends [features]
-# to the embedded wheel. py-gpmf-parser (gopro) is marker-gated to linux/x86_64, so
-# it installs only on the Linux build and is skipped on windows/macos.
+FEATURES="loger,gopro"
+if [ "$TORCH_VARIANT" = "rocm" ]; then
+  FEATURES="$FEATURES,rocm"
+fi
+
 PYAPP_PROJECT_NAME=deepreefmap \
 PYAPP_PROJECT_VERSION="$VERSION" \
 PYAPP_PROJECT_PATH="$PWD/$WHEEL" \
-PYAPP_PROJECT_FEATURES=loger,gopro \
+PYAPP_PROJECT_FEATURES="$FEATURES" \
 PYAPP_EXEC_SPEC="deepreefmap.launcher.qt_app:launch" \
 PYAPP_PYTHON_VERSION=3.11 \
 PYAPP_FULL_ISOLATION=1 \
