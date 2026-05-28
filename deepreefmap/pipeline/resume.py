@@ -11,6 +11,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from deepreefmap.config.classes import read_classes_bytes
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ def preprocess_key(
     processing_width: int | None = None,
     processing_height: int | None = None,
 ) -> str:
-    classes_bytes = Path(classes_path).read_bytes()
+    classes_bytes = read_classes_bytes(classes_path)
     return _hash_payload({
         "version": PREPROCESS_VERSION,
         "videos": [_file_fingerprint(Path(p)) for p in video_paths],

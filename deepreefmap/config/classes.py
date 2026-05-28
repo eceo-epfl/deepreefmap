@@ -134,13 +134,18 @@ def load_classes(path: Path | str = DEFAULT_CLASSES_PATH) -> ClassConfig:
     return ClassConfig(classes=tuple(classes), path=classes_path)
 
 
-def _read_classes_text(classes_path: Path) -> str:
+def read_classes_bytes(path: Path | str = DEFAULT_CLASSES_PATH) -> bytes:
+    classes_path = Path(path)
     if classes_path.exists():
-        return classes_path.read_text()
+        return classes_path.read_bytes()
     if classes_path == DEFAULT_CLASSES_PATH:
         resource = resources.files("deepreefmap.resources").joinpath(_DEFAULT_CLASSES_RESOURCE)
-        return resource.read_text()
+        return resource.read_bytes()
     raise FileNotFoundError(f"Classes config not found: {classes_path}")
+
+
+def _read_classes_text(classes_path: Path) -> str:
+    return read_classes_bytes(classes_path).decode("utf-8")
 
 
 def _coerce_int(value: Any, field_name: str) -> int:

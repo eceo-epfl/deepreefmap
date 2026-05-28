@@ -109,12 +109,11 @@ def render_offline_video_placeholder(
 
     manifest = json.loads(manifest_path.read_text())
     classes_path = Path(manifest.get("classes", "configs/classes_coralscapes.yaml"))
-    if not classes_path.is_absolute():
-        classes_path = run_dir / classes_path
-    if not classes_path.exists():
-        classes_path = Path(manifest.get("classes", "configs/classes_coralscapes.yaml"))
-    if not classes_path.exists():
-        raise FileNotFoundError(f"Classes config not found for offline render: {classes_path}")
+    run_relative = classes_path if classes_path.is_absolute() else run_dir / classes_path
+    if run_relative.exists():
+        classes_path = run_relative
+    # A missing on-disk path is fine for the bundled default: load_classes resolves
+    # it from package resources. A genuinely missing custom path still raises there.
     classes_config = load_classes(classes_path)
     class_colors = classes_config.id_to_color
     class_names = classes_config.id_to_name
