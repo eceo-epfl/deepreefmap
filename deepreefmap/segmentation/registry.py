@@ -71,5 +71,10 @@ def create_segmentation_model(
     return _DummySegmentation(name=name, resolution=_MODELS[name])
 
 
+def get_model_resolution(name: str) -> tuple[int, int] | None:
+    """Return (height, width) for a known model, or None."""
+    return _MODELS.get(name)
+
+
 def list_segmentation_models() -> list[str]:
     return sorted(_MODELS.keys())

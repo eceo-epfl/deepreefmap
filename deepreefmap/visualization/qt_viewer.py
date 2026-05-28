@@ -1644,6 +1644,7 @@ class QtPointCloudViewer(QWidget):
 
         self._clear_scene_data()
         self._seg_label.setVisible(True)
+        self._depth_label.setVisible(True)
         plotter = self._ensure_plotter()
         self._frame_batch = frame_batch
         self._mapping_result = mapping_result
@@ -1706,6 +1707,7 @@ class QtPointCloudViewer(QWidget):
 
         self._clear_scene_data()
         self._seg_label.setVisible(True)
+        self._depth_label.setVisible(True)
         plotter = self._ensure_plotter()
         self._frame_batch = frame_batch
         self._mapping_result = mapping_result
@@ -1768,6 +1770,7 @@ class QtPointCloudViewer(QWidget):
         """
         self._clear_scene_data()
         self._seg_label.setVisible(False)
+        self._depth_label.setVisible(True)
         plotter = self._ensure_plotter()
         self._frame_batch = frame_batch
         self._mapping_result = mapping_result
@@ -2417,7 +2420,10 @@ class QtPointCloudViewer(QWidget):
                 cv2.resize(labels, (w, h), interpolation=cv2.INTER_NEAREST),
                 self._class_colors,
             )
+            self._seg_label.setVisible(True)
             self._paint_label(self._seg_label, seg_color)
+        else:
+            self._seg_label.setVisible(False)
 
     # --- Viewer protocol ---
 
@@ -2454,6 +2460,7 @@ class QtPointCloudViewer(QWidget):
     def _on_start_run(self, run_label: str, output_dir: str) -> None:
         self._output_dir = Path(output_dir)
         self._hide_canvas()
+        self._depth_label.setVisible(False)
         self._notify_status("start_run", run_label=run_label, output_dir=output_dir)
 
     @Slot(str, str, object)

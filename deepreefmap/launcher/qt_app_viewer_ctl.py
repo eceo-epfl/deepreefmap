@@ -1052,6 +1052,8 @@ class ViewerControlsMixin:
             self._status_label.setText(f"Outputs saved to {output_dir}")
             self._reset_progress_bars()
             self._set_form_enabled(True)
+            self._stop_btn.setVisible(False)
+            self._pause_btn.setVisible(False)
             if output_dir:
                 self._show_results(str(output_dir))
                 self._active_run_dir = Path(str(output_dir))
@@ -1070,6 +1072,8 @@ class ViewerControlsMixin:
             self._status_label.setText(f"Failed: {error}")
             self._reset_progress_bars()
             self._set_form_enabled(True)
+            self._stop_btn.setVisible(False)
+            self._pause_btn.setVisible(False)
             close_run_log_file(self._run_log_file_handler)
             self._run_log_file_handler = None
             self._set_app_mode("SETUP")

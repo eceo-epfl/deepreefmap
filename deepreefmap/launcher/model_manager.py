@@ -245,6 +245,23 @@ def is_model_cached(info: ModelInfo) -> bool:
     return all(dest.exists() for dest in info.materialise_to.values())
 
 
+def check_repo_access(repo_id: str) -> bool | None:
+    """Check whether the current HF token grants access to a repo.
+
+    Returns True if accessible, False if gated/denied (403), None if the
+    check can't run (no token, no network, etc.).
+    """
+    try:
+        from huggingface_hub import HfApi
+
+        HfApi().model_info(repo_id)
+        return True
+    except Exception as exc:
+        if "403" in str(exc) or "gated" in str(exc).lower():
+            return False
+        return None
+
+
 def check_hf_auth() -> str | None:
     try:
         from huggingface_hub import HfApi

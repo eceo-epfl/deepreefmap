@@ -4,6 +4,7 @@ from pathlib import Path
 import inspect
 import logging
 import sys
+import threading
 import time
 import yaml
 
@@ -143,6 +144,7 @@ class LoGeRBackend(MappingBackend):
         frame_indices: list[int],
         images_rgb: list[np.ndarray],
         gravity_vectors: np.ndarray | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> MappingSequenceResult:
         if gravity_vectors is not None:
             logger.info("Gravity telemetry is available but LoGeR pose output is left unchanged.")
@@ -193,6 +195,9 @@ class LoGeRBackend(MappingBackend):
                 str(dtype).split(".")[-1],
                 total_frames,
             )
+            if cancel_event is not None and cancel_event.is_set():
+                from deepreefmap.pipeline.orchestrator import ReconstructionCancelled
+                raise ReconstructionCancelled("Cancelled before LoGeR inference")
             t_infer = time.monotonic()
             with torch.no_grad(), autocast_context(self._device):
                 try:
@@ -209,6 +214,9 @@ class LoGeRBackend(MappingBackend):
                     self._device = torch.device("cpu")
                     out = model(batch_t, **forward_kwargs)
             logger.info("LoGeR inference finished in %.1fs", time.monotonic() - t_infer)
+            if cancel_event is not None and cancel_event.is_set():
+                from deepreefmap.pipeline.orchestrator import ReconstructionCancelled
+                raise ReconstructionCancelled("Cancelled after LoGeR inference")
 
             if not isinstance(out, dict):
                 raise RuntimeError("LoGeR inference did not return a prediction dictionary")

@@ -181,10 +181,23 @@ class ModelManagementMixin:
             )
 
     def _refresh_model_status(self) -> None:
-        from deepreefmap.launcher.model_manager import all_known_models, check_hf_auth, is_model_cached
+        from deepreefmap.launcher.model_manager import (
+            all_known_models,
+            check_hf_auth,
+            check_repo_access,
+            is_model_cached,
+        )
 
         auth_user = check_hf_auth()
         model_states = [(m, is_model_cached(m)) for m in all_known_models()]
+        repo_access: dict[str, bool | None] = {}
+        if auth_user:
+            for m, cached in model_states:
+                if m.gated and not cached:
+                    for repo in m.hf_repos:
+                        if repo not in repo_access:
+                            repo_access[repo] = check_repo_access(repo)
+        self._repo_access = repo_access
         self._sig_model_status_done.emit(auth_user, model_states)
 
     def _on_discover_clicked(self) -> None:
@@ -283,7 +296,8 @@ class ModelManagementMixin:
             key=lambda s: (s[0].name in required, s[0].release_date or ""),
             reverse=True,
         )
-        for row, (info, cached) in enumerate(ordered_states):
+        grid_row = 0
+        for info, cached in ordered_states:
             name_html = f'<span style="color:#cfd">{info.name}</span>'
             if info.approx_size_mb:
                 size_text = (
@@ -300,12 +314,44 @@ class ModelManagementMixin:
                     'font-size:10px; font-weight:bold">REQUIRED</span>'
                 )
             name_label = QLabel(name_html)
-            self._models_grid.addWidget(name_label, row, 0)
+            self._models_grid.addWidget(name_label, grid_row, 0)
 
             action = self._make_action_widget(info, cached, auth_user)
-            self._models_grid.addWidget(action, row, 1)
+            self._models_grid.addWidget(action, grid_row, 1)
             self._model_rows[info.name] = name_label
             self._model_actions[info.name] = action
+            grid_row += 1
+
+            if info.gated and not cached:
+                repo_lines = []
+                for repo in info.hf_repos:
+                    from deepreefmap.launcher.model_manager import _hf_cache_dir
+
+                    is_cached = _hf_cache_dir(repo).exists()
+                    access = self._repo_access.get(repo)
+                    if is_cached:
+                        icon = f'<span style="color:{SUCCESS}">&#10003; cached</span>'
+                    elif access is True:
+                        icon = f'<span style="color:{SUCCESS}">&#10003; access granted</span>'
+                    elif access is False:
+                        icon = f'<span style="color:{WARNING}">&#10007; license not accepted</span>'
+                    else:
+                        icon = '<span style="color:#888">? not checked</span>'
+                    link = f'<a href="https://huggingface.co/{repo}" style="color:#aac">{repo}</a>'
+                    repo_lines.append(f"{icon} &nbsp;{link}")
+                repos_html = (
+                    '<span style="font-size:10px">'
+                    "Each repo requires license acceptance:<br>"
+                    + "<br>".join(repo_lines)
+                    + "</span>"
+                )
+                repos_label = QLabel(repos_html)
+                repos_label.setTextFormat(Qt.TextFormat.RichText)
+                repos_label.setOpenExternalLinks(True)
+                repos_label.setWordWrap(True)
+                repos_label.setStyleSheet("padding-left: 8px;")
+                self._models_grid.addWidget(repos_label, grid_row, 0, 1, 2)
+                grid_row += 1
 
         self._recompute_submit_state()
 

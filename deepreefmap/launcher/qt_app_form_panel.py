@@ -80,7 +80,10 @@ class FormPanelMixin:
             list_mapping_backends,
             loger_available,
         )
-        from deepreefmap.segmentation.registry import list_segmentation_models
+        from deepreefmap.segmentation.registry import (
+            get_model_resolution,
+            list_segmentation_models,
+        )
 
         profiles = available_profile_names() or ["gopro_hero_10"]
         seg_models = list_segmentation_models()
@@ -380,40 +383,77 @@ class FormPanelMixin:
         self._crop_width.setValue(0.0)
         self._crop_width.setSuffix(" m")
         adv_layout.addWidget(self._crop_width)
-        adv_layout.addWidget(QLabel("Processing width"))
+        # --- Processing resolution ---
+        default_seg = self._seg_combo.currentText()
+        res = get_model_resolution(default_seg)
+        self._native_resolution = (res[1], res[0]) if res else (1376, 768)
+        self._is_dpt_model = "dpt" in default_seg
+
+        adv_layout.addWidget(QLabel("Processing resolution"))
+        self._resolution_preset_combo = QComboBox()
+        self._resolution_preset_combo.addItems(["Native", "Half", "Quarter", "Custom"])
+        self._resolution_preset_combo.setToolTip(
+            "Resolution preset relative to the segmentation model's training resolution."
+        )
+        adv_layout.addWidget(self._resolution_preset_combo)
+
+        res_row = QHBoxLayout()
+        res_row.setContentsMargins(0, 0, 0, 0)
+        res_row.setSpacing(4)
+        w_col = QVBoxLayout()
+        w_col.setContentsMargins(0, 0, 0, 0)
+        w_col.addWidget(QLabel("Width"))
         self._proc_width_spin = QSpinBox()
         self._proc_width_spin.setRange(256, 3840)
         self._proc_width_spin.setSingleStep(32)
-        self._proc_width_spin.setValue(1376)
-        self._proc_width_spin.setToolTip("Width to resize frames to before segmentation and mapping.")
-        adv_layout.addWidget(self._proc_width_spin)
-        adv_layout.addWidget(QLabel("Processing height"))
+        self._proc_width_spin.setValue(self._native_resolution[0])
+        self._proc_width_spin.setEnabled(False)
+        w_col.addWidget(self._proc_width_spin)
+        res_row.addLayout(w_col, 1)
+        h_col = QVBoxLayout()
+        h_col.setContentsMargins(0, 0, 0, 0)
+        h_col.addWidget(QLabel("Height"))
         self._proc_height_spin = QSpinBox()
         self._proc_height_spin.setRange(256, 2160)
         self._proc_height_spin.setSingleStep(32)
-        self._proc_height_spin.setValue(768)
-        self._proc_height_spin.setToolTip("Height to resize frames to before segmentation and mapping.")
-        adv_layout.addWidget(self._proc_height_spin)
+        self._proc_height_spin.setValue(self._native_resolution[1])
+        self._proc_height_spin.setEnabled(False)
+        h_col.addWidget(self._proc_height_spin)
+        res_row.addLayout(h_col, 1)
+        adv_layout.addLayout(res_row)
+
+        self._dpt_resolution_warning = QLabel(
+            "DPT models have no internal resize — non-native resolution may reduce accuracy."
+        )
+        self._dpt_resolution_warning.setWordWrap(True)
+        self._dpt_resolution_warning.setStyleSheet("color: #e0a030; font-size: 11px;")
+        self._dpt_resolution_warning.setVisible(False)
+        adv_layout.addWidget(self._dpt_resolution_warning)
+
+        self._resolution_preset_combo.currentTextChanged.connect(
+            self._on_resolution_preset_changed
+        )
+        self._proc_width_spin.valueChanged.connect(self._update_vram_warning)
+        self._proc_height_spin.valueChanged.connect(self._update_vram_warning)
+
+        # --- Batch size ---
         adv_layout.addWidget(QLabel("Segmentation batch size"))
         self._batch_size_spin = QSpinBox()
         self._batch_size_spin.setRange(1, 16)
-        self._vram_auto_batch = self._auto_batch_size()
-        self._batch_size_spin.setValue(self._vram_auto_batch)
+        self._batch_size_spin.setValue(4)
         self._batch_size_spin.setToolTip(
             "Frames segmented per GPU batch. Lower values use less VRAM."
         )
-        self._batch_size_spin.valueChanged.connect(self._on_vram_param_changed)
+        self._batch_size_spin.valueChanged.connect(self._update_vram_warning)
         adv_layout.addWidget(self._batch_size_spin)
         self._vram_auto_label = QLabel()
         self._vram_auto_label.setWordWrap(True)
         self._vram_auto_label.setStyleSheet("color: #e0a030; font-size: 11px;")
         adv_layout.addWidget(self._vram_auto_label)
         self._reset_defaults_btn = QPushButton("Reset to defaults")
-        self._reset_defaults_btn.setToolTip("Discard VRAM-optimised values and restore CLI defaults.")
         self._reset_defaults_btn.clicked.connect(self._reset_advanced_defaults)
         adv_layout.addWidget(self._reset_defaults_btn)
-        self._using_vram_estimates = self._vram_auto_batch != 4
-        self._update_vram_notices()
+        self._update_vram_warning()
         adv_layout.addWidget(QLabel("Grid bins (ortho resolution)"))
         self._grid_bins_spin = QSpinBox()
         self._grid_bins_spin.setRange(100, 10000)
@@ -524,9 +564,39 @@ class FormPanelMixin:
         self._advanced_panel.setVisible(False)
         setup_layout.addWidget(self._advanced_panel)
 
+        self._gated_warning = QLabel()
+        self._gated_warning.setWordWrap(True)
+        self._gated_warning.setTextFormat(Qt.TextFormat.RichText)
+        self._gated_warning.setOpenExternalLinks(True)
+        self._gated_warning.setStyleSheet(
+            f"background-color: {WARN_BG}; color: {WARN_TEXT};"
+            f" border: 1px solid {WARN_BORDER}; padding: 6px; border-radius: 3px;"
+            " font-size: 11px;"
+        )
+        self._gated_warning.setVisible(False)
+        setup_layout.addWidget(self._gated_warning)
+
         self._submit_btn = QPushButton("Start reconstruction")
         self._submit_btn.clicked.connect(self._on_submit)
         setup_layout.addWidget(self._submit_btn)
+
+        run_ctl_row = QHBoxLayout()
+        run_ctl_row.setContentsMargins(0, 0, 0, 0)
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setToolTip("Cancel the running reconstruction")
+        self._stop_btn.setVisible(False)
+        self._stop_btn.clicked.connect(self._on_stop_clicked)
+        run_ctl_row.addWidget(self._stop_btn)
+        self._pause_btn = QPushButton("Pause")
+        self._pause_btn.setToolTip(
+            "Pause the reconstruction at the next safe checkpoint. "
+            "Long mapping passes may take time to respond."
+        )
+        self._pause_btn.setCheckable(True)
+        self._pause_btn.setVisible(False)
+        self._pause_btn.toggled.connect(self._on_pause_toggled)
+        run_ctl_row.addWidget(self._pause_btn)
+        setup_layout.addLayout(run_ctl_row)
 
         self._batch_btn = QPushButton("Batch reconstruction…")
         self._batch_btn.setToolTip(
@@ -836,9 +906,11 @@ class FormPanelMixin:
         self._download_cancel_requested: set[str] = set()
         self._delete_armed: dict[str, QPushButton] = {}
         self._last_model_states: list = []
+        self._repo_access: dict[str, bool | None] = {}
         self._download_errors: dict[str, str] = {}
 
         self._seg_combo.currentTextChanged.connect(self._on_required_models_changed)
+        self._seg_combo.currentTextChanged.connect(self._on_seg_model_changed)
         self._map_combo.currentTextChanged.connect(self._on_required_models_changed)
         self._map_combo.currentTextChanged.connect(self._on_mapping_backend_changed)
         self._skip_seg_check.toggled.connect(self._on_required_models_changed)
@@ -1050,45 +1122,113 @@ class FormPanelMixin:
         if path:
             self._scs_checkpoint_input.setText(path)
 
-    def _auto_batch_size(self) -> int:
+    def _on_seg_model_changed(self, name: str) -> None:
+        from deepreefmap.segmentation.registry import get_model_resolution
+
+        res = get_model_resolution(name)
+        self._native_resolution = (res[1], res[0]) if res else (1376, 768)
+        self._is_dpt_model = "dpt" in name
+        preset = self._resolution_preset_combo.currentText()
+        if preset != "Custom":
+            self._apply_resolution_preset(preset)
+        self._update_dpt_warning()
+        self._update_vram_warning()
+
+    def _on_resolution_preset_changed(self, preset: str) -> None:
+        is_custom = preset == "Custom"
+        self._proc_width_spin.setEnabled(is_custom)
+        self._proc_height_spin.setEnabled(is_custom)
+        if not is_custom:
+            self._apply_resolution_preset(preset)
+        self._update_dpt_warning()
+        self._update_vram_warning()
+
+    def _apply_resolution_preset(self, preset: str) -> None:
+        nw, nh = self._native_resolution
+        divisors = {"Native": 1, "Half": 2, "Quarter": 4}
+        d = divisors.get(preset, 1)
+        self._proc_width_spin.blockSignals(True)
+        self._proc_height_spin.blockSignals(True)
+        self._proc_width_spin.setValue(nw // d)
+        self._proc_height_spin.setValue(nh // d)
+        self._proc_width_spin.blockSignals(False)
+        self._proc_height_spin.blockSignals(False)
+
+    def _update_dpt_warning(self) -> None:
+        nw, nh = self._native_resolution
+        current_w = self._proc_width_spin.value()
+        current_h = self._proc_height_spin.value()
+        show = self._is_dpt_model and (current_w != nw or current_h != nh)
+        self._dpt_resolution_warning.setVisible(show)
+
+    def _update_vram_warning(self) -> None:
+        w = self._proc_width_spin.value()
+        h = self._proc_height_spin.value()
+        batch = self._batch_size_spin.value()
         try:
             from deepreefmap.device import estimate_segmentation_batch_size, resolve_device
 
-            return estimate_segmentation_batch_size(resolve_device())
+            suggested = estimate_segmentation_batch_size(resolve_device(), w, h)
         except Exception:
-            return 4
-
-    def _update_vram_notices(self) -> None:
-        if self._using_vram_estimates:
+            suggested = 4
+        if batch > suggested:
             self._vram_auto_label.setText(
-                f"(experimental) Batch size set to {self._vram_auto_batch} based on detected GPU VRAM."
+                f"Batch size {batch} may exceed available VRAM at {w}×{h}. "
+                f"Suggested for your GPU: {suggested}."
             )
             self._vram_auto_label.setVisible(True)
             self._vram_notice.setText(
-                "VRAM-optimised values have been applied — check the advanced tab."
+                "VRAM warning — check batch size in advanced settings."
             )
             self._vram_notice.setVisible(True)
-            self._batch_size_spin.setStyleSheet("border: 1px solid #e0a030;")
         else:
             self._vram_auto_label.setVisible(False)
             self._vram_notice.setVisible(False)
-            self._batch_size_spin.setStyleSheet("")
+        self._update_dpt_warning()
 
-    def _on_vram_param_changed(self) -> None:
-        if self._using_vram_estimates and self._batch_size_spin.value() != self._vram_auto_batch:
-            self._using_vram_estimates = False
-            self._update_vram_notices()
+    def _update_gated_warning(self) -> None:
+        seg_name = self._seg_combo.currentText()
+        if self._skip_seg_check.isChecked():
+            self._gated_warning.setVisible(False)
+            return
+        info_match = None
+        for info, cached in self._last_model_states:
+            if info.name == seg_name:
+                info_match = (info, cached)
+                break
+        if info_match is None or not info_match[0].gated:
+            self._gated_warning.setVisible(False)
+            return
+        info, cached = info_match
+        if cached:
+            self._gated_warning.setVisible(False)
+            return
+        links = " ".join(
+            f'<a href="https://huggingface.co/{repo}" style="color:{WARN_TEXT}">{repo}</a>'
+            for repo in info.hf_repos
+        )
+        logged_in = self._hf_auth_user is not None
+        if logged_in:
+            msg = (
+                f"<b>{seg_name}</b> requires license acceptance. "
+                f"Visit each repo and click <i>Agree and access</i>: {links}"
+            )
+        else:
+            msg = (
+                f"<b>{seg_name}</b> requires Hugging Face login and license acceptance. "
+                f"Log in on the Models tab, then visit each repo and click "
+                f"<i>Agree and access</i>: {links}"
+            )
+        self._gated_warning.setText(msg)
+        self._gated_warning.setVisible(True)
 
     def _reset_advanced_defaults(self) -> None:
-        self._proc_width_spin.setValue(1376)
-        self._proc_height_spin.setValue(768)
+        self._resolution_preset_combo.setCurrentText("Native")
         self._batch_size_spin.setValue(4)
         self._grid_bins_spin.setValue(2000)
         self._rr_factor_spin.setValue(0.0)
         self._rr_est_frames_spin.setValue(30)
         self._rr_override_spin.setValue(0.0)
-        self._using_vram_estimates = False
-        self._update_vram_notices()
 
     def _gpu_available(self) -> bool:
         cached = getattr(self, "_gpu_available_cache", None)
@@ -1114,10 +1254,13 @@ class FormPanelMixin:
         if not self._run_name_input.text().strip():
             reasons.append("set a run name")
 
-        cached_names = {info.name for info, cached in self._last_model_states if cached}
-        missing = [m for m in sorted(self._required_model_names()) if m not in cached_names]
-        if missing and self._last_model_states:
-            reasons.append(f"download required model{'s' if len(missing) > 1 else ''}: {', '.join(missing)}")
+        if not self._last_model_states:
+            reasons.append("checking model availability…")
+        else:
+            cached_names = {info.name for info, cached in self._last_model_states if cached}
+            missing = [m for m in sorted(self._required_model_names()) if m not in cached_names]
+            if missing:
+                reasons.append(f"download required model{'s' if len(missing) > 1 else ''}: {', '.join(missing)}")
 
         if self._map_combo.currentText() in ("loger", "loger_star") and not self._gpu_available():
             reasons.append("LoGeR needs a GPU (none detected)")
@@ -1128,6 +1271,8 @@ class FormPanelMixin:
             self._submit_hint.setText("")
         else:
             self._submit_hint.setText("Cannot start: " + "; ".join(reasons) + ".")
+
+        self._update_gated_warning()
     def _open_output_dir(self) -> None:
         d = getattr(self, "_results_output_dir", None) or self._viewer._output_dir
         if d and Path(d).exists():

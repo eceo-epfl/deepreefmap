@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import logging
 import shutil
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,6 +35,20 @@ from deepreefmap.pointcloud.unprojection import depth_to_points
 logger = logging.getLogger(__name__)
 
 
+class ReconstructionCancelled(Exception):
+    """Raised when the user cancels a running reconstruction."""
+
+
+def _check_cancel(
+    cancel_event: threading.Event | None,
+    pause_event: threading.Event | None = None,
+) -> None:
+    if pause_event is not None:
+        pause_event.wait()
+    if cancel_event is not None and cancel_event.is_set():
+        raise ReconstructionCancelled("Reconstruction cancelled by user")
+
+
 def run_reconstruction(
     video_paths: list[str],
     fps: int,
@@ -60,6 +75,8 @@ def run_reconstruction(
     refine_intrinsics_from_mapper: bool = False,
     viewer: object | None = None,
     run_name: str | None = None,
+    cancel_event: threading.Event | None = None,
+    pause_event: threading.Event | None = None,
 ) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -123,6 +140,7 @@ def run_reconstruction(
             logger.info("Resume: preprocess cache hit, skipping segmentation model load.")
         if viewer is not None:
             viewer.set_stage("startup", "completed", "Backends initialized")
+        _check_cancel(cancel_event, pause_event)
 
         estimated_total = _estimate_selected_frame_count([Path(p) for p in video_paths], fps=fps, begin_s=begin_s, end_s=end_s)
         if estimated_total is not None:
@@ -176,6 +194,8 @@ def run_reconstruction(
                 batch_size=preprocess_batch_size,
                 processing_image_size=processing_image_size,
                 processing_intrinsics=processing_intrinsics,
+                cancel_event=cancel_event,
+                pause_event=pause_event,
             )
             if len(frame_batch.frames) > 0:
                 resume_mod.write_sidecar(
@@ -255,6 +275,7 @@ def run_reconstruction(
                 if viewer is not None:
                     viewer.set_stage("mapping", "completed", "Loaded from cache")
         if mapping_result is None:
+            _check_cancel(cancel_event, pause_event)
             logger.info("Initializing mapping backend '%s'", mapping_name)
             mapping = create_mapping_backend(mapping_name, device=device, **(mapping_options or {}))
             mapping.initialize(image_size=processing_image_size, intrinsics=processing_intrinsics)
@@ -267,7 +288,9 @@ def run_reconstruction(
                 frame_batch.frame_indices,
                 frame_batch.images,
                 gravity_vectors=frame_batch.gravity_vectors,
+                cancel_event=cancel_event,
             )
+            _check_cancel(cancel_event, pause_event)
             mapping_result = _maybe_refine_intrinsics(
                 mapping_name=mapping_name,
                 mapping=mapping,
@@ -331,6 +354,7 @@ def run_reconstruction(
             "run_timestamp": run_started_at,
         }
 
+        _check_cancel(cancel_event, pause_event)
         if viewer is not None and not skip_segmentation:
             viewer.set_stage("outputs", "running", "Building preview point cloud")
             preview_xyz, preview_rgb = _build_geometry_cloud(
@@ -400,6 +424,7 @@ def run_reconstruction(
             logger.info("Done. Outputs in %s", output_dir)
             return
 
+        _check_cancel(cancel_event, pause_event)
         logger.info("Building filtered semantic reference cloud...")
 
         _CLOUD_STAGE_LABELS = {
@@ -463,6 +488,7 @@ def run_reconstruction(
             tsdf_rgb = None
             semantic_tsdf = None
 
+        _check_cancel(cancel_event, pause_event)
         logger.info("Building aggregated ortho grid...")
         if viewer is not None:
             viewer.set_stage("outputs", "running", "Generating outputs")
@@ -567,6 +593,9 @@ def run_reconstruction(
         if viewer is not None:
             viewer.mark_outputs_ready(str(output_dir), output_files)
         logger.info("Done. Outputs in %s", output_dir)
+    except ReconstructionCancelled:
+        logger.info("Reconstruction cancelled by user at stage '%s'", active_stage)
+        raise
     except Exception as exc:
         if viewer is not None:
             viewer.fail_run(active_stage, str(exc))
@@ -587,6 +616,8 @@ def _prepare_frames(
     batch_size: int = 4,
     processing_image_size: tuple[int, int] | None = None,
     processing_intrinsics: np.ndarray | None = None,
+    cancel_event: threading.Event | None = None,
+    pause_event: threading.Event | None = None,
 ) -> FrameBatch:
     frames_dir = output_dir / "frames"
     labels_dir = output_dir / "labels"
@@ -658,6 +689,7 @@ def _prepare_frames(
     try:
         target_size = processing_image_size if processing_image_size is not None else rectifier.profile.image_size
         for idx, frame in iter_video_frames(video_paths, target_fps=fps, begin_s=begin_s, end_s=end_s):
+            _check_cancel(cancel_event, pause_event)
             rectified = rectifier.rectify(frame)
             if (rectified.shape[1], rectified.shape[0]) != target_size:
                 target_w, target_h = target_size

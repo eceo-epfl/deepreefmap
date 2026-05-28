@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -36,6 +39,7 @@ class MappingBackend(ABC):
         frame_indices: list[int],
         images_rgb: list[np.ndarray],
         gravity_vectors: np.ndarray | None = None,
+        cancel_event: threading.Event | None = None,
     ):
         """Return depth + pose estimates for an ordered image sequence.
 
@@ -44,11 +48,13 @@ class MappingBackend(ABC):
         this default adapter.
         """
         from deepreefmap.pipeline.artifacts import MappingSequenceResult
+        from deepreefmap.pipeline.orchestrator import ReconstructionCancelled
 
-        estimates = [
-            self.process_frame(frame_index=idx, image_rgb=image)
-            for idx, image in zip(frame_indices, images_rgb)
-        ]
+        estimates = []
+        for idx, image in zip(frame_indices, images_rgb):
+            if cancel_event is not None and cancel_event.is_set():
+                raise ReconstructionCancelled("Cancelled during mapping")
+            estimates.append(self.process_frame(frame_index=idx, image_rgb=image))
         if not estimates:
             raise RuntimeError("Cannot process an empty mapping sequence")
         confidence = None

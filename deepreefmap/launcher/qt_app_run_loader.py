@@ -108,16 +108,40 @@ class RunLoadingMixin:
         # clickable file:// link.
         self._update_effective_dir_label()
 
+        self._cancel_event = threading.Event()
+        self._pause_event = threading.Event()
+        self._pause_event.set()
+        self._stop_btn.setVisible(True)
+        self._stop_btn.setEnabled(True)
+        self._stop_btn.setText("Stop")
+        self._pause_btn.setVisible(True)
+        self._pause_btn.setChecked(False)
+        self._pause_btn.setText("Pause")
+
         self._pipeline_thread = threading.Thread(
-            target=self._run_pipeline, args=(kwargs,), daemon=True
+            target=self._run_pipeline,
+            args=(kwargs, self._cancel_event, self._pause_event),
+            daemon=True,
         )
         self._pipeline_thread.start()
 
-    def _run_pipeline(self, kwargs: dict) -> None:
-        from deepreefmap.pipeline.orchestrator import run_reconstruction
+    def _run_pipeline(
+        self,
+        kwargs: dict,
+        cancel_event: threading.Event,
+        pause_event: threading.Event,
+    ) -> None:
+        from deepreefmap.pipeline.orchestrator import ReconstructionCancelled, run_reconstruction
 
         try:
-            run_reconstruction(viewer=self._viewer, **kwargs)
+            run_reconstruction(
+                viewer=self._viewer,
+                cancel_event=cancel_event,
+                pause_event=pause_event,
+                **kwargs,
+            )
+        except ReconstructionCancelled:
+            self._sig_pipeline_cancelled.emit()
         except Exception as exc:
             logger.exception("Reconstruction failed")
             msg = str(exc)
@@ -129,11 +153,43 @@ class RunLoadingMixin:
         self._status_label.setText(f"Failed: {msg}")
         self._reset_progress_bars()
         self._set_form_enabled(True)
+        self._stop_btn.setVisible(False)
+        self._pause_btn.setVisible(False)
         close_run_log_file(self._run_log_file_handler)
         self._run_log_file_handler = None
-        # Failures bounce back to SETUP so the user can adjust inputs and retry
-        # without needing to click "New reconstruction".
         self._set_app_mode("SETUP")
+
+    def _on_pipeline_cancelled(self) -> None:
+        self._status_label.setText("Reconstruction stopped by user.")
+        self._reset_progress_bars()
+        self._set_form_enabled(True)
+        self._stop_btn.setVisible(False)
+        self._pause_btn.setVisible(False)
+        close_run_log_file(self._run_log_file_handler)
+        self._run_log_file_handler = None
+        self._set_app_mode("SETUP")
+
+    def _on_stop_clicked(self) -> None:
+        if hasattr(self, "_cancel_event") and self._cancel_event is not None:
+            self._cancel_event.set()
+        if hasattr(self, "_pause_event") and self._pause_event is not None:
+            self._pause_event.set()
+        self._stop_btn.setEnabled(False)
+        self._stop_btn.setText("Stopping…")
+        self._pause_btn.setEnabled(False)
+        self._status_label.setText("Stopping reconstruction…")
+
+    def _on_pause_toggled(self, paused: bool) -> None:
+        if not hasattr(self, "_pause_event") or self._pause_event is None:
+            return
+        if paused:
+            self._pause_event.clear()
+            self._pause_btn.setText("Resume")
+            self._status_label.setText("Reconstruction paused.")
+        else:
+            self._pause_event.set()
+            self._pause_btn.setText("Pause")
+            self._status_label.setText("Reconstruction resumed.")
 
     def _set_form_enabled(self, enabled: bool) -> None:
         for w in (

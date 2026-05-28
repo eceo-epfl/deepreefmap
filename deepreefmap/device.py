@@ -38,10 +38,17 @@ def autocast_context(
     )
 
 
-def estimate_segmentation_batch_size(device: torch.device) -> int:
-    # SegFormer-B2 at 1376x768 uses ~1.5 GB per frame in attention activations
-    # plus ~1 GB for weights. Thresholds leave headroom for fragmentation and
-    # the desktop compositor. Not model-aware — treats B2 as the baseline.
+def estimate_segmentation_batch_size(
+    device: torch.device,
+    width: int = 1376,
+    height: int = 768,
+) -> int:
+    """Suggest a batch size that fits in free VRAM at the given resolution.
+
+    Thresholds are calibrated against SegFormer-B2 at 1376×768 (~1.5 GB per
+    frame in attention activations + ~1 GB weights) and scale linearly with
+    pixel count.
+    """
     try:
         if device.type == "cuda":
             free, _total = torch.cuda.mem_get_info(device)
@@ -54,9 +61,11 @@ def estimate_segmentation_batch_size(device: torch.device) -> int:
     except Exception:
         free = 4 * 1024**3
     free_gb = free / (1024**3)
-    if free_gb >= 12:
+    _BASELINE_PIXELS = 1376 * 768
+    scale = max((width * height) / _BASELINE_PIXELS, 0.25)
+    if free_gb >= 12 * scale:
         return 4
-    if free_gb >= 6:
+    if free_gb >= 6 * scale:
         return 2
     return 1
 
