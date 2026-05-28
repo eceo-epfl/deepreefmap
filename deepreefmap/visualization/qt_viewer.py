@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
@@ -803,11 +803,12 @@ class QtPointCloudViewer(QWidget):
 
         self._point_filter: Callable[[np.ndarray], np.ndarray] | None = None
 
-        self._picked_actor_inner = None
-        self._picked_actor_outer = None
         self._pick_2d_actors: list[object] = []
         self._pick_line_sources: list[object] = []
         self._pick_ring_sources: list[object] = []
+        # Crosshair ticks stored as (line_source, ox1, oy1, ox2, oy2): pixel
+        # offsets from the anchor so update_pick_anchor can reposition them.
+        self._pick_tick_sources: list[tuple[Any, float, float, float, float]] = []
         self._picked_xyz: tuple[float, float, float] | None = None
         self._picked_color: tuple[int, int, int] = (255, 220, 60)
         self._picked_leader_target: tuple[float, float] | None = None
@@ -855,6 +856,13 @@ class QtPointCloudViewer(QWidget):
     # within this window is used, so picks stay accurate without needing a
     # pixel-perfect hit.
     _PICK_PIXEL_RADIUS = 8
+
+    # Selected-point reticle (fixed screen-space pixels): a thin hollow ring
+    # plus 4 crosshair ticks with an open centre, so the picked point and its
+    # neighbours stay visible instead of being hidden under a filled blob.
+    _PICK_RING_RADIUS = 11.0
+    _PICK_TICK_INNER = 6.0
+    _PICK_TICK_OUTER = 14.0
 
     def eventFilter(self, obj, event):  # type: ignore[override]
         if obj is self._canvas_container and event.type() == QEvent.Type.Resize:
@@ -1065,7 +1073,7 @@ class QtPointCloudViewer(QWidget):
             from vtkmodules.vtkRenderingCore import vtkWorldPointPicker
 
             ren = self._plotter.renderer
-            win = self._plotter.iren.GetRenderWindow()
+            win = self._plotter.render_window
             w, h = ren.GetSize()
             if w <= 0 or h <= 0:
                 return None
@@ -1078,7 +1086,10 @@ class QtPointCloudViewer(QWidget):
             nx, ny = x1 - x0 + 1, y1 - y0 + 1
             zarr = vtkFloatArray()
             win.GetZbufferData(x0, y0, x1, y1, zarr)
-            z = vtk_to_numpy(zarr).reshape(ny, nx)  # row 0 == y0 (bottom)
+            raw = vtk_to_numpy(zarr)
+            if raw.size != nx * ny:
+                return None
+            z = raw.reshape(ny, nx)  # row 0 == y0 (bottom)
             sel = self._select_pick_pixel(z, (cx - x0, cy - y0))
             if sel is None:
                 return None
@@ -1095,7 +1106,7 @@ class QtPointCloudViewer(QWidget):
                     ds = mapper.GetInput() if mapper is not None else None
                     if ds is None or ds.GetNumberOfPoints() == 0:
                         continue
-                    pid = ds.FindPoint(float(world[0]), float(world[1]), float(world[2]))
+                    pid = ds.FindPoint((float(world[0]), float(world[1]), float(world[2])))
                     if pid < 0:
                         continue
                     pt = np.asarray(ds.GetPoint(int(pid)), dtype=np.float64) - world
@@ -1266,25 +1277,22 @@ class QtPointCloudViewer(QWidget):
         anchor_display: tuple[float, float] | None = None,
         leader_target_display: tuple[float, float] | None = None,
     ) -> None:
-        """Mark the picked point with a big translucent class-coloured sphere.
+        """Mark the picked point with a screen-space crosshair + hollow ring.
 
-        Optional 2D leader line and outline ring in display coords connect the
-        sphere to a screen-space tooltip card. The world XYZ + leader target
-        are cached so a camera-modified observer can redraw the 2D overlay
-        with a recomputed anchor as the user orbits.
+        The reticle's open centre keeps the picked point and its neighbours
+        visible. An optional 2D leader line connects it to a screen-space
+        tooltip card. The world XYZ + leader target are cached so a
+        camera-modified observer can redraw the 2D overlay with a recomputed
+        anchor as the user orbits.
 
         On repeated calls with the same picked XYZ this only mutates the
-        cached 2D source geometry — no actor allocation, no sphere recreate,
-        no flicker.
+        cached 2D source geometry — no actor allocation, no recreate, no
+        flicker.
         """
         if self._plotter is None:
             return
         new_xyz = (float(xyz[0]), float(xyz[1]), float(xyz[2]))
-        actors_present = (
-            self._picked_actor_inner is not None
-            or self._pick_line_sources
-            or self._pick_ring_sources
-        )
+        actors_present = bool(self._pick_2d_actors)
         if (
             actors_present
             and self._picked_xyz is not None
@@ -1304,43 +1312,8 @@ class QtPointCloudViewer(QWidget):
     ) -> None:
         if self._plotter is None:
             return
-        import pyvista as pv
-
         self.clear_picked_marker()
-        pd = pv.PolyData(np.asarray([xyz], dtype=np.float32))
         r, g, b = color
-
-        try:
-            actor = self._plotter.add_mesh(
-                pd,
-                color=(r / 255.0, g / 255.0, b / 255.0),
-                point_size=26.0,
-                opacity=0.75,
-                render_points_as_spheres=True,
-                style="points",
-                name="picked_marker",
-                pickable=False,
-            )
-        except TypeError:
-            actor = self._plotter.add_mesh(
-                pd,
-                color=(r / 255.0, g / 255.0, b / 255.0),
-                point_size=26.0,
-                opacity=0.75,
-                render_points_as_spheres=True,
-                style="points",
-                name="picked_marker",
-            )
-        self._picked_actor_inner = actor
-        self._picked_actor_outer = None
-        if actor is not None:
-            try:
-                mapper = actor.GetMapper()
-                if mapper is not None:
-                    mapper.SetRelativeCoincidentTopologyPointOffsetParameter(-2.0)
-            except Exception:
-                pass
-
         self._picked_xyz = (float(xyz[0]), float(xyz[1]), float(xyz[2]))
         self._picked_color = (int(r), int(g), int(b))
         self._picked_leader_target = leader_target_display
@@ -1355,7 +1328,7 @@ class QtPointCloudViewer(QWidget):
             self._plotter.render()
             # Some pyvistaqt builds need an extra render-window flush before
             # the 2D actors actually appear on screen.
-            self._plotter.iren.GetRenderWindow().Render()
+            self._plotter.render_window.Render()
         except Exception:
             pass
 
@@ -1372,7 +1345,7 @@ class QtPointCloudViewer(QWidget):
         """
         if self._plotter is None:
             return
-        if not self._pick_line_sources and not self._pick_ring_sources:
+        if not (self._pick_line_sources or self._pick_ring_sources or self._pick_tick_sources):
             return
         ax, ay = float(anchor_display[0]), float(anchor_display[1])
         if leader_target_display is not None:
@@ -1390,6 +1363,14 @@ class QtPointCloudViewer(QWidget):
         for src in self._pick_ring_sources:
             try:
                 src.SetCenter(ax, ay, 0.0)
+                src.Modified()
+            except Exception:
+                continue
+        for entry in self._pick_tick_sources:
+            try:
+                src, ox1, oy1, ox2, oy2 = entry
+                src.SetPoint1(ax + ox1, ay + oy1, 0.0)
+                src.SetPoint2(ax + ox2, ay + oy2, 0.0)
                 src.Modified()
             except Exception:
                 continue
@@ -1509,26 +1490,54 @@ class QtPointCloudViewer(QWidget):
             self._pick_2d_actors.append(ring_actor)
             self._pick_ring_sources.append(src)
 
+        def _add_tick(off1, off2, rgb, width, opacity=1.0):
+            # A crosshair tick from anchor+off1 to anchor+off2. The offsets are
+            # cached so update_pick_anchor can slide it as the camera orbits.
+            tick_src = vtk.vtkLineSource()
+            tick_src.SetPoint1(ax + off1[0], ay + off1[1], 0.0)
+            tick_src.SetPoint2(ax + off2[0], ay + off2[1], 0.0)
+            mapper = vtk.vtkPolyDataMapper2D()
+            mapper.SetInputConnection(tick_src.GetOutputPort())
+            mapper.SetTransformCoordinate(coord)
+            tick_actor = vtk.vtkActor2D()
+            tick_actor.SetMapper(mapper)
+            tick_actor.GetProperty().SetColor(*rgb)
+            tick_actor.GetProperty().SetLineWidth(width)
+            tick_actor.GetProperty().SetOpacity(opacity)
+            renderer.AddActor2D(tick_actor)
+            self._pick_2d_actors.append(tick_actor)
+            self._pick_tick_sources.append(
+                (tick_src, off1[0], off1[1], off2[0], off2[1])
+            )
+
         if leader_target_display is not None:
             tgt = (float(leader_target_display[0]), float(leader_target_display[1]))
             # Black stroke under, white over: stays readable against any background.
             _add_line((ax, ay), tgt, (0.0, 0.0, 0.0), 4.0, 0.95)
             _add_line((ax, ay), tgt, (1.0, 1.0, 1.0), 1.8, 0.95)
 
-        # Sphere is point_size 26 (~26px diameter); ring radii frame it with a
-        # heavy black outline for contrast against any cloud colour.
-        _add_ring(18.0, (0.0, 0.0, 0.0), 3.5, 0.95)
-        _add_ring(15.5, (r / 255.0, g / 255.0, b / 255.0), 2.0, 1.0)
+        # Reticle: a thin hollow ring + 4 crosshair ticks with an open centre.
+        # Black halos go down first, the class colour over them, so the marker
+        # reads against any cloud colour without a filled blob hiding the point.
+        rad = self._PICK_RING_RADIUS
+        ri, ro = self._PICK_TICK_INNER, self._PICK_TICK_OUTER
+        col = (r / 255.0, g / 255.0, b / 255.0)
+        dirs = ((0.0, 1.0), (0.0, -1.0), (1.0, 0.0), (-1.0, 0.0))
+        _add_ring(rad, (0.0, 0.0, 0.0), 3.0, 0.9)
+        for dx, dy in dirs:
+            _add_tick((dx * ri, dy * ri), (dx * ro, dy * ro), (0.0, 0.0, 0.0), 3.0, 0.9)
+        _add_ring(rad, col, 1.5, 1.0)
+        for dx, dy in dirs:
+            _add_tick((dx * ri, dy * ri), (dx * ro, dy * ro), col, 1.5, 1.0)
 
     def clear_picked_marker(self) -> None:
         self._picked_xyz = None
         self._picked_leader_target = None
         if self._plotter is None:
-            self._picked_actor_inner = None
-            self._picked_actor_outer = None
             self._pick_2d_actors = []
             self._pick_line_sources = []
             self._pick_ring_sources = []
+            self._pick_tick_sources = []
             self._pick_camera_obs_id = None
             return
         # Detach the camera observer first so a mid-clear ModifiedEvent can't
@@ -1541,20 +1550,6 @@ class QtPointCloudViewer(QWidget):
             except Exception:
                 logger.debug("Could not remove pick camera observer", exc_info=True)
             self._pick_camera_obs_id = None
-        for attr in ("_picked_actor_outer", "_picked_actor_inner"):
-            actor = getattr(self, attr, None)
-            if actor is None:
-                continue
-            try:
-                self._plotter.remove_actor(actor, render=False)
-            except TypeError:
-                try:
-                    self._plotter.remove_actor(actor)
-                except Exception:
-                    pass
-            except Exception:
-                pass
-            setattr(self, attr, None)
         renderer = self._plotter.renderer
         for actor in self._pick_2d_actors:
             try:
@@ -1564,6 +1559,7 @@ class QtPointCloudViewer(QWidget):
         self._pick_2d_actors = []
         self._pick_line_sources = []
         self._pick_ring_sources = []
+        self._pick_tick_sources = []
         try:
             self._plotter.render()
         except Exception:
@@ -1952,10 +1948,7 @@ class QtPointCloudViewer(QWidget):
                 _remove(self._live_actor)
             if self._simple_actor is not None:
                 _remove(self._simple_actor)
-            if self._picked_actor_inner is not None:
-                _remove(self._picked_actor_inner)
-            if self._picked_actor_outer is not None:
-                _remove(self._picked_actor_outer)
+            self.clear_picked_marker()
             try:
                 self._plotter.render()
             except Exception:
@@ -1973,8 +1966,6 @@ class QtPointCloudViewer(QWidget):
         self._live_actor = None
         self._live_polydata = None
         self._simple_actor = None
-        self._picked_actor_inner = None
-        self._picked_actor_outer = None
         self._final_index = None
         self._live_cache = None
         self._geometry_mode = False
