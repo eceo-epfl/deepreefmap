@@ -6,6 +6,9 @@ set -e
 OUTPUT_NAME="${1:-${OUTPUT_NAME:-deepreefmap-linux-x64}}"
 
 rm -f dist/*.whl dist/*.tar.gz
+# The wheel vendors LoGeR's `loger` package from this submodule (see pyproject
+# [tool.setuptools.packages.find]); it must be populated before uv build.
+git submodule update --init --recursive
 uv build
 
 WHEEL=$(ls dist/deepreefmap-*-py3-none-any.whl)
@@ -65,9 +68,14 @@ fn exec_gui(mut command: Command) -> Result<()> {
 }
 RUST
 
+# PYAPP_PROJECT_FEATURES installs the loger + gopro extras into the bundled venv so
+# the LoGeR backend and GoPro telemetry work in the binary; PyApp appends [features]
+# to the embedded wheel. py-gpmf-parser (gopro) is marker-gated to linux/x86_64, so
+# it installs only on the Linux build and is skipped on windows/macos.
 PYAPP_PROJECT_NAME=deepreefmap \
 PYAPP_PROJECT_VERSION="$VERSION" \
 PYAPP_PROJECT_PATH="$PWD/$WHEEL" \
+PYAPP_PROJECT_FEATURES=loger,gopro \
 PYAPP_EXEC_SPEC="deepreefmap.launcher.qt_app:launch" \
 PYAPP_PYTHON_VERSION=3.11 \
 PYAPP_FULL_ISOLATION=1 \

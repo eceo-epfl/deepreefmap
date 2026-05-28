@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 from typing import Any, TYPE_CHECKING
+
+from deepreefmap.paths import loger_ckpts_dir
 
 if TYPE_CHECKING:
     from deepreefmap.mapping.base import MappingBackend
@@ -10,12 +11,9 @@ if TYPE_CHECKING:
 
 _BACKENDS: tuple[str, ...] = ("scsfmlearner", "loger", "loger_star")
 
-_LOGER_CKPTS = Path(__file__).resolve().parents[2] / "third_party" / "LoGeR" / "ckpts"
-
-# The importable package inside the vendored submodule. `third_party/LoGeR`
-# itself exists (as an empty dir) before `git submodule update --init`, so we
-# check the inner `loger/` package to know the submodule is actually populated.
-_LOGER_SUBMODULE = Path(__file__).resolve().parents[2] / "third_party" / "LoGeR" / "loger"
+# LoGeR checkpoints live outside the HF cache (the backend loads them from a
+# fixed path, not by repo id) in a user-writable dir. See deepreefmap.paths.
+_LOGER_CKPTS = loger_ckpts_dir()
 
 # Distinctive deps from the `loger` extra. None of these is pulled in by torch,
 # transformers, or the base app, so their presence reliably signals the extra
@@ -25,13 +23,13 @@ _LOGER_EXTRA_SENTINELS = ("roma", "einops", "accelerate")
 
 
 def loger_available() -> bool:
-    """True when both the LoGeR submodule and the `--extra loger` deps are present.
+    """True when both the vendored `loger` package and the `--extra loger` deps import.
 
-    Lightweight by design: filesystem check + importlib metadata lookups only,
-    no torch or backend import. Used to gate loger/loger_star in the UI so they
-    are shown disabled rather than crashing at run time with an ImportError.
+    Lightweight by design: importlib spec lookups only, no torch or backend
+    import. Used to gate loger/loger_star in the UI so they are shown disabled
+    rather than crashing at run time with an ImportError.
     """
-    if not _LOGER_SUBMODULE.is_dir():
+    if importlib.util.find_spec("loger") is None:
         return False
     return all(importlib.util.find_spec(m) is not None for m in _LOGER_EXTRA_SENTINELS)
 

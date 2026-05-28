@@ -10,16 +10,19 @@ from pathlib import Path
 
 from huggingface_hub.constants import HF_HUB_CACHE
 
+from deepreefmap.paths import loger_ckpts_dir
+
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[int, int], None]
 
 _HF_CACHE_ROOT = Path(HF_HUB_CACHE)
 
-# LoGeR checkpoints live outside the HF cache because the backend resolves
-# them via a relative path under the vendored submodule. Keep this in sync
-# with mapping/registry.py::_LOGER_CKPTS.
-_LOGER_CKPTS = Path(__file__).resolve().parents[2] / "third_party" / "LoGeR" / "ckpts"
+# LoGeR checkpoints live outside the HF cache (the backend loads them from a fixed
+# path, not by repo id). Materialised here after snapshot_download; must be
+# user-writable, so it's a platformdirs dir (see deepreefmap.paths), not the
+# read-only install tree. Keep in sync with mapping/registry.py::_LOGER_CKPTS.
+_LOGER_CKPTS = loger_ckpts_dir()
 
 # Refuse to start a download when free disk under the HF cache mount is below
 # this threshold. The DINOv3-L head + backbone alone are ~2.5 GB; leaving a
@@ -45,8 +48,8 @@ class ModelInfo:
     approx_size_mb: int | None = None
     # Optional copy step run after snapshot_download. Maps repo-relative
     # paths inside the snapshot to absolute destinations the runtime backend
-    # reads from. Used for LoGeR, which loads checkpoints from a fixed path
-    # under third_party/LoGeR/ckpts rather than the HF cache.
+    # reads from. Used for LoGeR, which loads checkpoints from a fixed
+    # user-writable path (see deepreefmap.paths.loger_ckpts_dir), not the HF cache.
     materialise_to: dict[str, Path] = field(default_factory=dict)
     # Name of an optional install extra this model needs (e.g. "loger"). When
     # the extra isn't installed the UI shows the model disabled with a hint

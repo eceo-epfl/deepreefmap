@@ -12,6 +12,7 @@ import numpy as np
 
 from deepreefmap.camera.intrinsics import scale_intrinsics
 from deepreefmap.mapping.base import FrameEstimate, MappingBackend
+from deepreefmap.paths import loger_ckpts_dir
 from deepreefmap.pipeline.artifacts import MappingSequenceResult
 
 logger = logging.getLogger(__name__)
@@ -25,10 +26,10 @@ logger = logging.getLogger(__name__)
 _POSE_IDENTITY_TOLERANCE = 1e-3
 
 
-# LoGeR upstream is a research repo with no pyproject.toml/setup.py; we vendor
-# it as a submodule under third_party/LoGeR and put its package directory on
-# sys.path so `import loger.*` resolves. Done at module import time so any
-# helper script (not just the backend) that imports this file gets the fix.
+# The wheel vendors LoGeR's `loger` package (see pyproject [tool.setuptools.packages.find]
+# namespaces=true), so a deployed binary imports it directly. In a source checkout that
+# package isn't installed, so as a fallback we also put the third_party/LoGeR submodule on
+# sys.path. Guarded by is_dir(), this is a harmless no-op in the frozen binary.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _LOGER_PATH = _REPO_ROOT / "third_party" / "LoGeR"
 if _LOGER_PATH.is_dir() and str(_LOGER_PATH) not in sys.path:
@@ -59,8 +60,8 @@ class LoGeRBackend(MappingBackend):
         self.name = backend_id
         self.default_window_size = window_size
         self._overlap_size = overlap_size
-        self._model_path = model_path or str(_LOGER_PATH / "ckpts" / "LoGeR" / "latest.pt")
-        self._config_path = config_path or str(_LOGER_PATH / "ckpts" / "LoGeR" / "original_config.yaml")
+        self._model_path = model_path or str(loger_ckpts_dir() / "LoGeR" / "latest.pt")
+        self._config_path = config_path or str(loger_ckpts_dir() / "LoGeR" / "original_config.yaml")
         self._target_resolution = target_resolution
         self._k = np.eye(3, dtype=np.float32)
         self._image_size: tuple[int, int] | None = None

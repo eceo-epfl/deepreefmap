@@ -45,14 +45,20 @@ dependencies = [
   "tqdm>=4.67.3",
   "zarr>=2.18,<3",
   "numcodecs>=0.12,<0.16",
+  # User-writable location for LoGeR checkpoints (see deepreefmap.paths.loger_ckpts_dir):
+  # a frozen PyApp binary's install tree is read-only, so they can't live under third_party/.
+  "platformdirs>=4",
 ]
 
 [project.optional-dependencies]
 # LoGeR upstream (https://github.com/Junyi42/LoGeR) is a research repo with no
-# pyproject.toml/setup.py, so we cannot pip-install it. Instead, the LoGeR
-# backend imports it directly from third_party/LoGeR via sys.path. This extra
-# pulls in LoGeR's *runtime* dependencies (omitting demo-only ones like
-# gradio/trimesh/matplotlib/evo). Initialize the submodule with:
+# pyproject.toml/setup.py, so we cannot pip-install it. Instead we vendor its
+# `loger` namespace package into our wheel (see [tool.setuptools.packages.find-namespace])
+# so it ships inside the frozen PyApp binary. This extra pulls in LoGeR's *runtime*
+# dependencies (omitting demo-only ones like gradio/trimesh/matplotlib/evo). The
+# loger.models.pi3 import path needs only einops beyond the base deps; xformers and
+# the cuRoPE2D CUDA kernel are guarded optional imports. Initialize the submodule
+# before building with:
 #   git submodule update --init --recursive
 loger = [
   "safetensors>=0.4.0",
@@ -78,8 +84,13 @@ deepreefmap = "deepreefmap.cli.main:app"
 requires = ["setuptools>=82.0.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
+# deepreefmap is a normal package; `loger` (the third_party/LoGeR submodule) is a
+# PEP-420 namespace package with no __init__.py at its top levels, so namespaces=true
+# is required to discover it, and it's vendored from its own root into the wheel.
 [tool.setuptools.packages.find]
-include = ["deepreefmap*"]
+where = [".", "third_party/LoGeR"]
+include = ["deepreefmap*", "loger*"]
+namespaces = true
 
 [tool.setuptools.package-data]
 "deepreefmap.resources" = ["configs/*.yaml", "camera_profiles/*.json", "*.png", "fonts/*.ttf", "fonts/*.txt"]

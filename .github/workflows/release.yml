@@ -1,4 +1,4 @@
-name: Release
+name: Build
 
 on:
   push:
@@ -6,25 +6,57 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# Branch pushes produce downloadable artifacts only; a GitHub Release is cut
+# solely from v* tags (the release job below). Cancel superseded runs on the
+# same ref — a tag has a unique ref, so tag→release builds are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build-linux:
-    name: Build linux-x64
-    runs-on: ubuntu-latest
+  build:
+    name: ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: deepreefmap-linux-x64
+            ext: ""
+            filetype: ELF
+          - os: windows-latest
+            artifact: deepreefmap-windows-x64
+            ext: ".exe"
+            filetype: ""
+          - os: macos-latest
+            artifact: deepreefmap-macos-arm64
+            ext: ""
+            filetype: Mach-O
+
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          # The build vendors LoGeR's `loger` package from this submodule into
+          # the wheel (see pyproject [tool.setuptools.packages.find]).
+          submodules: recursive
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
 
       - name: Compute artifact label
         id: label
@@ -36,141 +68,62 @@ jobs:
             echo "value=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build PyApp binary
-        run: bash scripts/build.sh
-
-      - name: Label binary
-        run: mv dist/deepreefmap-linux-x64 dist/deepreefmap-linux-x64-${{ steps.label.outputs.value }}
-
-      - name: Verify binary is executable
-        run: |
-          test -x dist/deepreefmap-linux-x64-${{ steps.label.outputs.value }}
-          file dist/deepreefmap-linux-x64-${{ steps.label.outputs.value }} | grep -q ELF
-
-      - name: Upload linux artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deepreefmap-linux-x64-${{ steps.label.outputs.value }}
-          path: dist/deepreefmap-linux-x64-${{ steps.label.outputs.value }}
-          if-no-files-found: error
-
-  build-windows:
-    name: Build windows-x64
-    runs-on: windows-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Compute artifact label
-        id: label
+      # build.sh takes the output artifact name as $1; build.ps1 hardcodes the
+      # windows name. `shell:` can't reference the matrix context, so split by OS.
+      - name: Build PyApp binary (Unix)
+        if: runner.os != 'Windows'
         shell: bash
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
-          fi
+        run: bash scripts/build.sh ${{ matrix.artifact }}
 
-      - name: Build PyApp binary
+      - name: Build PyApp binary (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/build.ps1
 
       - name: Label binary
-        shell: pwsh
-        run: Move-Item dist\deepreefmap-windows-x64.exe "dist\deepreefmap-windows-x64-${{ steps.label.outputs.value }}.exe"
-
-      - name: Verify binary exists
-        shell: pwsh
-        run: Get-Item "dist\deepreefmap-windows-x64-${{ steps.label.outputs.value }}.exe"
-
-      - name: Upload windows artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deepreefmap-windows-x64-${{ steps.label.outputs.value }}
-          path: dist/deepreefmap-windows-x64-${{ steps.label.outputs.value }}.exe
-          if-no-files-found: error
-
-  build-macos:
-    name: Build macos-arm64
-    runs-on: macos-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Compute artifact label
-        id: label
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          mv "dist/${{ matrix.artifact }}${{ matrix.ext }}" \
+             "dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}${{ matrix.ext }}"
+
+      - name: Verify binary
+        shell: bash
+        run: |
+          f="dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}${{ matrix.ext }}"
+          test -f "$f"
+          # POSIX binaries: assert the executable bit and the expected object format.
+          # Windows (empty filetype) skips this — Git Bash has no reliable `file`.
+          if [ -n "${{ matrix.filetype }}" ]; then
+            test -x "$f"
+            file "$f" | grep -q "${{ matrix.filetype }}"
           fi
 
-      - name: Build PyApp binary
-        run: bash scripts/build.sh deepreefmap-macos-arm64
-
-      - name: Label binary
-        run: mv dist/deepreefmap-macos-arm64 dist/deepreefmap-macos-arm64-${{ steps.label.outputs.value }}
-
-      - name: Verify binary is executable
-        run: |
-          test -x dist/deepreefmap-macos-arm64-${{ steps.label.outputs.value }}
-          file dist/deepreefmap-macos-arm64-${{ steps.label.outputs.value }} | grep -q Mach-O
-
-      - name: Upload macos artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: deepreefmap-macos-arm64-${{ steps.label.outputs.value }}
-          path: dist/deepreefmap-macos-arm64-${{ steps.label.outputs.value }}
+          name: ${{ matrix.artifact }}-${{ steps.label.outputs.value }}
+          path: dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}${{ matrix.ext }}
           if-no-files-found: error
 
   release:
     name: Publish GitHub Release
-    needs: [build-linux, build-windows, build-macos]
+    needs: [build]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - name: Resolve version label
         id: label
         shell: bash
         run: echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
-      - name: Download linux artifact
+      - name: Download all binaries
         uses: actions/download-artifact@v4
         with:
-          name: deepreefmap-linux-x64-${{ steps.label.outputs.value }}
           path: dist
-
-      - name: Download windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: deepreefmap-windows-x64-${{ steps.label.outputs.value }}
-          path: dist
-
-      - name: Download macos artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: deepreefmap-macos-arm64-${{ steps.label.outputs.value }}
-          path: dist
+          pattern: deepreefmap-*-${{ steps.label.outputs.value }}
+          merge-multiple: true
 
       - name: Create release
         uses: softprops/action-gh-release@v2

@@ -3,6 +3,11 @@ $ErrorActionPreference = "Stop"
 
 Remove-Item -Force -ErrorAction SilentlyContinue dist\*.whl, dist\*.tar.gz
 
+# The wheel vendors LoGeR's `loger` package from this submodule (see pyproject
+# [tool.setuptools.packages.find]); it must be populated before uv build.
+git submodule update --init --recursive
+if ($LASTEXITCODE -ne 0) { throw "git submodule update failed" }
+
 uv build
 if ($LASTEXITCODE -ne 0) { throw "uv build failed" }
 
@@ -75,6 +80,10 @@ $pyappRoot = Join-Path $env:TEMP "pyapp-builder"
 $env:PYAPP_PROJECT_NAME = "deepreefmap"
 $env:PYAPP_PROJECT_VERSION = $version
 $env:PYAPP_PROJECT_PATH = $wheelPath
+# Install loger + gopro extras into the bundled venv (PyApp appends [features] to the
+# embedded wheel). py-gpmf-parser (gopro) is marker-gated to linux/x86_64, so on
+# Windows it is simply skipped; loger pulls einops/roma/etc. for the LoGeR backend.
+$env:PYAPP_PROJECT_FEATURES = "loger,gopro"
 $env:PYAPP_EXEC_SPEC = "deepreefmap.launcher.qt_app:launch"
 $env:PYAPP_PYTHON_VERSION = "3.11"
 $env:PYAPP_FULL_ISOLATION = "1"

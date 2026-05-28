@@ -70,7 +70,7 @@ def test_dinov3_dpt_entries_include_facebook_backbone():
         )
 
 
-def test_loger_entries_materialise_into_third_party_ckpts():
+def test_loger_entries_materialise_into_ckpts_dir():
     from deepreefmap.launcher.model_manager import MAPPING_MODELS
     from deepreefmap.mapping.registry import _LOGER_CKPTS
 
