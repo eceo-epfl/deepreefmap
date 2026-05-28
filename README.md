@@ -54,31 +54,53 @@ At a high level, a run does four things:
 - Python 3.10, 3.11, or 3.12
 - `[uv](https://docs.astral.sh/uv/)` for dependency management
 - FFmpeg (pulled in via `imageio[ffmpeg]`)
-- **GPU**: strongly recommended. CPU-only runs work with `scsfmlearner` but are slow. The `loger` / `loger_star` backends require CUDA.
+- **GPU**: strongly recommended. NVIDIA (CUDA), AMD (ROCm), and Apple Silicon (MPS) are supported. CPU-only runs work with `scsfmlearner` but are slow.
 
 ## Installation
+
+### NVIDIA (default)
 
 ```bash
 uv sync
 ```
 
-Optional extras:
+The default PyPI torch wheel bundles CUDA on Linux. No extra flags needed.
+
+### AMD ROCm
+
+```bash
+uv sync --extra rocm
+```
+
+This installs the ROCm-specific torch wheel from `download.pytorch.org/whl/rocm6.3`. Requires an AMD GPU with ROCm drivers installed.
+
+### macOS (Apple Silicon)
+
+```bash
+uv sync
+```
+
+The default PyPI torch wheel on macOS arm64 includes MPS acceleration. The GPU is used automatically when available.
+
+### Optional extras
 
 ```bash
 uv sync --extra gopro --extra train
 ```
 
+Extras can be combined (eg. `uv sync --extra rocm --extra gopro --extra loger`).
+
 ### Choose a reconstruction backend
 
 To run `deepreefmap reconstruct`, you need at least one reconstruction backend:
 
-- `scsfmlearner`: easiest to start with, no LoGeR checkpoint setup, but poorer reconstruction quality.
-- `loger` (or `loger_star`): higher quality reconstruction, but requires CUDA + GPU and checkpoint download.
+- `scsfmlearner`: easiest to start with, no LoGeR checkpoint setup, but lower reconstruction quality.
+- `loger` (or `loger_star`): higher quality reconstruction, requires a GPU and checkpoint download.
 
-Important performance note:
+Performance notes:
 
 - Without a GPU, all reconstruction backends will be slow.
-- LoGeR specifically requires CUDA and a compatible GPU.
+- LoGeR requires a GPU (CUDA, ROCm, or MPS). On MPS, unsupported operations fall back to CPU automatically.
 
 ### SC-SfMLearner path (simplest)
 
