@@ -2029,6 +2029,26 @@ class QtPointCloudViewer(QWidget):
         except Exception:
             pass
 
+    def zoom_to_point(self, xyz: tuple[float, float, float], radius: float = 0.3) -> None:
+        """Move the camera to look at *xyz* from *radius* metres away."""
+        if self._plotter is None:
+            return
+        cam = self._plotter.camera
+        pos = np.asarray(cam.position, dtype=np.float64)
+        target = np.asarray(xyz, dtype=np.float64)
+        direction = pos - target
+        norm = float(np.linalg.norm(direction))
+        if norm < 1e-9:
+            direction = np.array([0.0, 0.0, 1.0])
+        else:
+            direction /= norm
+        cam.focal_point = tuple(target.tolist())
+        cam.position = tuple((target + direction * radius).tolist())
+        try:
+            self._plotter.render()
+        except Exception:
+            pass
+
     def view_from_frame_pose(self, t: int, backoff_m: float = 0.0) -> bool:
         """Snap the 3D camera to frame `t`'s pose, optionally pulled back."""
         if self._plotter is None or self._mapping_result is None:

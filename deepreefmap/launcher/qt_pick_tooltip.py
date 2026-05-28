@@ -28,6 +28,7 @@ class PickCard(QFrame):
     isolate_requested = Signal(int)
     show_all_requested = Signal()
     goto_frame_requested = Signal(int)
+    zoom_to_requested = Signal(tuple)
     close_requested = Signal()
     moved = Signal(int, int)
 
@@ -67,6 +68,7 @@ class PickCard(QFrame):
 
         self._cid: int = -1
         self._frame_idx: int = -1
+        self._xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 6, 8, 8)
@@ -102,6 +104,9 @@ class PickCard(QFrame):
         self._goto_btn.setCursor(Qt.PointingHandCursor)
         self._goto_btn.clicked.connect(self._emit_goto)
         self._goto_btn.setVisible(False)
+        self._zoom_btn = QPushButton("Zoom to point")
+        self._zoom_btn.setCursor(Qt.PointingHandCursor)
+        self._zoom_btn.clicked.connect(self._emit_zoom)
         self._isolate_btn = QPushButton("Isolate class")
         self._isolate_btn.setCursor(Qt.PointingHandCursor)
         self._isolate_btn.clicked.connect(self._emit_isolate)
@@ -109,6 +114,7 @@ class PickCard(QFrame):
         self._show_all_btn.setCursor(Qt.PointingHandCursor)
         self._show_all_btn.clicked.connect(self.show_all_requested.emit)
         actions.addWidget(self._goto_btn)
+        actions.addWidget(self._zoom_btn)
         actions.addWidget(self._isolate_btn)
         actions.addWidget(self._show_all_btn)
         outer.addLayout(actions)
@@ -121,6 +127,9 @@ class PickCard(QFrame):
         if self._frame_idx >= 0:
             self.goto_frame_requested.emit(self._frame_idx)
 
+    def _emit_zoom(self) -> None:
+        self.zoom_to_requested.emit(self._xyz)
+
     def set_payload(self, payload: dict[str, Any]) -> None:
         self._cid = int(payload.get("class_id", -1))
         self._frame_idx = int(payload.get("frame_index", -1))
@@ -132,6 +141,7 @@ class PickCard(QFrame):
             "border: 1px solid rgba(255,255,255,80);"
         )
         xyz = payload.get("xyz", (0.0, 0.0, 0.0))
+        self._xyz = (float(xyz[0]), float(xyz[1]), float(xyz[2]))
         self._xyz_label.setText(
             f"xyz: {float(xyz[0]):.3f}, {float(xyz[1]):.3f}, {float(xyz[2]):.3f}"
         )

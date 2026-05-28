@@ -472,6 +472,7 @@ class ViewerControlsMixin:
             self._pick_card.isolate_requested.connect(self._on_isolate_class)
             self._pick_card.show_all_requested.connect(self._on_show_all_classes)
             self._pick_card.goto_frame_requested.connect(self._on_goto_frame)
+            self._pick_card.zoom_to_requested.connect(self._on_zoom_to_point)
             self._pick_card.close_requested.connect(self._dismiss_pick)
             self._pick_card.moved.connect(self._on_pick_card_moved)
 
@@ -492,6 +493,9 @@ class ViewerControlsMixin:
         slider = getattr(self, "_frame_slider", None)
         if slider is not None and 0 <= frame_idx <= slider.maximum():
             slider.setValue(int(frame_idx))
+
+    def _on_zoom_to_point(self, xyz: tuple) -> None:
+        self._viewer.zoom_to_point((float(xyz[0]), float(xyz[1]), float(xyz[2])))
 
     def _on_point_picked_clear(self) -> None:
         self._dismiss_pick()
