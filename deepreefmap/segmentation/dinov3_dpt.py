@@ -29,7 +29,7 @@ class DinoV3DPTWrapper(SegmentationModel):
             return
         from huggingface_hub import snapshot_download
 
-        root = Path(snapshot_download(self._repo_id))
+        root = Path(snapshot_download(self._repo_id, local_files_only=True))
         spec = importlib.util.spec_from_file_location("coralscapes_hub_model", root / "coralscapes_hub_model.py")
         if spec is None or spec.loader is None:
             raise RuntimeError("Could not load coralscapes_hub_model.py from model repo.")
