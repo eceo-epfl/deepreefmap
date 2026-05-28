@@ -1211,17 +1211,26 @@ class FormPanelMixin:
             for repo in missing_repos
         )
         logged_in = self._hf_auth_user is not None
-        if logged_in:
+        can_gated = getattr(self, "_can_read_gated", True)
+        if logged_in and not can_gated:
+            msg = (
+                f"<b>{seg_name}</b> needs gated repos, but your token does not have "
+                f"permission to download them. Edit your token at "
+                f'<a href="https://huggingface.co/settings/tokens" style="color:{WARN_TEXT}">'
+                f"huggingface.co/settings/tokens</a> and enable "
+                f"<i>Read access to contents of all public gated repos</i>."
+            )
+        elif logged_in:
             msg = (
                 f"<b>{seg_name}</b> uses gated repos that must be downloaded first. "
-                f"Accept the license on each repo page, and ensure your HF token "
-                f"has <i>gated repo access</i> enabled: {links}"
+                f"Accept the license on each repo page and download via the "
+                f"Models tab: {links}"
             )
         else:
             msg = (
                 f"<b>{seg_name}</b> requires Hugging Face login. "
-                f"Log in on the Models tab, accept each repo's license, "
-                f"and ensure your token has <i>gated repo access</i>: {links}"
+                f"Log in on the Models tab, then accept each repo's license "
+                f"and download: {links}"
             )
         self._gated_warning.setText(msg)
         self._gated_warning.setVisible(True)
