@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import cv2
 import numpy as np
@@ -21,8 +21,8 @@ from deepreefmap.pointcloud.transect_crop import (
 )
 from deepreefmap.postproc.ortho_outputs import OrthoOutputs, TransectCropParams, apply_ortho_crop
 from deepreefmap.postproc.reports import save_cover_report
-from deepreefmap.visualization.final_cloud_index import build_final_cloud_index, median_distance_to_camera
-from deepreefmap.visualization.live_frame_cloud import LiveFrameCloudCache
+from deepreefmap.pointcloud.final_cloud_index import build_final_cloud_index, median_distance_to_camera
+from deepreefmap.gui.viewer.live_frame_cloud import LiveFrameCloudCache
 from deepreefmap.visualization.viser_scene import ViserSceneController, rotation_to_wxyz
 
 if TYPE_CHECKING:
@@ -104,12 +104,12 @@ class ViserLiveApp:
         self._follow_camera_toggle = None
         self._camera_backoff_slider = None
         self._stacked_handle = None
-        self._legend_toggles: dict[int, object] = {}
+        self._legend_toggles: dict[int, Any] = {}
         self._download_stacked_button = None
         self._latest_stacked_image: np.ndarray | None = None
         self._output_dir: Path | None = None
         self._ortho_base_grid: OrthoGrid | None = None
-        self._ortho_classes_config = None
+        self._ortho_classes_config: "ClassConfig | None" = None
         self._ortho_crop_geometry: TransectCropGeometry | None = None
         self._ortho_crop_selection: TransectCropSelection | None = None
         self._current_ortho_outputs: OrthoOutputs | None = None
@@ -273,40 +273,67 @@ class ViserLiveApp:
 
             if self._crop_enabled_toggle is not None:
                 @self._crop_enabled_toggle.on_update
-                def _(_u) -> None:  # noqa: ARG001
+                def _on_crop_enabled_update(_u) -> None:  # noqa: ARG001
                     self._refresh_ortho_crop_preview()
 
             if self._transect_length_slider is not None:
                 @self._transect_length_slider.on_update
-                def _(_u) -> None:  # noqa: ARG001
+                def _on_transect_length_update(_u) -> None:  # noqa: ARG001
                     self._refresh_ortho_crop_preview()
 
             if self._crop_width_slider is not None:
                 @self._crop_width_slider.on_update
-                def _(_u) -> None:  # noqa: ARG001
+                def _on_crop_width_update(_u) -> None:  # noqa: ARG001
                     self._refresh_ortho_crop_preview()
 
             if self._save_ortho_button is not None:
                 @self._save_ortho_button.on_click
-                def _(_u) -> None:  # noqa: ARG001
+                def _on_save_ortho_click(_u) -> None:  # noqa: ARG001
                     self._save_current_ortho_outputs()
         except Exception as exc:
             self.startup_error = str(exc) or exc.__class__.__name__
             self.enabled = False
 
+    def _show_geometry_preview(self, geometry_xyz: np.ndarray, geometry_rgb: np.ndarray) -> None:
+        """Render a bare geometry cloud at /preview/cloud, with no semantics attached."""
+        if self._server is None:
+            return
+        with self._render_lock:
+            ps = 0.002 if self._point_size_slider is None else float(self._point_size_slider.value)
+            with suppress(Exception):
+                self._server.scene.add_point_cloud(
+                    name="/preview/cloud",
+                    points=np.ascontiguousarray(geometry_xyz, dtype=np.float32),
+                    colors=np.ascontiguousarray(geometry_rgb, dtype=np.uint8),
+                    point_size=ps,
+                )
+
     def set_data(
         self,
         frame_batch: "FrameBatch",
         mapping_result: "MappingSequenceResult",
-        reference_cloud: "SemanticPointCloud",
-        classes_config: "ClassConfig",
+        reference_cloud: "SemanticPointCloud | None" = None,
+        classes_config: "ClassConfig | None" = None,
         ortho_bins: int = 1000,
         ortho_cloud: "SemanticPointCloud | None" = None,
         ortho_grid: OrthoGrid | None = None,
+        geometry_xyz: np.ndarray | None = None,
+        geometry_rgb: np.ndarray | None = None,
+        **_ignored: object,
     ) -> None:
-        """Build scene graph and caches after reconstruction (single bulk load)."""
+        """Build scene graph and caches after reconstruction (single bulk load).
+
+        A geometry-only run arrives with ``geometry_xyz``/``geometry_rgb`` and no
+        ``reference_cloud``, and gets the bare geometry cloud instead of the scene graph.
+        """
         if not self.enabled or self._server is None:
             return
+
+        if reference_cloud is None:
+            if geometry_xyz is not None and geometry_rgb is not None:
+                self._show_geometry_preview(geometry_xyz, geometry_rgb)
+            return
+        assert classes_config is not None  # always paired with reference_cloud by the orchestrator
 
         frame_order = tuple(int(x) for x in frame_batch.frame_indices)
         self._frame_order = frame_order
@@ -357,16 +384,18 @@ class ViserLiveApp:
                 est = mapping_result.estimate_for_index(int(fid))
             except KeyError:
                 continue
-            frame = next((f for f in frame_batch.frames if int(f.frame_index) == int(fid)), None)
-            if frame is None:
+            sel_frame = next((f for f in frame_batch.frames if int(f.frame_index) == int(fid)), None)
+            if sel_frame is None:
                 continue
-            h, w = frame.image_rgb.shape[:2]
+            h, w = sel_frame.image_rgb.shape[:2]
             fov_y = float(2.0 * np.arctan(h / (2.0 * fy)))
             pose_w_c = np.asarray(est.pose_w_c, dtype=np.float64)
             frustum_specs.append((int(fid), pose_w_c, w, h, fov_y))
             self._camera_view_by_frame[int(fid)] = (pose_w_c, fov_y)
 
         with self._render_lock:
+            with suppress(Exception):
+                self._server.scene.remove("/preview/cloud")
             if self._scene_controller is None:
                 self._scene_controller = ViserSceneController(self._server.scene)
             else:
@@ -600,7 +629,7 @@ class ViserLiveApp:
             out[s == int(class_id)] = np.asarray(rgb, dtype=np.uint8)
         return out
 
-    def _normalize_slider_position(self, raw_value: object, max_pos: int) -> int:
+    def _normalize_slider_position(self, raw_value: Any, max_pos: int) -> int:
         try:
             slider_value = float(raw_value)
         except (TypeError, ValueError):
@@ -780,7 +809,7 @@ class ViserLiveApp:
         return preview
 
     @staticmethod
-    def _cover_summary_markdown(cover: dict[str, object], grid: OrthoGrid, crop_status: str) -> str:
+    def _cover_summary_markdown(cover: dict[str, Any], grid: OrthoGrid, crop_status: str) -> str:
         classes = cover.get("classes", {})
         denom = float(cover.get("denominator", 0.0) or 0.0)
         rows = [
@@ -805,7 +834,7 @@ class ViserLiveApp:
             rows.append(f"- {name}: `{frac * 100.0:.1f}%`")
         return "\n".join(rows)
 
-    def _set_markdown_content(self, handle: object, content: str) -> None:
+    def _set_markdown_content(self, handle: Any, content: str) -> None:
         if handle is None:
             return
         with suppress(Exception):

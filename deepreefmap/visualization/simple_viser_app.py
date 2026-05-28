@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import cv2
 import numpy as np
@@ -22,7 +22,7 @@ class SimpleGeometryViserApp:
     """Minimal viser app for the geometry-only (skip-segmentation) pipeline.
 
     Shows the aggregated geometry point cloud, camera frustums, a frame slider
-    with RGB+depth panel, and pipeline status — no segmentation/ortho UI.
+    with RGB+depth panel, and pipeline status. No segmentation/ortho UI.
     """
 
     def __init__(self, port: int = 8080) -> None:
@@ -36,8 +36,8 @@ class SimpleGeometryViserApp:
         self._stacked_image_cache: dict[int, np.ndarray] = {}
         self._depth_color_cache: dict[int, np.ndarray] = {}
         self._camera_view_by_frame: dict[int, tuple[np.ndarray, float]] = {}
-        self._frustum_handles: dict[int, object] = {}
-        self._cloud_handle: object | None = None
+        self._frustum_handles: dict[int, Any] = {}
+        self._cloud_handle: Any = None
 
         self._point_size_slider = None
         self._frame_slider = None
@@ -110,6 +110,7 @@ class SimpleGeometryViserApp:
         mapping_result: "MappingSequenceResult",
         geometry_xyz: np.ndarray,
         geometry_rgb: np.ndarray,
+        **_ignored: object,
     ) -> None:
         if not self.enabled or self._server is None or self._scene is None:
             return
@@ -154,10 +155,10 @@ class SimpleGeometryViserApp:
                     est = mapping_result.estimate_for_index(int(fid))
                 except KeyError:
                     continue
-                frame = next((f for f in frame_batch.frames if int(f.frame_index) == int(fid)), None)
-                if frame is None:
+                sel_frame = next((f for f in frame_batch.frames if int(f.frame_index) == int(fid)), None)
+                if sel_frame is None:
                     continue
-                h, w = frame.image_rgb.shape[:2]
+                h, w = sel_frame.image_rgb.shape[:2]
                 fov_y = float(2.0 * np.arctan(h / (2.0 * fy)))
                 pose = np.asarray(est.pose_w_c, dtype=np.float64)
                 position = pose[:3, 3]
@@ -295,7 +296,7 @@ class SimpleGeometryViserApp:
         with suppress(Exception):
             self._cloud_handle.point_size = float(self._point_size_slider.value)
 
-    def _set_markdown_content(self, handle: object, content: str) -> None:
+    def _set_markdown_content(self, handle: Any, content: str) -> None:
         if handle is None:
             return
         with suppress(Exception):

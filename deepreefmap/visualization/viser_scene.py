@@ -7,8 +7,8 @@ from typing import Any, Callable
 
 import numpy as np
 
-from deepreefmap.visualization.final_cloud_index import FinalCloudIndex
-from deepreefmap.visualization.live_frame_cloud import LiveFrameCloudCache, build_enabled_label_lut, mask_points_by_enabled_lut
+from deepreefmap.pointcloud.final_cloud_index import FinalCloudIndex
+from deepreefmap.gui.viewer.live_frame_cloud import LiveFrameCloudCache, build_enabled_label_lut, mask_points_by_enabled_lut
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +43,8 @@ def rotation_to_wxyz(rotation: np.ndarray) -> tuple[float, float, float, float]:
             y = (r[1, 2] + r[2, 1]) / s
             z = 0.25 * s
     quat = np.array([w, x, y, z], dtype=np.float64)
-    quat /= max(np.linalg.norm(quat), 1e-8)
-    return tuple(float(v) for v in quat)
+    quat /= max(float(np.linalg.norm(quat)), 1e-8)
+    return (float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]))
 
 
 class ViserSceneController:
