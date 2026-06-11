@@ -187,7 +187,7 @@ def calibrate_camera_profile(
             extract_kwargs["camera_mode"] = pycolmap.CameraMode.SINGLE
         elif hasattr(reader_options, "single_camera"):
             reader_options.single_camera = True
-        pycolmap.extract_features(**extract_kwargs)  # type: ignore[arg-type]  # TODO(stage2): typed pycolmap extract_features kwargs
+        pycolmap.extract_features(**extract_kwargs)  # type: ignore[arg-type]  # pycolmap stubs reject the dynamically-built kwargs dict
         pycolmap.match_sequential(database_path=str(database_path))
         maps = pycolmap.incremental_mapping(database_path=str(database_path), image_path=str(image_dir), output_path=str(sparse_path))
         if not maps:

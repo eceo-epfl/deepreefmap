@@ -309,19 +309,19 @@ class RunLoadingMixin(MixinBase):
             mr = result.mapping_result
             if fb is not None and mr is not None and result.geometry_xyz is not None:
                 self._viewer.load_geometry_scene(
-                    fb, mr, result.geometry_xyz, result.geometry_rgb,  # type: ignore[arg-type]  # TODO(stage2): unify FrameBatch/LazyFrameBatch + optional geometry_rgb
+                    fb, mr, result.geometry_xyz, result.geometry_rgb,  # type: ignore[arg-type]  # LazyFrameBatch is interface-compatible but not a FrameBatch subclass; geometry arrays optional
                 )
                 self._show_viewer_controls()
                 self._set_semantic_only_controls_visible(False)
                 self._on_viewer_control_changed()
             else:
-                self._viewer.show_point_cloud(result.geometry_xyz, result.geometry_rgb)  # type: ignore[arg-type]  # TODO(stage2): optional geometry arrays
+                self._viewer.show_point_cloud(result.geometry_xyz, result.geometry_rgb)  # type: ignore[arg-type]  # geometry arrays are optional on a loaded run
         elif getattr(result, "from_scene_file", False) and result.final_cloud_index is not None:
             fb = result.frame_batch
             mr = result.mapping_result
             if fb is not None and mr is not None:
                 self._viewer.load_scene_data_indexed(
-                    fb, mr, result.final_cloud_index, self._classes_config,  # type: ignore[arg-type]  # TODO(stage2): unify FrameBatch/LazyFrameBatch
+                    fb, mr, result.final_cloud_index, self._classes_config,  # type: ignore[arg-type]  # LazyFrameBatch is interface-compatible but not a FrameBatch subclass
                 )
                 _t2 = _time.monotonic()
                 logger.info("[timing] load_scene_data_indexed: %.3fs", _t2 - _t1)
@@ -337,7 +337,7 @@ class RunLoadingMixin(MixinBase):
             fb = result.frame_batch
             mr = result.mapping_result
             if cloud is not None and fb is not None and mr is not None:
-                self._viewer.load_scene_data(fb, mr, cloud, self._classes_config)  # type: ignore[arg-type]  # TODO(stage2): unify FrameBatch/LazyFrameBatch
+                self._viewer.load_scene_data(fb, mr, cloud, self._classes_config)  # type: ignore[arg-type]  # LazyFrameBatch is interface-compatible but not a FrameBatch subclass
                 _t2 = _time.monotonic()
                 logger.info("[timing] load_scene_data: %.3fs", _t2 - _t1)
                 self._build_legend()

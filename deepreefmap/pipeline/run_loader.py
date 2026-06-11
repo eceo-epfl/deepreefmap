@@ -251,7 +251,7 @@ def _generate_scene_file_async(run_dir: Path, result: LoadedRun) -> None:
                 manifest=result.manifest,
                 classes_config=result.classes_config,
                 mapping_result=result.mapping_result,
-                frame_batch=result.frame_batch,  # type: ignore[arg-type]  # TODO(stage2): unify FrameBatch/LazyFrameBatch
+                frame_batch=result.frame_batch,  # type: ignore[arg-type]  # LazyFrameBatch is interface-compatible but not a FrameBatch subclass
                 final_cloud_index=fci,
                 run_dir=run_dir,
             )
