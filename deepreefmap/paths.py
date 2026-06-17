@@ -21,3 +21,14 @@ def loger_ckpts_dir() -> Path:
     if override:
         return Path(override)
     return Path(platformdirs.user_data_dir("deepreefmap", appauthor=False)) / "loger_ckpts"
+
+
+def env_prune_marker_path() -> Path:
+    """Marker recording the previous version's env dir, pending removal.
+
+    Written just before an in-app update swaps the binary (while the old version
+    is still running) and consumed on the next launch, once the new version has
+    provisioned successfully. Lives alongside the other user-writable app data so
+    it survives the binary swap.
+    """
+    return Path(platformdirs.user_data_dir("deepreefmap", appauthor=False)) / "pending_env_prune.json"

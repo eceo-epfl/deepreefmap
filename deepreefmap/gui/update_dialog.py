@@ -22,10 +22,7 @@ from PySide6.QtWidgets import (
 from deepreefmap.gui.theme import ERROR
 from deepreefmap.gui.binary_swap import (
     BinarySwapError,
-    download_to,
-    find_asset_url,
-    replace_binary,
-    resolve_asset_name,
+    perform_update,
 )
 
 logger = logging.getLogger(__name__)
@@ -124,10 +121,13 @@ class UpdateProgressDialog(QDialog):
         self._status_label.setText(message)
 
     def _on_relaunch(self) -> None:
-        try:
-            subprocess.Popen([str(self._binary_path)])
-        except Exception:
-            logger.exception("Failed to relaunch %s", self._binary_path)
+        if os.environ.get("DEEPREEFMAP_MOCK_PYAPP"):
+            logger.info("Mock relaunch of %s (skipped)", self._binary_path)
+        else:
+            try:
+                subprocess.Popen([str(self._binary_path)])
+            except Exception:
+                logger.exception("Failed to relaunch %s", self._binary_path)
         self.accept()
         app = QApplication.instance()
         if app is not None:
@@ -148,18 +148,13 @@ class UpdateProgressDialog(QDialog):
             self._sig_done.emit(False, f"Update failed: {exc!r}")
 
     def _run_real(self) -> None:
-        asset_name = resolve_asset_name()
-        self._sig_line.emit(f"Looking up {asset_name} in release {self._release.get('tag_name')}…")
-        url = find_asset_url(self._release, asset_name)
-        self._sig_line.emit(f"Downloading {url}")
-        staged = self._binary_path.with_name(self._binary_path.name + ".new")
-        if staged.exists():
-            staged.unlink()
-        download_to(url, staged, progress_cb=self._sig_progress.emit)
-        self._sig_line.emit(f"Verifying download ({staged.stat().st_size} bytes)…")
-        self._sig_line.emit(f"Replacing binary at {self._binary_path}")
-        replace_binary(self._binary_path, staged)
-        self._sig_line.emit("Done. Relaunch to use the new version.")
+        perform_update(
+            self._release,
+            self._binary_path,
+            self._target_version,
+            progress_cb=self._sig_progress.emit,
+            line_cb=self._sig_line.emit,
+        )
         self._sig_done.emit(True, f"Installed {self._target_version}. Click Relaunch.")
 
     def _run_mock(self) -> None:
