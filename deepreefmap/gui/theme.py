@@ -71,6 +71,9 @@ QTabBar::tab:selected {{
     background: {WINDOW};
     color: {WINDOW_TEXT};
 }}
+QTabBar::tab:disabled {{
+    color: {DISABLED_FG};
+}}
 QSplitter::handle {{
     background-color: {WINDOW};
 }}
