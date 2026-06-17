@@ -91,8 +91,21 @@ fn exec_gui(mut command: Command) -> Result<()> {
 RUST
 
 FEATURES="loger,gopro"
+PIP_EXTRA_ARGS=""
 if [ "$TORCH_VARIANT" = "rocm" ]; then
   FEATURES="$FEATURES,rocm"
+  # PyApp installs the wheel with `uv pip install` on the user's machine, which
+  # ignores pyproject's [tool.uv.index]/[tool.uv.sources]: that index routing is
+  # project config and never lands in wheel metadata. Without it, torch resolves
+  # to the CUDA build from PyPI and pytorch-triton-rocm has no satisfying version
+  # there (PyPI only carries <=2.1.0), so the install fails. uv's --torch-backend
+  # pulls torch/torchvision/pytorch-triton-rocm from the matching PyTorch ROCm
+  # index while leaving every other dependency on PyPI (a plain --extra-index-url
+  # can't: it either shadows PyPI deps like tqdm or, with unsafe-best-match, pulls
+  # the higher-versioned CUDA torch). Derive the backend tag (e.g. rocm6.3) from
+  # the same index URL in pyproject to keep one source of truth.
+  ROCM_INDEX_URL=$(grep -A2 'name = "pytorch-rocm"' pyproject.toml | sed -nE 's/^url = "(.*)"/\1/p')
+  PIP_EXTRA_ARGS="--torch-backend=${ROCM_INDEX_URL##*/}"
 fi
 
 PYAPP_PROJECT_NAME=deepreefmap \
@@ -104,6 +117,7 @@ PYAPP_PYTHON_VERSION=3.11 \
 PYAPP_FULL_ISOLATION=1 \
 PYAPP_UV_ENABLED=1 \
 PYAPP_PASS_LOCATION=1 \
+PYAPP_PIP_EXTRA_ARGS="$PIP_EXTRA_ARGS" \
 cargo install --path "$PYAPP_DIR" --force --root /tmp/pyapp-builder
 
 cp /tmp/pyapp-builder/bin/pyapp "dist/${OUTPUT_NAME}"
