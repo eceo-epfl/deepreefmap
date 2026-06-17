@@ -229,6 +229,36 @@ def test_fetch_versions_parses_github_response():
     assert versions == ["2.0.0", "1.5.0"]
 
 
+@pytest.mark.parametrize(
+    "include_older, expected",
+    [
+        (False, ["2.0.0"]),  # upgrades only
+        (True, ["2.0.0", "1.0.0"]),  # all but current, newest first → rollback offered
+    ],
+)
+def test_selectable_releases(include_older, expected):
+    from deepreefmap.gui.version import _selectable_releases
+
+    releases = [
+        {"tag_name": "v1.0.0"},
+        {"tag_name": "v2.0.0"},
+        {"tag_name": "v1.5.0"},  # current
+    ]
+    got = _selectable_releases(releases, "1.5.0", include_older)
+    assert [r["tag_name"].lstrip("v") for r in got] == expected
+
+
+def test_gh_api_url_override(monkeypatch):
+    from deepreefmap.gui.version import _gh_releases_url
+
+    monkeypatch.setenv("DEEPREEFMAP_GH_API_URL", "http://127.0.0.1:9999/releases")
+    monkeypatch.setenv("DEEPREEFMAP_GH_REPO", "owner/repo")  # override wins
+    assert _gh_releases_url() == "http://127.0.0.1:9999/releases"
+
+    monkeypatch.delenv("DEEPREEFMAP_GH_API_URL")
+    assert _gh_releases_url() == "https://api.github.com/repos/owner/repo/releases"
+
+
 def test_fetch_releases_mock_synthesises_assets(monkeypatch):
     from deepreefmap.gui.app import _fetch_releases
 
@@ -407,6 +437,261 @@ def test_replace_binary_atomic_rename(tmp_path):
 
     assert target.read_bytes() == b"new"
     assert not src.exists()
+
+
+def test_env_is_healthy_detects_missing_and_intact(tmp_path):
+    from deepreefmap.gui.binary_swap import env_is_healthy
+
+    # Missing torch/PySide6 → unhealthy.
+    assert env_is_healthy(tmp_path) is False
+
+    purelib = tmp_path / "site-packages"
+    (purelib / "torch" / "lib").mkdir(parents=True)
+    (purelib / "torch" / "lib" / "libtorch.so").write_bytes(b"\x00")
+    (purelib / "PySide6").mkdir()
+    assert env_is_healthy(purelib) is True
+
+    # An emptied torch/lib (antivirus quarantine) → unhealthy.
+    (purelib / "torch" / "lib" / "libtorch.so").unlink()
+    assert env_is_healthy(purelib) is False
+
+
+def test_prune_previous_env_removes_old_keeps_current(tmp_path, monkeypatch):
+    from deepreefmap.gui import binary_swap
+
+    pyapp_root = tmp_path / "pyapp" / "deepreefmap" / "hash"
+    old_env = pyapp_root / "1.0.0"
+    new_env = pyapp_root / "1.1.0"
+    (old_env / "python").mkdir(parents=True)
+    (new_env / "python").mkdir(parents=True)
+
+    marker = tmp_path / "pending_env_prune.json"
+    monkeypatch.setattr(
+        "deepreefmap.paths.env_prune_marker_path", lambda: marker
+    )
+
+    # Recorded while the old version was running (prefix = <env>/python).
+    binary_swap.record_previous_env(old_env / "python")
+    assert marker.exists()
+
+    # Now running the new version → old env pruned, new env untouched.
+    removed = binary_swap.prune_previous_env(current_prefix=new_env / "python")
+
+    assert removed == old_env
+    assert not old_env.exists()
+    assert new_env.exists()
+    assert not marker.exists()
+
+
+def test_prune_previous_env_no_marker_is_noop(tmp_path, monkeypatch):
+    from deepreefmap.gui import binary_swap
+
+    monkeypatch.setattr(
+        "deepreefmap.paths.env_prune_marker_path",
+        lambda: tmp_path / "absent.json",
+    )
+    assert binary_swap.prune_previous_env(current_prefix=tmp_path) is None
+
+
+def test_prune_refuses_paths_outside_pyapp(tmp_path, monkeypatch):
+    from deepreefmap.gui import binary_swap
+
+    marker = tmp_path / "marker.json"
+    monkeypatch.setattr("deepreefmap.paths.env_prune_marker_path", lambda: marker)
+    victim = tmp_path / "not-pyapp" / "1.0.0"
+    (victim / "python").mkdir(parents=True)
+    marker.write_text(json.dumps({"env_dir": str(victim), "version": "1.0.0"}))
+
+    removed = binary_swap.prune_previous_env(current_prefix=tmp_path / "cur")
+
+    assert removed is None
+    assert victim.exists()  # guard kept us from deleting a non-pyapp dir
+    assert not marker.exists()
+
+
+def test_perform_update_downloads_swaps_and_records_prune(tmp_path, monkeypatch):
+    from deepreefmap.gui import binary_swap
+
+    payload = b"NEW-BINARY-BYTES"
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.handle_request, daemon=True).start()
+
+    asset = binary_swap.resolve_asset_name()
+    release = {
+        "tag_name": "v1.1.0",
+        "assets": [{"name": asset, "browser_download_url": f"http://127.0.0.1:{port}/bin"}],
+    }
+    target = tmp_path / "deepreefmap"
+    target.write_bytes(b"OLD-BINARY")
+
+    marker = tmp_path / "pending_env_prune.json"
+    monkeypatch.setattr("deepreefmap.paths.env_prune_marker_path", lambda: marker)
+
+    lines: list[str] = []
+    try:
+        binary_swap.perform_update(
+            release, target, "1.1.0", line_cb=lines.append
+        )
+    finally:
+        server.server_close()
+
+    assert target.read_bytes() == payload
+    assert not target.with_name(target.name + ".new").exists()
+    assert marker.exists()  # next launch will consume this to prune the old env
+    assert any("Replacing binary" in line for line in lines)
+
+
+def test_update_then_prune_end_to_end(tmp_path, monkeypatch):
+    """The container e2e as a fast headless test: real download + swap + marker,
+    then prune of the previous env with the shared uv cache left intact."""
+    from deepreefmap.gui import binary_swap
+
+    payload = b"NEW-BINARY-BYTES"
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.handle_request, daemon=True).start()
+
+    # PyApp layout: .../pyapp/deepreefmap/<hash>/<version>/python
+    pyapp_root = tmp_path / "pyapp" / "deepreefmap" / "hash"
+    old_env = pyapp_root / "1.1.0"
+    new_env = pyapp_root / "1.2.0"
+    (old_env / "python").mkdir(parents=True)
+    (new_env / "python").mkdir(parents=True)
+    uv_cache = tmp_path / ".cache" / "uv"  # shared cache must survive the prune
+    uv_cache.mkdir(parents=True)
+
+    marker = tmp_path / "pending_env_prune.json"
+    monkeypatch.setattr("deepreefmap.paths.env_prune_marker_path", lambda: marker)
+    # While the old version runs, sys.prefix points into its env.
+    monkeypatch.setattr(binary_swap.sys, "prefix", str(old_env / "python"))
+
+    asset = binary_swap.resolve_asset_name()
+    release = {
+        "tag_name": "v1.2.0",
+        "assets": [{"name": asset, "browser_download_url": f"http://127.0.0.1:{port}/bin"}],
+    }
+    target = tmp_path / "deepreefmap"
+    target.write_bytes(b"OLD-BINARY")
+
+    try:
+        binary_swap.perform_update(release, target, "1.2.0")
+    finally:
+        server.server_close()
+
+    assert target.read_bytes() == payload  # swapped in place
+    assert marker.exists()  # old env recorded for pruning
+
+    removed = binary_swap.prune_previous_env(current_prefix=str(new_env / "python"))
+
+    assert removed == old_env
+    assert not old_env.exists()
+    assert new_env.exists()
+    assert uv_cache.exists()
+    assert not marker.exists()
+
+
+def test_update_dialog_runs_perform_update(qapp, tmp_path, monkeypatch):
+    """Guarantee the Install button's worker is wired to perform_update()."""
+    from deepreefmap.gui import update_dialog
+
+    calls = {}
+
+    def fake_perform_update(release, binary_path, target_version, progress_cb=None, line_cb=None):
+        calls["args"] = (release, binary_path, target_version)
+        if line_cb is not None:
+            line_cb("working")
+
+    monkeypatch.setattr(update_dialog, "perform_update", fake_perform_update)
+    monkeypatch.delenv("DEEPREEFMAP_MOCK_PYAPP", raising=False)
+
+    binary = tmp_path / "binary"
+    binary.write_bytes(b"x")
+    dialog = update_dialog.UpdateProgressDialog(
+        target_version="1.2.0",
+        release={"tag_name": "v1.2.0", "assets": []},
+        binary_path=binary,
+    )
+    done = []
+    dialog._sig_done.connect(lambda ok, msg: done.append((ok, msg)))
+
+    dialog._run_real()  # call the worker body directly (no thread, no exec)
+
+    assert calls["args"][1] == binary
+    assert calls["args"][2] == "1.2.0"
+    assert done and done[0][0] is True
+
+
+def test_self_restore_invokes_pyapp_self_restore(monkeypatch):
+    from deepreefmap.gui import binary_swap
+
+    calls = []
+    monkeypatch.setattr(
+        binary_swap.subprocess, "run", lambda cmd, check: calls.append((cmd, check))
+    )
+    assert binary_swap.self_restore("/path/bin") is True
+    assert calls == [(["/path/bin", "self", "restore"], True)]
+
+    def boom(cmd, check):
+        raise OSError("restore failed")
+
+    monkeypatch.setattr(binary_swap.subprocess, "run", boom)
+    assert binary_swap.self_restore("/path/bin") is False
+
+
+def test_bootstrap_self_heals_then_reexecs_when_env_broken(monkeypatch, tmp_path):
+    import deepreefmap.bootstrap as bootstrap
+    from deepreefmap.gui import binary_swap
+
+    monkeypatch.setenv("PYAPP", str(tmp_path / "deepreefmap"))
+    monkeypatch.delenv("DEEPREEFMAP_SELF_HEAL_ATTEMPTED", raising=False)
+    monkeypatch.setattr(binary_swap, "env_is_healthy", lambda *a, **k: False)
+    restored: list[str] = []
+    monkeypatch.setattr(
+        binary_swap, "self_restore", lambda b: bool(restored.append(b)) or True
+    )
+
+    class _Reexec(Exception):
+        pass
+
+    execs: list[tuple] = []
+
+    def fake_execv(path, args):
+        execs.append((path, args))
+        raise _Reexec
+
+    monkeypatch.setattr(bootstrap.os, "execv", fake_execv)
+
+    try:
+        with pytest.raises(_Reexec):
+            bootstrap.main()
+        assert restored, "self_restore should have been invoked"
+        assert execs, "binary should be re-exec'd after restore"
+        assert os.environ.get("DEEPREEFMAP_SELF_HEAL_ATTEMPTED") == "1"
+    finally:
+        os.environ.pop("DEEPREEFMAP_SELF_HEAL_ATTEMPTED", None)
 
 
 def test_pyapp_mock_path(monkeypatch):
