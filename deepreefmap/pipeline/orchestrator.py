@@ -410,7 +410,7 @@ def run_reconstruction(
                 "geometry_cloud.ply",
             ]
             save_geometry_cloud(output_dir / "geometry_cloud.ply", geometry_xyz, geometry_rgb)
-            save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
+            geometry_manifest = _build_manifest(
                 output_dir=output_dir,
                 frame_batch=frame_batch,
                 mapping_result=mapping_result,
@@ -435,7 +435,29 @@ def run_reconstruction(
                         "applied": False,
                     },
                 },
-            ))
+            )
+            save_run_manifest(output_dir / "run_manifest.json", geometry_manifest)
+
+            # Geometry-only runs also produce a scene file so they can be compacted to one zip
+            # and rehydrated (no semantic cloud, so a geometry/ group stands in for the FCI).
+            try:
+                from deepreefmap.io.scene_file import save_scene_file, scene_file_name
+
+                sfn = scene_file_name(geometry_manifest, output_dir)
+                save_scene_file(
+                    output_dir / sfn,
+                    manifest=geometry_manifest,
+                    classes_config=classes_config,
+                    mapping_result=mapping_result,
+                    frame_batch=frame_batch,
+                    geometry=(geometry_xyz, geometry_rgb),
+                    run_dir=output_dir,
+                )
+                output_files.append(sfn)
+                logger.info("Scene file saved: %s", output_dir / sfn)
+            except Exception:
+                logger.warning("Failed to generate scene file", exc_info=True)
+
             if viewer is not None:
                 viewer.set_data(
                     frame_batch=frame_batch,
@@ -599,6 +621,9 @@ def run_reconstruction(
             fci = build_final_cloud_index(
                 reference_cloud, frame_order, classes_config.id_to_color,
             )
+            tsdf_payload = None
+            if enable_tsdf and tsdf_xyz is not None and tsdf_rgb is not None and semantic_tsdf is not None:
+                tsdf_payload = {"geometry": (tsdf_xyz, tsdf_rgb), "semantic": semantic_tsdf}
             sfn = scene_file_name(manifest_dict, output_dir)
             save_scene_file(
                 output_dir / sfn,
@@ -607,6 +632,10 @@ def run_reconstruction(
                 mapping_result=mapping_result,
                 frame_batch=frame_batch,
                 final_cloud_index=fci,
+                reference_cloud=reference_cloud,
+                ortho_grid=grid,
+                cover=ortho_outputs.cover,
+                tsdf=tsdf_payload,
                 run_dir=output_dir,
             )
             output_files.append(sfn)

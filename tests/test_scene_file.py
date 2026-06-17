@@ -368,3 +368,184 @@ class TestAtomicWrite:
         tmp_file = tmp_path / (sfn + ".tmp")
         assert not tmp_file.exists()
         assert scene_path.exists()
+
+
+def _make_ortho_grid():
+    from deepreefmap.pointcloud.grid_ortho import OrthoGrid
+
+    return OrthoGrid(
+        rgb=np.random.randint(0, 256, (20, 30, 3), dtype=np.uint8),
+        labels=np.random.randint(0, 3, (20, 30), dtype=np.int32),
+        height=np.random.rand(20, 30).astype(np.float32),
+        counts=np.random.randint(0, 10, (20, 30), dtype=np.int32),
+        frame_index=np.random.randint(0, 5, (20, 30), dtype=np.int32),
+        cell_size=0.05,
+        pixel_size_m=0.05,
+    )
+
+
+def _make_manifest_with_paths(fb: FrameBatch) -> dict:
+    m = _make_manifest()
+    m["frame_paths"] = [f"frames/{f.frame_index:08d}.png" for f in fb.frames]
+    m["labels_paths"] = [f"labels/{f.frame_index:08d}.npy" for f in fb.frames]
+    m["mask_paths"] = [f"masks/{f.frame_index:08d}.png" for f in fb.frames]
+    return m
+
+
+class TestExtract:
+    """`extract_scene_to_dir` rehydrates a run-dir layout from the scene file."""
+
+    def test_extract_round_trip(self, tmp_path: Path) -> None:
+        import cv2
+
+        from deepreefmap.io.exports import save_semantic_cloud
+        from deepreefmap.io.scene_file import extract_scene_to_dir
+
+        classes = _make_classes()
+        fb = _make_frames(n=4, h=16, w=24)
+        mr = _make_mapping(n=4, dh=8, dw=12)
+        cloud = _make_cloud(n_points=200)
+        fci = _make_fci(cloud, fb, classes)
+        grid = _make_ortho_grid()
+        cover = {"classes": {"1": {"name": "coral", "fraction": 0.6, "count": 120.0}}}
+        manifest = _make_manifest_with_paths(fb)
+
+        scene_path = tmp_path / scene_file_name(manifest)
+        save_scene_file(
+            scene_path,
+            manifest=manifest,
+            classes_config=classes,
+            mapping_result=mr,
+            frame_batch=fb,
+            final_cloud_index=fci,
+            reference_cloud=cloud,
+            ortho_grid=grid,
+            cover=cover,
+        )
+
+        out = tmp_path / "expanded"
+        extract_scene_to_dir(scene_path, out)
+
+        # manifest
+        import json
+
+        assert json.loads((out / "run_manifest.json").read_text()) == manifest
+
+        # mapping_outputs.npz — keys + values match the pipeline's convention
+        npz = np.load(out / "mapping_outputs.npz")
+        assert np.array_equal(npz["depth"], mr.depth_maps)
+        assert np.array_equal(npz["poses_w_c"], mr.poses_w_c)
+        assert np.array_equal(npz["intrinsics"], mr.intrinsics)
+        assert np.array_equal(npz["frame_indices"], mr.frame_indices)
+        assert npz["confidence"].size == 0 and npz["world_points"].size == 0
+        assert npz["local_points"].size == 0
+        assert str(npz["scale_type"]) == "metric"
+
+        # frames / labels / masks decode to the inputs
+        for f in fb.frames:
+            png = cv2.imread(str(out / f"frames/{f.frame_index:08d}.png"), cv2.IMREAD_COLOR)
+            assert np.array_equal(cv2.cvtColor(png, cv2.COLOR_BGR2RGB), f.image_rgb)
+            assert np.array_equal(np.load(out / f"labels/{f.frame_index:08d}.npy"), f.labels)
+            mask = cv2.imread(str(out / f"masks/{f.frame_index:08d}.png"), cv2.IMREAD_UNCHANGED)
+            assert np.array_equal(mask, f.keep_mask)
+
+        # semantic cloud PLY is byte-identical to writing the original cloud
+        ref_ply = tmp_path / "ref.ply"
+        save_semantic_cloud(ref_ply, cloud)
+        assert (out / "semantic_reference_cloud.ply").read_bytes() == ref_ply.read_bytes()
+
+        # ortho.npz arrays match the grid; ortho.png written
+        ortho = np.load(out / "ortho.npz")
+        assert np.array_equal(ortho["rgb"], grid.rgb)
+        assert np.array_equal(ortho["labels"], grid.labels)
+        assert np.array_equal(ortho["counts"], grid.counts)
+        assert (out / "ortho.png").exists()
+
+        # cover round-trips verbatim
+        assert json.loads((out / "benthic_cover.json").read_text()) == cover
+
+    def test_extract_geometry_only(self, tmp_path: Path) -> None:
+        from deepreefmap.io.exports import load_geometry_cloud
+        from deepreefmap.io.scene_file import extract_scene_to_dir
+
+        classes = _make_classes()
+        fb = _make_frames(n=3, h=12, w=16)
+        mr = _make_mapping(n=3, dh=6, dw=8)
+        geom_xyz = np.random.randn(150, 3).astype(np.float32)
+        geom_rgb = np.random.randint(0, 256, (150, 3), dtype=np.uint8)
+        manifest = _make_manifest_with_paths(fb)
+        manifest["mode"] = "geometry_only"
+
+        scene_path = tmp_path / scene_file_name(manifest)
+        save_scene_file(
+            scene_path,
+            manifest=manifest,
+            classes_config=classes,
+            mapping_result=mr,
+            frame_batch=fb,
+            geometry=(geom_xyz, geom_rgb),
+        )
+
+        out = tmp_path / "expanded"
+        extract_scene_to_dir(scene_path, out)
+
+        assert (out / "geometry_cloud.ply").exists()
+        xyz, rgb = load_geometry_cloud(out / "geometry_cloud.ply")
+        assert np.allclose(xyz, geom_xyz) and np.array_equal(rgb, geom_rgb)
+        assert not (out / "semantic_reference_cloud.ply").exists()
+
+    def test_mapping_arrays_load_lazily(self, tmp_path: Path) -> None:
+        """depth_maps/world_points/confidence stay lazy (Zarr arrays) and index per-frame."""
+        classes = _make_classes()
+        fb = _make_frames()
+        mr = _make_mapping()
+        cloud = _make_cloud()
+        fci = _make_fci(cloud, fb, classes)
+        manifest = _make_manifest()
+
+        scene_path = tmp_path / scene_file_name(manifest)
+        save_scene_file(
+            scene_path,
+            manifest=manifest,
+            classes_config=classes,
+            mapping_result=mr,
+            frame_batch=fb,
+            final_cloud_index=fci,
+        )
+
+        loaded = load_scene_file(scene_path)
+        assert loaded is not None
+        # Not eagerly materialised into a numpy array.
+        assert not isinstance(loaded.mapping_result.depth_maps, np.ndarray)
+        # Per-frame indexing returns the correct frame.
+        for i in range(len(mr.depth_maps)):
+            np.testing.assert_allclose(
+                np.asarray(loaded.mapping_result.depth_maps[i]), mr.depth_maps[i], atol=1e-6
+            )
+
+    def test_geometry_only_viewer_load(self, tmp_path: Path) -> None:
+        classes = _make_classes()
+        fb = _make_frames(n=3, h=12, w=16)
+        mr = _make_mapping(n=3, dh=6, dw=8)
+        geom_xyz = np.random.randn(80, 3).astype(np.float32)
+        geom_rgb = np.random.randint(0, 256, (80, 3), dtype=np.uint8)
+        manifest = _make_manifest_with_paths(fb)
+        manifest["mode"] = "geometry_only"
+
+        scene_path = tmp_path / scene_file_name(manifest)
+        save_scene_file(
+            scene_path,
+            manifest=manifest,
+            classes_config=classes,
+            mapping_result=mr,
+            frame_batch=fb,
+            geometry=(geom_xyz, geom_rgb),
+        )
+
+        scene = load_scene_file(scene_path)
+        assert scene is not None
+        assert scene.run_mode == "geometry_only"
+        assert scene.final_cloud_index is None
+        assert np.allclose(scene.geometry_xyz, geom_xyz)
+        assert np.array_equal(scene.geometry_rgb, geom_rgb)
+        assert scene.frame_accessor.n_frames == 3

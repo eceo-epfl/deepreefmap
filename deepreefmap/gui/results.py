@@ -276,8 +276,31 @@ class ResultsMixin(MixinBase):
 
     def _on_export_zip(self) -> None:
         if self._results_output_dir is None or not Path(self._results_output_dir).exists():
-            self._status_label.setText("No output directory to zip.")
+            self._status_label.setText("No output to export.")
             return
+
+        # The .scene.zarr.zip is the self-contained, portable run artifact — prefer copying it.
+        from deepreefmap.io.scene_file import find_scene_file
+
+        scene = find_scene_file(Path(self._results_output_dir))
+        if scene is not None:
+            default = str(Path(self._default_export_dir()).parent / scene.name)
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Export run file (.scene.zarr.zip)", default, "Scene file (*.zarr.zip)"
+            )
+            if not path:
+                return
+            try:
+                import shutil
+
+                shutil.copy2(scene, path)
+                self._status_label.setText(f"Exported run file to {path}")
+            except Exception as exc:
+                self._status_label.setText(f"Export failed: {exc}")
+                logger.exception("Failed to export scene file")
+            return
+
+        # Legacy run with no scene file — fall back to zipping the directory.
         default = str(Path(self._default_export_dir()).parent / f"{Path(self._results_output_dir).name}.zip")
         path, _ = QFileDialog.getSaveFileName(self, "Save output as zip", default, "Zip archive (*.zip)")
         if not path:

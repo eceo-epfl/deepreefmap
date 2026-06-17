@@ -20,15 +20,34 @@ import numpy as np
 
 if TYPE_CHECKING:
     from deepreefmap.config.classes import ClassConfig
-    from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult
+    from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, SemanticPointCloud
     from deepreefmap.pointcloud.final_cloud_index import FinalCloudIndex
+    from deepreefmap.pointcloud.grid_ortho import OrthoGrid
 
 logger = logging.getLogger(__name__)
 
 SCENE_FILE_SUFFIX = ".scene.zarr.zip"
-SCHEMA_VERSION = 1
+# v1: meta/classes/mapping/frames/final_cloud_index only (viewer cache).
+# v2: adds canonical groups so a run dir can be losslessly rehydrated via `deepreefmap extract` —
+#     cloud/ (verbatim reference cloud), products/ (ortho grid + cover), geometry/ (geometry-only
+#     runs), tsdf/ (optional). v1 files still load in the viewer (FCI path unchanged).
+SCHEMA_VERSION = 2
 MIN_SCHEMA = 1
-MAX_SCHEMA = 1
+MAX_SCHEMA = 2
+
+# Human-readable description of the store layout, written to the root .zattrs so the file is
+# self-describing when opened with any zarr reader.
+_LAYOUT_DOC = (
+    "DeepReefMap scene file (zarr v2 in a ZIP). Groups: "
+    "meta/ (run_manifest.json under 'manifest'); classes/ (id/name/color/role table); "
+    "mapping/ (per-frame depth_maps, poses_w_c, intrinsics, confidence, world_points, gravity); "
+    "frames/ (images_rgb, labels, masks, one chunk per frame); "
+    "final_cloud_index/ (viewer timeline index); "
+    "cloud/ (canonical semantic reference cloud: xyz/rgb/labels/confidence/frame_index/distance_to_camera); "
+    "products/ (ortho grid + benthic cover, verbatim); "
+    "geometry/ (xyz/rgb for geometry-only runs); tsdf/ (optional TSDF clouds). "
+    "Rehydrate a full run directory with: deepreefmap extract <file> --out DIR"
+)
 
 ProgressCB = Callable[[str, int, int], None]
 
@@ -37,7 +56,8 @@ def scene_file_name(manifest: dict[str, Any] | None = None, run_dir: Path | None
     """Build a descriptive scene filename from run metadata."""
     name = ""
     if manifest:
-        name = str(manifest.get("name", "")).strip()
+        # `name` may be present but None (unnamed run) — treat that as empty, not the string "None".
+        name = str(manifest.get("name") or "").strip()
     if not name and run_dir is not None:
         name = run_dir.name
     if not name:
@@ -127,10 +147,22 @@ def save_scene_file(
     classes_config: "ClassConfig",
     mapping_result: "MappingSequenceResult",
     frame_batch: "FrameBatch",
-    final_cloud_index: "FinalCloudIndex",
+    final_cloud_index: "FinalCloudIndex | None" = None,
+    reference_cloud: "SemanticPointCloud | None" = None,
+    ortho_grid: "OrthoGrid | None" = None,
+    cover: dict[str, Any] | None = None,
+    geometry: "tuple[np.ndarray, np.ndarray] | None" = None,
+    tsdf: "dict[str, Any] | None" = None,
     run_dir: Path | None = None,
     progress_cb: ProgressCB | None = None,
 ) -> None:
+    """Write a run's data to a portable ``.scene.zarr.zip``.
+
+    Beyond the viewer cache (``final_cloud_index`` + frames + mapping), the canonical groups
+    (``reference_cloud``, ``ortho_grid`` + ``cover``, ``geometry``, ``tsdf``) let `deepreefmap extract`
+    rehydrate the exact run directory. ``geometry`` is ``(xyz, rgb)`` for geometry-only runs; ``tsdf``
+    is ``{"geometry": (xyz, rgb), "semantic": SemanticPointCloud}`` when TSDF was enabled.
+    """
     import zarr
     from numcodecs import JSON as JSONCodec
 
@@ -148,18 +180,24 @@ def save_scene_file(
 
         _emit("scene_meta", 0, 4)
 
-        # --- root attrs ---
+        # --- root attrs (one .put so the write-once ZIP gets a single .zattrs entry) ---
         _current_version = _get_library_version()
-        root.attrs["schema_version"] = SCHEMA_VERSION
-        root.attrs["deepreefmap_version"] = _current_version
+        root_attrs: dict[str, Any] = {
+            "schema_version": SCHEMA_VERSION,
+            "deepreefmap_version": _current_version,
+            "layout": _LAYOUT_DOC,
+        }
         if run_dir is not None:
-            root.attrs["source_fingerprint"] = compute_source_fingerprint(run_dir)
+            root_attrs["source_fingerprint"] = compute_source_fingerprint(run_dir)
+        root.attrs.put(root_attrs)
 
         # --- /meta ---
         meta = root.require_group("meta")
-        meta.attrs["run_name"] = manifest.get("name", "")
-        meta.attrs["mode"] = manifest.get("mode", "semantic")
-        meta.attrs["scale_type"] = str(mapping_result.scale_type)
+        meta.attrs.put({
+            "run_name": manifest.get("name", ""),
+            "mode": manifest.get("mode", "semantic"),
+            "scale_type": str(mapping_result.scale_type),
+        })
         meta.create_dataset(
             "manifest",
             data=np.array(json.dumps(manifest), dtype=object),
@@ -179,9 +217,20 @@ def save_scene_file(
         # --- /frames ---
         _save_frames(root, frame_batch, _emit)
 
-        # --- /final_cloud_index ---
-        _save_fci(root, final_cloud_index)
+        # --- /final_cloud_index (viewer index; absent for geometry-only runs) ---
+        if final_cloud_index is not None:
+            _save_fci(root, final_cloud_index)
         _emit("scene_fci", 1, 1)
+
+        # --- canonical groups (v2): let `extract` rehydrate the run dir losslessly ---
+        if reference_cloud is not None:
+            _save_cloud(root, "cloud", reference_cloud)
+        if ortho_grid is not None or cover is not None:
+            _save_products(root, ortho_grid, cover)
+        if geometry is not None:
+            _save_geometry(root, geometry[0], geometry[1])
+        if tsdf is not None:
+            _save_tsdf(root, tsdf)
 
         store.close()
         os.replace(str(tmp_path), str(path))
@@ -251,9 +300,7 @@ def _save_frames(root, fb: "FrameBatch", emit: ProgressCB) -> None:
         return
 
     h, w = frames[0].image_rgb.shape[:2]
-    g.attrs["n_frames"] = n
-    g.attrs["image_height"] = h
-    g.attrs["image_width"] = w
+    g.attrs.put({"n_frames": n, "image_height": h, "image_width": w})
 
     g.create_dataset(
         "frame_indices",
@@ -321,6 +368,71 @@ def _save_fci(root, fci: "FinalCloudIndex") -> None:
 
 
 # ---------------------------------------------------------------------------
+# Canonical groups (v2) — verbatim copies so `extract` rehydrates the run dir
+# ---------------------------------------------------------------------------
+
+def _save_cloud(root, name: str, cloud: "SemanticPointCloud") -> None:
+    """Store a SemanticPointCloud's columns verbatim so its PLY round-trips exactly."""
+    comp = _compressor()
+    g = root.require_group(name)
+    g.create_dataset("xyz", data=np.asarray(cloud.xyz, dtype=np.float32), compressor=comp)
+    g.create_dataset("rgb", data=np.asarray(cloud.rgb, dtype=np.uint8), compressor=comp)
+    g.create_dataset("labels", data=np.asarray(cloud.labels, dtype=np.int32), compressor=comp)
+    if cloud.confidence is not None:
+        g.create_dataset("confidence", data=np.asarray(cloud.confidence, dtype=np.float32), compressor=comp)
+    if cloud.frame_indices is not None:
+        g.create_dataset("frame_index", data=np.asarray(cloud.frame_indices, dtype=np.int32), compressor=comp)
+    if cloud.distance_to_camera is not None:
+        g.create_dataset(
+            "distance_to_camera", data=np.asarray(cloud.distance_to_camera, dtype=np.float32), compressor=comp
+        )
+
+
+def _save_products(root, ortho_grid: "OrthoGrid | None", cover: dict[str, Any] | None) -> None:
+    """Store the ortho grid (matching ortho.npz fields) and benthic cover verbatim."""
+    from numcodecs import JSON as JSONCodec
+
+    g = root.require_group("products")
+    if ortho_grid is not None:
+        comp = _compressor()
+        og = g.require_group("ortho")
+        # Preserve native dtypes so the rehydrated ortho.npz matches save_ortho_grid's output exactly
+        # (save_ortho_grid stores these arrays uncast).
+        og.create_dataset("rgb", data=np.asarray(ortho_grid.rgb), compressor=comp)
+        og.create_dataset("labels", data=np.asarray(ortho_grid.labels), compressor=comp)
+        og.create_dataset("height", data=np.asarray(ortho_grid.height), compressor=comp)
+        og.create_dataset("counts", data=np.asarray(ortho_grid.counts), compressor=comp)
+        og.create_dataset("frame_index", data=np.asarray(ortho_grid.frame_index), compressor=comp)
+        og.attrs.put({
+            "cell_size": float(ortho_grid.cell_size),
+            "pixel_size_m": None if ortho_grid.pixel_size_m is None else float(ortho_grid.pixel_size_m),
+        })
+    if cover is not None:
+        g.create_dataset(
+            "cover", data=np.array(json.dumps(cover), dtype=object), object_codec=JSONCodec()
+        )
+
+
+def _save_geometry(root, xyz: np.ndarray, rgb: np.ndarray) -> None:
+    """Store a geometry-only cloud (xyz/rgb) so geometry_cloud.ply round-trips."""
+    comp = _compressor()
+    g = root.require_group("geometry")
+    g.create_dataset("xyz", data=np.asarray(xyz, dtype=np.float32), compressor=comp)
+    g.create_dataset("rgb", data=np.asarray(rgb, dtype=np.uint8), compressor=comp)
+
+
+def _save_tsdf(root, tsdf: dict[str, Any]) -> None:
+    """Store optional TSDF clouds: geometry (xyz/rgb) and semantic (full cloud columns)."""
+    g = root.require_group("tsdf")
+    geom = tsdf.get("geometry")
+    if geom is not None:
+        _save_geometry(g, geom[0], geom[1])
+    semantic = tsdf.get("semantic")
+    if semantic is not None:
+        _save_cloud(g, "semantic", semantic)
+
+
+# ---------------------------------------------------------------------------
 # Load
 # ---------------------------------------------------------------------------
 
@@ -328,10 +440,12 @@ def _save_fci(root, fci: "FinalCloudIndex") -> None:
 class LoadedScene:
     manifest: dict[str, Any]
     classes_config: "ClassConfig"
-    final_cloud_index: "FinalCloudIndex"
+    final_cloud_index: "FinalCloudIndex | None"
     mapping_result: "MappingSequenceResult"
     frame_accessor: "SceneFrameAccessor"
     run_mode: str
+    geometry_xyz: "np.ndarray | None" = None
+    geometry_rgb: "np.ndarray | None" = None
 
 
 def load_scene_file(
@@ -363,8 +477,9 @@ def load_scene_file(
         store.close()
         return None
 
-    # --- fingerprint check ---
-    if run_dir is not None:
+    # --- fingerprint check (skipped once the run is compacted: with the source artifacts pruned the
+    #     zip IS the canonical data and can't be "stale" against a directory that no longer holds them) ---
+    if run_dir is not None and (run_dir / "mapping_outputs.npz").exists():
         stored_fp = root.attrs.get("source_fingerprint")
         if stored_fp is not None:
             current_fp = compute_source_fingerprint(run_dir)
@@ -388,9 +503,17 @@ def load_scene_file(
     classes_config = _load_classes(root)
     _emit("scene_classes", 1, 1)
 
-    # --- /final_cloud_index ---
+    # --- cloud index (viewer) / geometry — geometry-only scenes have no FCI ---
     _emit("scene_cloud_index", 0, 1)
-    fci = _load_fci(root)
+    fci = None
+    geometry_xyz = None
+    geometry_rgb = None
+    if "final_cloud_index" in root:
+        fci = _load_fci(root)
+    elif "geometry" in root:
+        g = root["geometry"]
+        geometry_xyz = g["xyz"][:]
+        geometry_rgb = g["rgb"][:]
     _emit("scene_cloud_index", 1, 1)
 
     # --- /mapping ---
@@ -408,6 +531,8 @@ def load_scene_file(
         mapping_result=mapping_result,
         frame_accessor=frame_accessor,
         run_mode=run_mode,
+        geometry_xyz=geometry_xyz,
+        geometry_rgb=geometry_rgb,
     )
 
 
@@ -488,13 +613,19 @@ def _load_mapping(root) -> "MappingSequenceResult":
     g = root["mapping"]
     scale_type = g.attrs.get("scale_type", "unknown")
 
-    world_points = g["world_points"][:] if "world_points" in g else None
-    confidence = g["confidence"][:] if "confidence" in g else None
+    # depth_maps / world_points / confidence are the largest arrays in the file, per-frame chunked,
+    # and the viewer (LiveFrameCloudCache, frustum panel) only ever reads them one frame at a time
+    # (`X[i]`). Hand the open Zarr arrays through instead of eagerly materialising them with `[:]` —
+    # indexing reads a single chunk on demand. The backing ZipStore is held open for the run's
+    # lifetime by SceneFrameAccessor. Small arrays stay eager.
+    depth_maps = g["depth_maps"]
+    world_points = g["world_points"] if "world_points" in g else None
+    confidence = g["confidence"] if "confidence" in g else None
     gravity_vectors = g["gravity_vectors"][:] if "gravity_vectors" in g else None
 
     return MappingSequenceResult(
         frame_indices=g["frame_indices"][:],
-        depth_maps=g["depth_maps"][:],
+        depth_maps=depth_maps,
         poses_w_c=g["poses_w_c"][:],
         intrinsics=g["intrinsics"][:],
         world_points=world_points,
@@ -631,3 +762,177 @@ def _get_library_version() -> str:
         return importlib.metadata.version("deepreefmap")
     except Exception:
         return "0.0.0"
+
+
+# ---------------------------------------------------------------------------
+# Extract — rehydrate a run directory from a scene file (inverse of compaction)
+# ---------------------------------------------------------------------------
+
+#: Everything `extract` can rehydrate. `csv` is an extra convenience (benthic cover CSV levels) on
+#: top of the canonical run-dir layout.
+EXTRACT_ALL = ("manifest", "mapping", "frames", "cloud", "ortho", "cover", "geometry", "tsdf")
+
+
+def _read_manifest(root) -> dict[str, Any]:
+    raw = root["meta"]["manifest"][()]
+    if isinstance(raw, np.ndarray):
+        raw = raw.item()
+    return json.loads(raw) if isinstance(raw, str) else raw
+
+
+def _read_cloud(g) -> "SemanticPointCloud":
+    from deepreefmap.pipeline.artifacts import SemanticPointCloud
+
+    return SemanticPointCloud(
+        xyz=g["xyz"][:],
+        rgb=g["rgb"][:],
+        labels=g["labels"][:],
+        frame_indices=g["frame_index"][:] if "frame_index" in g else None,
+        confidence=g["confidence"][:] if "confidence" in g else None,
+        distance_to_camera=g["distance_to_camera"][:] if "distance_to_camera" in g else None,
+    )
+
+
+def extract_scene_to_dir(
+    path: Path,
+    out_dir: Path,
+    *,
+    what: "set[str] | None" = None,
+    progress_cb: ProgressCB | None = None,
+) -> list[Path]:
+    """Rehydrate a run directory from a scene file — the inverse of compaction.
+
+    Writes the canonical run-dir layout (run_manifest.json, mapping_outputs.npz, frames/, labels/,
+    masks/, semantic_reference_cloud.ply or geometry_cloud.ply, ortho.npz/png, benthic_cover.json,
+    optional TSDF plys). ``what`` restricts to a subset of ``EXTRACT_ALL`` (+ ``"csv"`` for cover CSV
+    levels). Returns the written paths.
+    """
+    import zarr
+
+    import cv2
+
+    from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_semantic_cloud
+    from deepreefmap.pointcloud.grid_ortho import OrthoGrid
+
+    want = set(what) if what is not None else set(EXTRACT_ALL)
+    written: list[Path] = []
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _emit(stage: str, cur: int, tot: int) -> None:
+        if progress_cb is not None:
+            try:
+                progress_cb(stage, cur, tot)
+            except Exception:
+                pass
+
+    store = zarr.ZipStore(str(path), mode="r")
+    try:
+        root = zarr.open_group(store=store, mode="r")
+        manifest = _read_manifest(root)
+
+        if "manifest" in want:
+            p = out_dir / "run_manifest.json"
+            p.write_text(json.dumps(manifest, indent=2))
+            written.append(p)
+
+        if "mapping" in want and "mapping" in root:
+            g = root["mapping"]
+            empty = np.asarray([])
+            np.savez_compressed(
+                out_dir / "mapping_outputs.npz",
+                frame_indices=g["frame_indices"][:],
+                depth=g["depth_maps"][:],
+                poses_w_c=g["poses_w_c"][:],
+                intrinsics=g["intrinsics"][:],
+                confidence=g["confidence"][:] if "confidence" in g else empty,
+                gravity_vectors=g["gravity_vectors"][:] if "gravity_vectors" in g else empty,
+                world_points=g["world_points"][:] if "world_points" in g else empty,
+                # local_points is intentionally not stored (dead post-mapping); reproduce the
+                # empty-array placeholder the pipeline writes when it is absent.
+                local_points=empty,
+                scale_type=np.asarray(str(g.attrs.get("scale_type", "unknown"))),
+            )
+            written.append(out_dir / "mapping_outputs.npz")
+
+        if "frames" in want and "frames" in root:
+            fg = root["frames"]
+            images, labels, masks = fg["images_rgb"], fg["labels"], fg["masks"]
+            n = int(fg.attrs["n_frames"])
+            frame_paths = manifest.get("frame_paths", [])
+            labels_paths = manifest.get("labels_paths", [])
+            mask_paths = manifest.get("mask_paths", [])
+            for i in range(n):
+                _emit("extract_frames", i, n)
+                if i < len(frame_paths):
+                    p = out_dir / frame_paths[i]
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    cv2.imwrite(str(p), cv2.cvtColor(np.asarray(images[i], dtype=np.uint8), cv2.COLOR_RGB2BGR))
+                    written.append(p)
+                if i < len(labels_paths):
+                    p = out_dir / labels_paths[i]
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    np.save(str(p), np.asarray(labels[i], dtype=np.int32))
+                    written.append(p)
+                if i < len(mask_paths):
+                    p = out_dir / mask_paths[i]
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    cv2.imwrite(str(p), np.asarray(masks[i], dtype=np.uint8))
+                    written.append(p)
+            _emit("extract_frames", n, n)
+
+        if "cloud" in want and "cloud" in root:
+            p = out_dir / "semantic_reference_cloud.ply"
+            save_semantic_cloud(p, _read_cloud(root["cloud"]))
+            written.append(p)
+
+        if "ortho" in want and "products" in root and "ortho" in root["products"]:
+            og = root["products"]["ortho"]
+            psm = og.attrs.get("pixel_size_m")
+            grid = OrthoGrid(
+                rgb=og["rgb"][:],
+                labels=og["labels"][:],
+                height=og["height"][:],
+                counts=og["counts"][:],
+                frame_index=og["frame_index"][:],
+                cell_size=float(og.attrs["cell_size"]),
+                pixel_size_m=None if psm is None else float(psm),
+            )
+            save_ortho_grid(out_dir / "ortho.npz", grid)
+            cv2.imwrite(str(out_dir / "ortho.png"), cv2.cvtColor(np.asarray(grid.rgb, dtype=np.uint8), cv2.COLOR_RGB2BGR))
+            written += [out_dir / "ortho.npz", out_dir / "ortho.png"]
+
+        if ("cover" in want or "csv" in want) and "products" in root and "cover" in root["products"]:
+            raw = root["products"]["cover"][()]
+            if isinstance(raw, np.ndarray):
+                raw = raw.item()
+            cover = json.loads(raw) if isinstance(raw, str) else raw
+            if "cover" in want:
+                p = out_dir / "benthic_cover.json"
+                p.write_text(json.dumps(cover, indent=2))
+                written.append(p)
+            if "csv" in want:
+                from deepreefmap.postproc.reports import save_cover_csv_levels
+
+                written += list(save_cover_csv_levels(out_dir, cover, _load_classes(root)).values())
+
+        if "geometry" in want and "geometry" in root:
+            g = root["geometry"]
+            p = out_dir / "geometry_cloud.ply"
+            save_geometry_cloud(p, g["xyz"][:], g["rgb"][:])
+            written.append(p)
+
+        if "tsdf" in want and "tsdf" in root:
+            tg = root["tsdf"]
+            if "geometry" in tg:
+                p = out_dir / "tsdf_cloud.ply"
+                save_geometry_cloud(p, tg["geometry"]["xyz"][:], tg["geometry"]["rgb"][:])
+                written.append(p)
+            if "semantic" in tg:
+                p = out_dir / "semantic_tsdf_cloud.ply"
+                save_semantic_cloud(p, _read_cloud(tg["semantic"]))
+                written.append(p)
+    finally:
+        store.close()
+
+    _emit("extract_done", 1, 1)
+    return written

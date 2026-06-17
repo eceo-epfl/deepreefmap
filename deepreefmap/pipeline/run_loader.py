@@ -149,6 +149,8 @@ def _load_from_scene_file(
         from_scene_file=True,
         scene_accessor=scene.frame_accessor,
         final_cloud_index=scene.final_cloud_index,
+        geometry_xyz=scene.geometry_xyz,
+        geometry_rgb=scene.geometry_rgb,
         world_points_warning=_world_points_fallback_warning(scene.manifest, scene.mapping_result),
     )
 

@@ -90,6 +90,45 @@ def render_offline_video_placeholder(
     crop_width_m: float | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> None:
+    """Render the QC video to ``run_dir/videos/qc_render.mp4``.
+
+    On a compacted run the plain inputs are gone, so rehydrate just what the render needs
+    (frames/labels/depth/ortho) from the scene file to a temp dir, render there, then move the result
+    into ``run_dir``.
+    """
+    run_dir = Path(run_dir)
+    from deepreefmap.pipeline.compaction import is_compacted
+
+    if not is_compacted(run_dir):
+        _render_qc_video(run_dir, transect_length_m, crop_width_m, progress_callback)
+        return
+
+    import shutil
+    import tempfile
+
+    from deepreefmap.io.scene_file import extract_scene_to_dir, find_scene_file
+
+    scene = find_scene_file(run_dir)
+    if scene is None:  # is_compacted implies a scene file exists; defensive + keeps mypy happy
+        raise FileNotFoundError(f"compacted run missing its scene file: {run_dir}")
+    tmp = Path(tempfile.mkdtemp(prefix="drm_qc_"))
+    try:
+        extract_scene_to_dir(scene, tmp, what={"manifest", "mapping", "frames", "ortho"})
+        _render_qc_video(tmp, transect_length_m, crop_width_m, progress_callback)
+        produced = tmp / "videos" / "qc_render.mp4"
+        target = run_dir / "videos" / "qc_render.mp4"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(produced), str(target))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _render_qc_video(
+    run_dir: Path,
+    transect_length_m: float | None = None,
+    crop_width_m: float | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> None:
     """Render a DRM-style 4-panel QC video from manifest artifacts.
 
     Layout per frame (matching the original mee-deepreefmap render):

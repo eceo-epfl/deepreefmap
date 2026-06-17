@@ -239,6 +239,61 @@ def gen_scene(
     typer.echo(f"Done: {scene_path}")
 
 
+@app.command("extract")
+def extract(
+    scene_file: Path = typer.Argument(
+        ..., exists=True, dir_okay=False, help="A .scene.zarr.zip scene file."
+    ),
+    out: Path = typer.Option(..., "--out", "-o", help="Directory to rehydrate the run into."),
+    only: str = typer.Option(
+        "",
+        "--only",
+        help="Comma-separated subset to extract (default: all): "
+        "manifest,mapping,frames,cloud,ortho,cover,geometry,tsdf.",
+    ),
+    csv: bool = typer.Option(False, "--csv", help="Also write benthic cover CSV levels."),
+) -> None:
+    """Rehydrate a full run directory from a scene file (inverse of compaction).
+
+    The output resembles a normal reconstruction output directory: run_manifest.json,
+    mapping_outputs.npz, frames/, labels/, masks/, the PLY cloud(s), ortho.npz/png and
+    benthic_cover.json. With no --only, everything the scene file carries is written.
+    """
+    from deepreefmap.io.scene_file import EXTRACT_ALL, extract_scene_to_dir
+
+    what = {t.strip() for t in only.split(",") if t.strip()} if only.strip() else set(EXTRACT_ALL)
+    if csv:
+        what.add("csv")
+    typer.echo(f"Extracting {scene_file.name} → {out}…")
+    written = extract_scene_to_dir(scene_file, out, what=what)
+    typer.echo(f"Wrote {len(written)} files to {out}")
+
+
+@app.command("compact")
+def compact(
+    run_dir: Path = typer.Argument(
+        ..., exists=True, file_okay=False, help="Run output directory to compact."
+    ),
+    no_verify: bool = typer.Option(
+        False, "--no-verify", help="Skip the pre-prune scene-file verification (not recommended)."
+    ),
+) -> None:
+    """Prune a run directory to its single .scene.zarr.zip.
+
+    Reclaims disk by deleting the heavy plain artifacts (frames/labels/masks, mapping_outputs.npz,
+    the PLY cloud(s), ortho.npz/png, benthic_cover.json) — all reconstructable later with
+    `deepreefmap extract`. Refuses (deleting nothing) unless the scene file verifies as complete.
+    """
+    from deepreefmap.pipeline.compaction import CompactionError, compact_run
+
+    try:
+        scene = compact_run(run_dir, verify=not no_verify)
+    except CompactionError as exc:
+        typer.echo(f"Cannot compact: {exc}")
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Compacted → {scene}")
+
+
 @app.command("calibrate")
 def calibrate(
     video: Path = typer.Argument(..., exists=True),
