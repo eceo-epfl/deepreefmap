@@ -8,8 +8,26 @@ Remove-Item -Force -ErrorAction SilentlyContinue dist\*.whl, dist\*.tar.gz
 git submodule update --init --recursive
 if ($LASTEXITCODE -ne 0) { throw "git submodule update failed" }
 
+# CI passes DRM_BUILD_VERSION: the clean tag for releases, or `<ver>+g<sha>` for
+# branch builds. Stamping it into the wheel makes each binary key its own PyApp
+# env, so a re-downloaded branch build never reuses a stale same-version install.
+# Restore pyproject afterwards so the checkout isn't left dirty.
+$restorePyproject = $false
+if ($env:DRM_BUILD_VERSION) {
+    Copy-Item pyproject.toml pyproject.toml.bak -Force
+    $restorePyproject = $true
+    (Get-Content pyproject.toml.bak) `
+        -replace '^version = "[^"]*"', "version = `"$($env:DRM_BUILD_VERSION)`"" `
+        | Set-Content pyproject.toml
+}
+
 uv build
-if ($LASTEXITCODE -ne 0) { throw "uv build failed" }
+$buildExit = $LASTEXITCODE
+
+if ($restorePyproject) {
+    Move-Item pyproject.toml.bak pyproject.toml -Force
+}
+if ($buildExit -ne 0) { throw "uv build failed" }
 
 $wheel = Get-ChildItem dist\deepreefmap-*-py3-none-any.whl | Select-Object -First 1
 if (-not $wheel) { throw "wheel not found in dist/" }
@@ -22,7 +40,10 @@ $version = $wheelName -replace '^deepreefmap-', '' -replace '-py3-none-any\.whl$
 # to see real progress during the ~5-15 minute first-run install).
 $pyappVer = "v0.29.0"
 $pyappDir = Join-Path $env:TEMP "pyapp-$pyappVer"
-if (-not (Test-Path $pyappDir)) {
+# Re-clone when the checkout is missing OR incomplete (a prior interrupted clone
+# leaves an empty dir, which would skip a bare existence check and fail cargo later).
+if (-not (Test-Path (Join-Path $pyappDir "Cargo.toml"))) {
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $pyappDir
     git clone --depth=1 --branch $pyappVer https://github.com/ofek/pyapp.git $pyappDir
     if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
 }
@@ -86,7 +107,7 @@ $env:PYAPP_PROJECT_PATH = $wheelPath
 $features = "loger,gopro"
 if ($env:TORCH_VARIANT -eq "rocm") { $features = "$features,rocm" }
 $env:PYAPP_PROJECT_FEATURES = $features
-$env:PYAPP_EXEC_SPEC = "deepreefmap.launcher.qt_app:launch"
+$env:PYAPP_EXEC_SPEC = "deepreefmap.bootstrap:main"
 $env:PYAPP_PYTHON_VERSION = "3.11"
 $env:PYAPP_FULL_ISOLATION = "1"
 $env:PYAPP_UV_ENABLED = "1"

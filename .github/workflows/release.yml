@@ -81,14 +81,23 @@ jobs:
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
 
+      # `value` labels the artifact file (clean tag, or short SHA for branches).
+      # `version` is what gets stamped into the wheel/binary: the clean tag for a
+      # release, or `<pyproject-version>+g<short-sha>` for a branch build so each
+      # binary keys its own PyApp env and never reuses a stale same-version one.
       - name: Compute artifact label
         id: label
         shell: bash
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+            tag="${GITHUB_REF#refs/tags/v}"
+            echo "value=$tag" >> "$GITHUB_OUTPUT"
+            echo "version=$tag" >> "$GITHUB_OUTPUT"
           else
-            echo "value=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+            sha=$(echo "$GITHUB_SHA" | cut -c1-7)
+            proj_ver=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')
+            echo "value=$sha" >> "$GITHUB_OUTPUT"
+            echo "version=${proj_ver}+g${sha}" >> "$GITHUB_OUTPUT"
           fi
 
       # build.sh takes the output artifact name as $1; build.ps1 hardcodes the
@@ -96,6 +105,8 @@ jobs:
       - name: Build PyApp binary (Unix)
         if: runner.os != 'Windows'
         shell: bash
+        env:
+          DRM_BUILD_VERSION: ${{ steps.label.outputs.version }}
         run: bash scripts/build.sh ${{ matrix.artifact }} ${{ matrix.torch_variant }}
 
       - name: Build PyApp binary (Windows)
@@ -103,6 +114,7 @@ jobs:
         shell: pwsh
         env:
           TORCH_VARIANT: ${{ matrix.torch_variant }}
+          DRM_BUILD_VERSION: ${{ steps.label.outputs.version }}
         run: ./scripts/build.ps1
 
       - name: Label binary
