@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from deepreefmap.gui.log_view import close_run_log_file, open_run_log_file
 from deepreefmap.gui.progress import _LOAD_STAGE_TO_PHASE, _STAGE_MESSAGE_TO_PHASE
+from deepreefmap.gui.settings import Keys
 
 if TYPE_CHECKING:
     from deepreefmap.pipeline.run_loader import LoadedRun
@@ -45,6 +46,10 @@ class RunLoadingMixin(MixinBase):
             self._status_label.setText(f"Error: file not found: {video_path}")
             return
 
+        # Refuse to start when the output volume is below the configured free-space floor.
+        if not self._check_free_space_before_run():
+            return
+
         run_name = self._sanitize_run_name(self._run_name_input.text())
         # Reflect the sanitised slug back so the user sees what's actually written.
         if run_name != self._run_name_input.text():
@@ -52,9 +57,9 @@ class RunLoadingMixin(MixinBase):
         out_dir = Path(self._out_root_input.text()).expanduser() / run_name
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        self._settings.setValue("last_video_path", str(video_path))
-        self._settings.setValue("output_root_dir", self._out_root_input.text())
-        self._settings.setValue("last_run_dir", str(out_dir))
+        self._settings.setValue(Keys.LAST_VIDEO_PATH, str(video_path))
+        self._settings.setValue(Keys.OUTPUT_ROOT_DIR, self._out_root_input.text())
+        self._settings.setValue(Keys.LAST_RUN_DIR, str(out_dir))
 
         transect_length = self._transect_length.value() or None
         transect_crop = self._crop_width.value() or None
@@ -146,6 +151,8 @@ class RunLoadingMixin(MixinBase):
                 pause_event=pause_event,
                 **kwargs,
             )
+            # Run succeeded — optionally compact the output to a single file (setting-gated, verified).
+            self._maybe_compact_after_run(Path(kwargs["output_dir"]))
         except ReconstructionCancelled:
             self._sig_pipeline_cancelled.emit()
         except Exception as exc:

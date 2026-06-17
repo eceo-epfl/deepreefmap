@@ -25,6 +25,7 @@ from deepreefmap.gui.batch import (  # noqa: F401  re-exported for tests
     _load_batch_csv,
     _parse_timestamp_range,
 )
+from deepreefmap.gui.data_manager import DataManagerMixin
 from deepreefmap.gui.form_panel import FormPanelMixin
 from deepreefmap.gui.models import ModelManagementMixin
 from deepreefmap.gui.past_runs import (
@@ -32,6 +33,7 @@ from deepreefmap.gui.past_runs import (
 )
 from deepreefmap.gui.results import ResultsMixin
 from deepreefmap.gui.run_loader import RunLoadingMixin
+from deepreefmap.gui.settings import Keys, settings
 from deepreefmap.gui.viewer_controls import ViewerControlsMixin
 from deepreefmap.gui.progress import (
     ProgressBarsMixin,
@@ -51,6 +53,7 @@ logger = logging.getLogger(__name__)
 class DeepReefMapWindow(
     QMainWindow,
     BatchMixin,
+    DataManagerMixin,
     FormPanelMixin,
     ModelManagementMixin,
     PastRunsMixin,
@@ -126,21 +129,21 @@ class DeepReefMapWindow(
         top_bar = self._build_top_bar()
         log_panel = self._build_log_panel()
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(form_panel)
-        splitter.addWidget(self._viewer)
-        splitter.setSizes([440, 960])
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setChildrenCollapsible(True)
-        splitter.setHandleWidth(6)
+        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter.addWidget(form_panel)
+        self._main_splitter.addWidget(self._viewer)
+        self._main_splitter.setSizes([440, 960])
+        self._main_splitter.setStretchFactor(0, 0)
+        self._main_splitter.setStretchFactor(1, 1)
+        self._main_splitter.setChildrenCollapsible(True)
+        self._main_splitter.setHandleWidth(6)
 
         # Vertical splitter places the live log as a togglable section at the
         # bottom of the window, alongside the form + 3D viewer above it. Hidden
         # initially; the top-bar Log button drives visibility, and _on_submit
         # auto-opens it when a run starts.
         self._central_vsplitter = QSplitter(Qt.Orientation.Vertical)
-        self._central_vsplitter.addWidget(splitter)
+        self._central_vsplitter.addWidget(self._main_splitter)
         self._central_vsplitter.addWidget(log_panel)
         self._central_vsplitter.setSizes([700, 220])
         self._central_vsplitter.setStretchFactor(0, 1)
@@ -170,6 +173,20 @@ class DeepReefMapWindow(
         central_layout.addWidget(self._central_vsplitter, 1)
         self.setCentralWidget(central)
 
+        # Restore the last window size and form/viewer split. Absent on first
+        # launch, so the hard-coded resize/setSizes above stay as the defaults.
+        geometry = settings().value(Keys.WINDOW_GEOMETRY)
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        splitter_state = settings().value(Keys.MAIN_SPLITTER_STATE)
+        if splitter_state is not None:
+            self._main_splitter.restoreState(splitter_state)
+
+    def closeEvent(self, event) -> None:
+        s = settings()
+        s.setValue(Keys.WINDOW_GEOMETRY, self.saveGeometry())
+        s.setValue(Keys.MAIN_SPLITTER_STATE, self._main_splitter.saveState())
+        super().closeEvent(event)
 
 
 def launch(classes_path: Path | None = None, view_run_dir: Path | None = None) -> None:

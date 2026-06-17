@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, SupportsInt, cast
 
 
 from deepreefmap.gui.log_view import close_run_log_file
+from deepreefmap.gui.settings import Keys
 from deepreefmap.gui.progress import (
     _SETUP_MESSAGE_TO_PHASE,
     _STAGE_MESSAGE_TO_PHASE,
@@ -1069,7 +1070,7 @@ class ViewerControlsMixin(MixinBase):
                         self._active_run_manifest = json.loads(manifest_path.read_text())
                     except Exception:
                         self._active_run_manifest = None
-                self._settings.setValue("last_run_dir", str(self._active_run_dir))
+                self._settings.setValue(Keys.LAST_RUN_DIR, str(self._active_run_dir))
                 self._refresh_past_runs_combo()
             close_run_log_file(self._run_log_file_handler)
             self._run_log_file_handler = None

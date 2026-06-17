@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from typing import cast
 
-from PySide6.QtCore import QFileSystemWatcher, QSettings, QSize, QStandardPaths, Qt, QUrl
+from PySide6.QtCore import QFileSystemWatcher, QSize, QStandardPaths, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -40,6 +40,7 @@ from deepreefmap.gui.progress import (
     _RECON_PHASES,
     ProgressModel,
 )
+from deepreefmap.gui.settings import Keys, settings
 from deepreefmap.gui.version import _current_version
 from deepreefmap.gui.theme import WARN_BG, WARN_BORDER, WARN_TEXT
 from deepreefmap.gui.sunburst_widget import SunburstWidget
@@ -106,7 +107,8 @@ class FormPanelMixin(MixinBase):
         self._TAB_RUN = 0
         self._TAB_RESULTS = 1
         self._TAB_MODELS = 2
-        self._TAB_UPDATES = 3
+        self._TAB_DATA = 3
+        self._TAB_UPDATES = 4
         self._sidebar_tabs = QTabWidget()
         # Tabs expand to share the panel width equally so labels of different
         # length (Run / Results / Models / Updates) end up the same visible width.
@@ -126,6 +128,10 @@ class FormPanelMixin(MixinBase):
         models_layout = QVBoxLayout(self._models_tab)
         models_layout.setContentsMargins(4, 6, 4, 4)
         models_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._data_tab = QWidget()
+        self._data_layout = QVBoxLayout(self._data_tab)
+        self._data_layout.setContentsMargins(4, 6, 4, 4)
+        self._data_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._updates_tab = QWidget()
         updates_layout = QVBoxLayout(self._updates_tab)
         updates_layout.setContentsMargins(4, 6, 4, 4)
@@ -136,6 +142,7 @@ class FormPanelMixin(MixinBase):
         self._sidebar_tabs.addTab(self._run_tab, "Run")
         self._sidebar_tabs.addTab(self._viewer_tab, "Results")
         self._sidebar_tabs.addTab(self._models_tab, "Models")
+        self._sidebar_tabs.addTab(self._data_tab, "Data")
         self._sidebar_tabs.addTab(self._updates_tab, "Updates")
         # Results tab has nothing to show until a run loads — disable it so
         # the tab is greyed out and unclickable until _show_viewer_controls
@@ -942,12 +949,12 @@ class FormPanelMixin(MixinBase):
         self._results_output_dir: Path | None = None
         self._ortho_crop_refresh_pending = False
 
-        self._settings = QSettings("ECEO", "deepreefmap")
-        last_video = cast(str, self._settings.value("last_video_path", "", type=str))
+        self._settings = settings()
+        last_video = cast(str, self._settings.value(Keys.LAST_VIDEO_PATH, "", type=str))
         if last_video and Path(last_video).exists():
             self._video_input.setText(last_video)
             self._auto_probe_video_duration(last_video)
-        saved_root = cast(str, self._settings.value("output_root_dir", "", type=str))
+        saved_root = cast(str, self._settings.value(Keys.OUTPUT_ROOT_DIR, "", type=str))
         if saved_root:
             self._out_root_input.setText(saved_root)
         self._update_effective_dir_label()
@@ -960,12 +967,12 @@ class FormPanelMixin(MixinBase):
         # opens instantly. A stale half-finished last_run_dir is cleared so
         # it doesn't appear at the top of the combo as the most recent entry
         # only to error out on click.
-        last_run = cast(str, self._settings.value("last_run_dir", "", type=str))
+        last_run = cast(str, self._settings.value(Keys.LAST_RUN_DIR, "", type=str))
         if last_run:
             last_run_path = Path(last_run)
             if not ((last_run_path / "run_manifest.json").exists()
                     and (last_run_path / "mapping_outputs.npz").exists()):
-                self._settings.remove("last_run_dir")
+                self._settings.remove(Keys.LAST_RUN_DIR)
         # Models groupbox lives in its own sidebar tab so the Run tab stays
         # focused on the setup form. The inline status icons next to the
         # seg/mapping dropdowns surface state without forcing the user to
@@ -1001,6 +1008,9 @@ class FormPanelMixin(MixinBase):
         threading.Thread(target=self._check_for_update, daemon=True).start()
 
         updates_layout.addStretch()
+
+        # Data Manager tab — built after _settings and the output-root input exist.
+        self._build_data_manager_tab()
 
         # Start in SETUP — no run loaded yet. The mode flips to RUNNING in
         # _begin_pipeline_run and to VIEWING when a past run is selected or a
@@ -1374,7 +1384,7 @@ class FormPanelMixin(MixinBase):
     def _on_output_root_changed(self, _text: str = "") -> None:
         self._update_effective_dir_label()
         self._recompute_submit_state()
-        self._settings.setValue("output_root_dir", self._out_root_input.text())
+        self._settings.setValue(Keys.OUTPUT_ROOT_DIR, self._out_root_input.text())
         self._refresh_past_runs_combo()
         self._update_out_root_watch()
 

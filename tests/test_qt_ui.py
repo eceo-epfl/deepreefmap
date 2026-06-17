@@ -932,6 +932,28 @@ def test_window_creates(qapp):
     assert window.windowTitle() == "DeepReefMap"
 
 
+def test_window_geometry_persists_across_instances(qapp):
+    pytest.importorskip("torch", reason="torch not loadable on this machine")
+    from PySide6.QtGui import QCloseEvent
+
+    from deepreefmap.config.classes import load_classes
+    from deepreefmap.gui.app import DeepReefMapWindow
+    from deepreefmap.gui.settings import Keys, settings
+
+    cc = load_classes()
+    first = DeepReefMapWindow(cc, None)
+    first.resize(1234, 811)
+    first.closeEvent(QCloseEvent())
+
+    s = settings()
+    assert s.value(Keys.WINDOW_GEOMETRY) is not None
+    assert s.value(Keys.MAIN_SPLITTER_STATE) is not None
+
+    # A fresh window restores the saved geometry/split without error.
+    second = DeepReefMapWindow(cc, None)
+    assert second.windowTitle() == "DeepReefMap"
+
+
 def test_updates_tab_dev_mode_vs_installed(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
     from deepreefmap.config.classes import load_classes
