@@ -200,29 +200,33 @@ class VersionCheckMixin(MixinBase):
         self._update_show_all.setVisible(False)
         self._update_version_combo.setVisible(False)
         self._update_btn.setVisible(False)
+        self._available_releases = list(releases or [])
+
+        # Surface a newer release in the tab regardless of mode, as a nudge.
+        newer = _newer_releases(self._available_releases, current)
+        if newer:
+            self._set_updates_tab_alert(_release_version(newer[0]))
+
+        # Dev mode: running from source, not the installed binary. In-app
+        # install/rollback swap the binary in place, which only makes sense for
+        # the installed application, so the controls stay hidden here.
+        if pyapp_bin is None:
+            latest = f" Latest release: <b>{_release_version(newer[0])}</b>." if newer else ""
+            self._update_status_label.setText(
+                "Running in <b>development mode</b> (from source). In-app updates "
+                "and rollback are available only in the installed application — "
+                f"launch the downloaded binary to manage versions.{latest}"
+            )
+            return
+
         if releases is None:
             self._update_status_label.setText("Couldn't reach GitHub.")
             return
         if not releases:
             self._update_status_label.setText("No releases found.")
             return
-        self._available_releases = list(releases)
-        newer = _newer_releases(releases, current)
-        if newer:
-            self._set_updates_tab_alert(_release_version(newer[0]))
-        if not pyapp_bin:
-            if newer:
-                versions_summary = ", ".join(_release_version(r) for r in newer[:5])
-                self._update_status_label.setText(
-                    f"Latest: <b>{_release_version(newer[0])}</b><br>"
-                    f"<i>(not running from installer — can't update in place)</i><br>"
-                    f"Available: {versions_summary}"
-                )
-            else:
-                self._update_status_label.setText("Up to date.")
-            return
-        # Running from the installer: a rollback is only meaningful if there is
-        # any version other than the current one.
+        # Installed binary: a rollback is only meaningful if there is any version
+        # other than the current one.
         self._update_show_all.setVisible(
             any(_release_version(r) != current for r in releases)
         )

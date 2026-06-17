@@ -932,6 +932,28 @@ def test_window_creates(qapp):
     assert window.windowTitle() == "DeepReefMap"
 
 
+def test_updates_tab_dev_mode_vs_installed(qapp):
+    pytest.importorskip("torch", reason="torch not loadable on this machine")
+    from deepreefmap.config.classes import load_classes
+    from deepreefmap.gui.app import DeepReefMapWindow
+
+    window = DeepReefMapWindow(load_classes(), None)
+    releases = [{"tag_name": "v2.0.0", "assets": []}, {"tag_name": "v1.0.0", "assets": []}]
+
+    # Dev mode (no installer binary): explain it, hide the install controls.
+    # isHidden() reflects the widget's own flag (the window is never shown, so
+    # isVisible() would be False regardless).
+    window._apply_update_check("1.1.0", releases, None)
+    assert "development mode" in window._update_status_label.text().lower()
+    assert window._update_version_combo.isHidden()
+    assert window._update_show_all.isHidden()
+
+    # Installed binary: install controls + rollback checkbox appear.
+    window._apply_update_check("1.1.0", releases, "/tmp/mock-pyapp")
+    assert not window._update_version_combo.isHidden()
+    assert not window._update_show_all.isHidden()
+
+
 def test_overlay_has_reset_button_and_r_shortcut_triggers_view_reset(qapp):
     pytest.importorskip("torch", reason="torch not loadable on this machine")
     from PySide6.QtGui import QKeySequence, QShortcut
