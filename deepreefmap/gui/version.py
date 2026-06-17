@@ -211,11 +211,8 @@ class VersionCheckMixin(MixinBase):
         # install/rollback swap the binary in place, which only makes sense for
         # the installed application, so the controls stay hidden here.
         if pyapp_bin is None:
-            latest = f" Latest release: <b>{_release_version(newer[0])}</b>." if newer else ""
             self._update_status_label.setText(
-                "Running in <b>development mode</b> (from source). In-app updates "
-                "and rollback are available only in the installed application — "
-                f"launch the downloaded binary to manage versions.{latest}"
+                "Running development mode. Launch from a binary to manage versions."
             )
             return
 
