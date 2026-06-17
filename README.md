@@ -228,20 +228,29 @@ Each run writes:
 - `geometry_cloud.ply` — geometry-only cloud (when `--skip-segmentation`).
 - `run_manifest.json` — canonical run manifest (`semantic` or `geometry_only`).
 
-## Interactive viewer (viser)
+## Desktop app
 
-Live during reconstruction with `--viser`, or open an existing run:
+![DeepReefMap desktop app](assets/gui-with-reconstruction.png)
+
+Launch the desktop app with:
 
 ```bash
-uv run deepreefmap view-run --run-dir out --viser-port 8080
+uv run deepreefmap launch
 ```
 
-In the viewer you can:
+It has four tabs:
 
-- Click a camera frustum to jump to that point in the timeline.
-- Inspect RGB, segmentation, and depth per frame.
-- Toggle class visibility and switch between RGB and semantic colors.
-- Use **Accumulate** to overlay filtered points up to the current timeline index.
+- **Run**: pick a video, choose the segmentation and mapping backends, then click **Start reconstruction**. Progress streams to the log panel.
+- **Results**: the 3D point cloud, ortho previews, and per-class benthic cover. Load a past run with `deepreefmap launch <run-dir>`.
+- **Models**: download model weights from Hugging Face up front so the app runs offline.
+- **Updates**: check for and install new versions.
+
+In the 3D viewer you can:
+
+- Toggle **Semantic colors** to switch between class colors and camera RGB.
+- Show, hide, or isolate classes from the **Semantic legend**.
+- Scrub the **Frame** timeline or hit **Play** to animate the run.
+- Click **Pick** to inspect a point's class, position, frame, and confidence.
 
 ## CLI reference
 
