@@ -21,6 +21,13 @@ _DEFAULT_GH_REPO = "eceo-epfl/deepreefmap"
 
 
 def _gh_releases_url() -> str:
+    # Full-URL override points the release check at a local server, so the real
+    # download + swap + provision + prune path can be validated without a public
+    # release (see tests/e2e/serve_local_release.sh). DEEPREEFMAP_GH_REPO swaps
+    # only the owner/repo against the real GitHub host.
+    override = os.environ.get("DEEPREEFMAP_GH_API_URL")
+    if override:
+        return override
     repo = os.environ.get("DEEPREEFMAP_GH_REPO", _DEFAULT_GH_REPO)
     return f"https://api.github.com/repos/{repo}/releases"
 
@@ -131,6 +138,27 @@ def _newer_releases(releases: list[dict], current: str) -> list[dict]:
     return [rel for _, rel in newer]
 
 
+def _selectable_releases(releases: list[dict], current: str, include_older: bool) -> list[dict]:
+    """Releases the user may install, newest first.
+
+    With ``include_older`` off this is :func:`_newer_releases` (upgrades only).
+    With it on, every release except the exact current version is offered, so a
+    rollback to an older version is possible. Mechanically a downgrade is the
+    same as an upgrade: the chosen asset is downloaded, swapped in, and the
+    previous environment is pruned once the older version provisions.
+    """
+    if not include_older:
+        return _newer_releases(releases, current)
+    keyed = []
+    for rel in releases:
+        version = _release_version(rel)
+        if version == current:
+            continue
+        keyed.append((_parse_version(version) or _parse_version("0"), rel))
+    keyed.sort(key=lambda pair: pair[0], reverse=True)
+    return [rel for _, rel in keyed]
+
+
 def _current_version() -> str:
     import importlib.metadata
 
@@ -166,8 +194,12 @@ class VersionCheckMixin(MixinBase):
         self._sidebar_tabs.setTabToolTip(idx, f"Version {latest} is available")
 
     def _apply_update_check(self, current: str, releases: list[dict] | None, pyapp_bin: str | None) -> None:
+        self._current_version_str = current
         self._update_version_label.setText(f"Version: <b>{current}</b>")
         self._set_updates_tab_alert(None)
+        self._update_show_all.setVisible(False)
+        self._update_version_combo.setVisible(False)
+        self._update_btn.setVisible(False)
         if releases is None:
             self._update_status_label.setText("Couldn't reach GitHub.")
             return
@@ -175,29 +207,55 @@ class VersionCheckMixin(MixinBase):
             self._update_status_label.setText("No releases found.")
             return
         self._available_releases = list(releases)
-        installable = _newer_releases(releases, current)
-        if not installable:
-            self._update_status_label.setText("Up to date.")
-            return
-        latest = _release_version(installable[0])
-        self._set_updates_tab_alert(latest)
+        newer = _newer_releases(releases, current)
+        if newer:
+            self._set_updates_tab_alert(_release_version(newer[0]))
         if not pyapp_bin:
-            versions_summary = ", ".join(_release_version(r) for r in installable[:5])
-            self._update_status_label.setText(
-                f"Latest: <b>{latest}</b><br>"
-                f"<i>(not running from installer — can't update in place)</i><br>"
-                f"Available: {versions_summary}"
-            )
+            if newer:
+                versions_summary = ", ".join(_release_version(r) for r in newer[:5])
+                self._update_status_label.setText(
+                    f"Latest: <b>{_release_version(newer[0])}</b><br>"
+                    f"<i>(not running from installer — can't update in place)</i><br>"
+                    f"Available: {versions_summary}"
+                )
+            else:
+                self._update_status_label.setText("Up to date.")
             return
-        self._update_status_label.setText(
-            f"Latest: <b>{latest}</b>. Pick a version to install:"
+        # Running from the installer: a rollback is only meaningful if there is
+        # any version other than the current one.
+        self._update_show_all.setVisible(
+            any(_release_version(r) != current for r in releases)
         )
+        self._populate_update_versions()
+
+    def _populate_update_versions(self) -> None:
+        current = self._current_version_str
+        include_older = self._update_show_all.isChecked()
+        selectable = _selectable_releases(self._available_releases, current, include_older)
+        current_v = _parse_version(current)
         self._update_version_combo.clear()
-        for rel in installable:
-            v = _release_version(rel)
-            self._update_version_combo.addItem(v, rel)
-        self._update_version_combo.setVisible(True)
-        self._update_btn.setVisible(True)
+        for rel in selectable:
+            version = _release_version(rel)
+            rv = _parse_version(version)
+            marker = ""
+            if current_v is not None and rv is not None:
+                marker = " ↑" if rv > current_v else " ↓"
+            self._update_version_combo.addItem(f"{version}{marker}", rel)
+        has_items = self._update_version_combo.count() > 0
+        self._update_version_combo.setVisible(has_items)
+        self._update_btn.setVisible(has_items)
+        if not has_items:
+            self._update_status_label.setText("Up to date.")
+        elif include_older:
+            self._update_status_label.setText("Pick a version to install or roll back to:")
+        else:
+            self._update_status_label.setText(
+                f"Latest: <b>{_release_version(selectable[0])}</b>. Pick a version to install:"
+            )
+
+    def _on_toggle_show_all_versions(self, _checked: bool) -> None:
+        if self._available_releases:
+            self._populate_update_versions()
 
     def _on_update(self) -> None:
         from deepreefmap.gui.update_dialog import UpdateProgressDialog
@@ -210,10 +268,10 @@ class VersionCheckMixin(MixinBase):
         if index < 0:
             return
         release = self._update_version_combo.itemData(index)
-        version = self._update_version_combo.currentText()
         if not isinstance(release, dict):
             logger.warning("Selected release has no metadata")
             return
+        version = _release_version(release)
         self._update_btn.setEnabled(False)
         try:
             dialog = UpdateProgressDialog(

@@ -102,6 +102,8 @@ if TYPE_CHECKING:
         _legend_toggles: dict[int, QCheckBox]
         _run_log_file_handler: logging.FileHandler | None
         _scene_accessor: SceneFrameAccessor | None
+        _available_releases: list[dict]
+        _current_version_str: str
 
         # --- checkboxes --------------------------------------------------
         _accumulate_check: QCheckBox
@@ -112,6 +114,7 @@ if TYPE_CHECKING:
         _semantic_check: QCheckBox
         _skip_seg_check: QCheckBox
         _tsdf_check: QCheckBox
+        _update_show_all: QCheckBox
 
         # --- buttons -----------------------------------------------------
         _batch_btn: QPushButton
@@ -273,6 +276,7 @@ if TYPE_CHECKING:
         def _on_stop_clicked(self) -> None: ...
         def _on_submit(self) -> None: ...
         def _on_sunburst_selection(self, class_ids: list) -> None: ...
+        def _on_toggle_show_all_versions(self, _checked: bool) -> None: ...
         def _on_update(self) -> None: ...
         def _on_viewer_control_changed(self) -> None: ...
         def _on_view_from_camera(self) -> None: ...

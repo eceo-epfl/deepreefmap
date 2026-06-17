@@ -991,7 +991,12 @@ class FormPanelMixin(MixinBase):
         self._update_btn.clicked.connect(self._on_update)
         update_row.addWidget(self._update_btn)
         updates_layout.addLayout(update_row)
+        self._update_show_all = QCheckBox("Show older versions (rollback)")
+        self._update_show_all.setVisible(False)
+        self._update_show_all.toggled.connect(self._on_toggle_show_all_versions)
+        updates_layout.addWidget(self._update_show_all)
         self._available_releases: list[dict] = []
+        self._current_version_str = _current_version()
 
         threading.Thread(target=self._check_for_update, daemon=True).start()
 
