@@ -12,6 +12,7 @@ from deepreefmap.segmentation.dinov3_dpt import DinoV3DPTWrapper
 from deepreefmap.segmentation.registry import (
     create_segmentation_model,
     list_segmentation_models,
+    model_processing_size,
     register_segmentation_model,
 )
 from deepreefmap.segmentation.segformer import SegformerWrapper
@@ -33,6 +34,14 @@ def test_synthesize_dpt_carries_backbone_and_resolution():
 def test_synthesize_dpt_small_uses_small_resolution():
     _info, resolution, _family = synthesize_model_info("EPFL-ECEO/coralscapes-vit-s-dpt")
     assert resolution == (384, 688)
+
+
+def test_model_processing_size_swaps_to_width_height():
+    # _MODELS stores (height, width); processing/image sizes are (width, height).
+    assert model_processing_size("coralscapes-vit-s-dpt") == (688, 384)
+    assert model_processing_size("coralscapes-vit-b-dpt") == (1376, 768)
+    assert model_processing_size("segformer-b2") == (1024, 1024)
+    assert model_processing_size("no-such-model") is None
 
 
 def test_synthesize_segformer_is_ungated_no_backbone():

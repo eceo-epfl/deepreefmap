@@ -76,5 +76,16 @@ def get_model_resolution(name: str) -> tuple[int, int] | None:
     return _MODELS.get(name)
 
 
+def model_processing_size(name: str) -> tuple[int, int] | None:
+    """Native input size as ``(width, height)`` for a known model, else ``None``.
+
+    ``get_model_resolution`` returns ``(height, width)``; processing/image sizes
+    elsewhere are ``(width, height)``. This is the single converter the orchestrator
+    default and the GUI resolution presets share so the swap isn't duplicated.
+    """
+    res = get_model_resolution(name)
+    return (res[1], res[0]) if res is not None else None
+
+
 def list_segmentation_models() -> list[str]:
     return sorted(_MODELS.keys())

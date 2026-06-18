@@ -28,7 +28,7 @@ from deepreefmap.pointcloud.tsdf_align import align_tsdf_to_reference
 from deepreefmap.postproc.ortho_outputs import TransectCropParams, build_ortho_outputs
 from deepreefmap.postproc.quality import analyse_preprocess_quality
 from deepreefmap.postproc.reports import save_cover_report, save_run_manifest
-from deepreefmap.segmentation.registry import create_segmentation_model
+from deepreefmap.segmentation.registry import create_segmentation_model, model_processing_size
 from deepreefmap.telemetry.gopro import extract_gravity_vectors_for_video_selection
 from deepreefmap.pointcloud.unprojection import depth_to_points
 
@@ -127,7 +127,7 @@ def run_reconstruction(
         profile = CameraProfile.load(camera_profile_name)
         rectifier = Rectifier(profile)
         processing_image_size = _resolve_processing_image_size(
-            profile.image_size,
+            _default_processing_size(segmentation_name, skip_segmentation, profile.image_size),
             processing_width=processing_width,
             processing_height=processing_height,
         )
@@ -887,6 +887,24 @@ def _build_geometry_cloud(
         xyz_all = xyz_all[idx]
         rgb_all = rgb_all[idx]
     return xyz_all, rgb_all
+
+
+def _default_processing_size(
+    segmentation_name: str,
+    skip_segmentation: bool,
+    profile_image_size: tuple[int, int],
+) -> tuple[int, int]:
+    """Native processing size when the user gives no explicit width/height.
+
+    Prefer the segmentation model's native resolution (DPT heads have no internal
+    resize, so feeding off-native degrades them); fall back to the camera profile's
+    size when segmentation is skipped or the model is unknown.
+    """
+    if not skip_segmentation:
+        model_size = model_processing_size(segmentation_name)
+        if model_size is not None:
+            return model_size
+    return profile_image_size
 
 
 def _resolve_processing_image_size(

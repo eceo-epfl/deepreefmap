@@ -328,10 +328,13 @@ def test_fetch_releases_keeps_assets_from_github_response():
         ("darwin", "deepreefmap-macos-arm64"),
     ],
 )
-def test_resolve_asset_name(platform, expected):
-    from deepreefmap.gui.binary_swap import resolve_asset_name
+def test_resolve_asset_name(platform, expected, monkeypatch):
+    from deepreefmap.gui import binary_swap
 
-    assert resolve_asset_name(platform) == expected
+    # Pin the standard (CUDA/CPU) build so the linux base name is deterministic
+    # regardless of the host's torch wheel.
+    monkeypatch.setattr(binary_swap, "_is_rocm_build", lambda: False)
+    assert binary_swap.resolve_asset_name(platform) == expected
 
 
 def test_resolve_asset_name_unsupported_raises():
@@ -339,6 +342,32 @@ def test_resolve_asset_name_unsupported_raises():
 
     with pytest.raises(BinarySwapError):
         resolve_asset_name("freebsd")
+
+
+def test_resolve_asset_name_rocm_linux(monkeypatch):
+    from deepreefmap.gui import binary_swap
+
+    monkeypatch.setattr(binary_swap, "_is_rocm_build", lambda: True)
+    assert binary_swap.resolve_asset_name("linux") == "deepreefmap-linux-x64-rocm"
+
+
+def test_is_rocm_build_from_pyapp_binary_name(monkeypatch):
+    from deepreefmap.gui import binary_swap
+
+    monkeypatch.setenv("PYAPP", "/opt/pyapp/deepreefmap-linux-x64-rocm")
+    assert binary_swap._is_rocm_build() is True
+
+
+def test_is_rocm_build_reads_torch_hip_version(monkeypatch):
+    import torch
+
+    from deepreefmap.gui import binary_swap
+
+    monkeypatch.delenv("PYAPP", raising=False)
+    monkeypatch.setattr(torch.version, "hip", None, raising=False)
+    assert binary_swap._is_rocm_build() is False
+    monkeypatch.setattr(torch.version, "hip", "6.3.42", raising=False)
+    assert binary_swap._is_rocm_build() is True
 
 
 def test_apply_theme_sets_dark_palette(qapp):
@@ -1221,6 +1250,21 @@ def test_loger_options_collected_from_form(qapp):
 
     window._loger_model_path_input.setText("/tmp/custom.pt")
     assert window._collect_loger_options("loger_star")["model_path"] == "/tmp/custom.pt"
+
+
+def test_form_defaults_to_vit_b_and_loger_star(qapp):
+    pytest.importorskip("torch", reason="torch not loadable on this machine")
+    from deepreefmap.config.classes import load_classes
+    from deepreefmap.gui.app import DeepReefMapWindow
+    from deepreefmap.mapping.registry import loger_available
+
+    window = DeepReefMapWindow(load_classes(), None)
+    assert window._seg_combo.currentText() == "coralscapes-vit-b-dpt"
+    assert window._map_combo.currentText() == (
+        "loger_star" if loger_available() else "scsfmlearner"
+    )
+    # vit-b native (768,1376) → processing (1376,768); the Native preset feeds it unchanged.
+    assert window._native_resolution == (1376, 768)
 
 
 def test_loger_panel_visibility_follows_backend(qapp):

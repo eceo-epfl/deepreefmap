@@ -25,11 +25,12 @@ def _is_rocm_build() -> bool:
     try:
         import torch
 
-        if torch.cuda.is_available() and hasattr(torch.version, "hip"):
-            return True
+        # torch.version.hip is a version string on ROCm wheels and None on
+        # CUDA/CPU wheels. The attribute always exists, so hasattr would match
+        # every build and mislabel CUDA machines as ROCm.
+        return torch.version.hip is not None
     except Exception:
-        pass
-    return False
+        return False
 
 
 def resolve_asset_name(platform: str | None = None) -> str:

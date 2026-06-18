@@ -86,8 +86,8 @@ class FormPanelMixin(MixinBase):
             loger_available,
         )
         from deepreefmap.segmentation.registry import (
-            get_model_resolution,
             list_segmentation_models,
+            model_processing_size,
         )
 
         profiles = available_profile_names() or ["gopro_hero_10"]
@@ -229,7 +229,7 @@ class FormPanelMixin(MixinBase):
         ig.addWidget(QLabel("FPS"))
         self._fps_spin = QSpinBox()
         self._fps_spin.setRange(1, 60)
-        self._fps_spin.setValue(10)
+        self._fps_spin.setValue(5)
         ig.addWidget(self._fps_spin)
 
         range_row = QHBoxLayout()
@@ -270,7 +270,7 @@ class FormPanelMixin(MixinBase):
         seg_row.setSpacing(4)
         self._seg_combo = QComboBox()
         self._seg_combo.addItems(seg_models)
-        idx = self._seg_combo.findText("segformer-b2")
+        idx = self._seg_combo.findText("coralscapes-vit-b-dpt")
         if idx >= 0:
             self._seg_combo.setCurrentIndex(idx)
         seg_row.addWidget(self._seg_combo, 1)
@@ -284,7 +284,7 @@ class FormPanelMixin(MixinBase):
         map_row.setSpacing(4)
         self._map_combo = QComboBox()
         self._map_combo.addItems(map_backends)
-        default_map = "loger" if loger_available() else "scsfmlearner"
+        default_map = "loger_star" if loger_available() else "scsfmlearner"
         idx = self._map_combo.findText(default_map)
         if idx >= 0:
             self._map_combo.setCurrentIndex(idx)
@@ -390,8 +390,7 @@ class FormPanelMixin(MixinBase):
         adv_layout.addWidget(self._crop_width)
         # --- Processing resolution ---
         default_seg = self._seg_combo.currentText()
-        res = get_model_resolution(default_seg)
-        self._native_resolution = (res[1], res[0]) if res else (1376, 768)
+        self._native_resolution = model_processing_size(default_seg) or (1376, 768)
         self._is_dpt_model = "dpt" in default_seg
 
         adv_layout.addWidget(QLabel("Processing resolution"))
@@ -1132,10 +1131,9 @@ class FormPanelMixin(MixinBase):
             self._scs_checkpoint_input.setText(path)
 
     def _on_seg_model_changed(self, name: str) -> None:
-        from deepreefmap.segmentation.registry import get_model_resolution
+        from deepreefmap.segmentation.registry import model_processing_size
 
-        res = get_model_resolution(name)
-        self._native_resolution = (res[1], res[0]) if res else (1376, 768)
+        self._native_resolution = model_processing_size(name) or (1376, 768)
         self._is_dpt_model = "dpt" in name
         preset = self._resolution_preset_combo.currentText()
         if preset != "Custom":

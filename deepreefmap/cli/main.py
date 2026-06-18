@@ -58,7 +58,7 @@ def list_profiles() -> None:
 @app.command("reconstruct")
 def reconstruct(
     videos: str = typer.Option(..., help="Comma-separated video paths in processing order."),
-    fps: int = typer.Option(10, help="Target processing framerate."),
+    fps: int = typer.Option(5, help="Target processing framerate."),
     segmentation: str = typer.Option("coralscapes-vit-b-dpt", help="Segmentation model name."),
     mapping: str = typer.Option("scsfmlearner", help="3D mapping backend name."),
     camera_profile: str = typer.Option(
@@ -116,12 +116,14 @@ def reconstruct(
         help="Number of rectified frames to segment together during frame preparation.",
     ),
     processing_width: Optional[int] = typer.Option(
-        1376,
-        help="Width to resize rectified frames to before segmentation/mapping.",
+        None,
+        help="Resize width before segmentation/mapping. Default: the segmentation model's "
+        "native resolution. Override by passing both --processing-width and --processing-height.",
     ),
     processing_height: Optional[int] = typer.Option(
-        768,
-        help="Height to resize rectified frames to before segmentation/mapping.",
+        None,
+        help="Resize height before segmentation/mapping. Default: the segmentation model's "
+        "native resolution. Set together with --processing-width.",
     ),
     skip_segmentation: bool = typer.Option(
         False,
