@@ -2,14 +2,39 @@ from __future__ import annotations
 
 import gc
 import logging
+import os
 
 import torch
 
 logger = logging.getLogger(__name__)
 
+_rocm_attention_notice_emitted = False
+
+
+def _enable_rocm_experimental_attention() -> None:
+    """Permit AOTriton flash/mem-efficient SDPA on ROCm.
+
+    LoGeR forces the flash SDPA backend for bf16 (third_party/LoGeR attention),
+    which PyTorch's HIP build gates behind this flag on RDNA3 (e.g. gfx1100). Without
+    it, the flash-only context manager has no fallback and aborts with "No available
+    kernel". `setdefault` lets a user force it off with the same variable set to 0.
+    """
+    global _rocm_attention_notice_emitted
+    os.environ.setdefault("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1")
+    if not _rocm_attention_notice_emitted:
+        logger.warning(
+            "ROCm/HIP build detected: ROCm support is experimental. Enabling AOTriton "
+            "flash/mem-efficient attention via TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=%s "
+            "(set it to 0 to disable).",
+            os.environ["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"],
+        )
+        _rocm_attention_notice_emitted = True
+
 
 def resolve_device() -> torch.device:
     if torch.cuda.is_available():
+        if getattr(torch.version, "hip", None) is not None:
+            _enable_rocm_experimental_attention()
         return torch.device("cuda")
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return torch.device("mps")

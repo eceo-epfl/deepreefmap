@@ -71,6 +71,8 @@ uv sync --extra cu130   # RTX 50-series (Blackwell)
 uv sync --extra rocm   # Linux only
 ```
 
+> **Experimental.** ROCm support is experimental. The app auto-enables AOTriton flash/mem-efficient attention (`TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`) on ROCm so LoGeR can run on RDNA3 (e.g. gfx1100); set that variable to `0` to disable. Run ROCm from a venv synced with `--extra rocm` (don't layer it onto a base/CUDA sync), or a stray `triton` wheel can shadow `pytorch-triton-rocm`.
+
 ### macOS (Apple Silicon)
 
 ```bash
