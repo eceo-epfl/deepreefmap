@@ -58,29 +58,24 @@ At a high level, a run does four things:
 
 ## Installation
 
-### NVIDIA (default)
+### NVIDIA
 
 ```bash
-uv sync
+uv sync --extra cu126   # most cards, up to RTX 40-series
+uv sync --extra cu130   # RTX 50-series (Blackwell)
 ```
-
-The default PyPI torch wheel bundles CUDA on Linux. No extra flags needed.
 
 ### AMD ROCm
 
 ```bash
-uv sync --extra rocm
+uv sync --extra rocm   # Linux only
 ```
-
-This installs the ROCm-specific torch wheel from `download.pytorch.org/whl/rocm6.3`. Requires an AMD GPU with ROCm drivers installed.
 
 ### macOS (Apple Silicon)
 
 ```bash
 uv sync
 ```
-
-The default PyPI torch wheel on macOS arm64 includes MPS acceleration. The GPU is used automatically when available.
 
 ### Optional extras
 

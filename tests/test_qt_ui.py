@@ -331,9 +331,9 @@ def test_fetch_releases_keeps_assets_from_github_response():
 def test_resolve_asset_name(platform, expected, monkeypatch):
     from deepreefmap.gui import binary_swap
 
-    # Pin the standard (CUDA/CPU) build so the linux base name is deterministic
-    # regardless of the host's torch wheel.
+    # Pin cu126 so the base name is deterministic regardless of the host's torch wheel.
     monkeypatch.setattr(binary_swap, "_is_rocm_build", lambda: False)
+    monkeypatch.setattr(binary_swap, "_cuda_variant_suffix", lambda: "")
     assert binary_swap.resolve_asset_name(platform) == expected
 
 
@@ -349,6 +349,33 @@ def test_resolve_asset_name_rocm_linux(monkeypatch):
 
     monkeypatch.setattr(binary_swap, "_is_rocm_build", lambda: True)
     assert binary_swap.resolve_asset_name("linux") == "deepreefmap-linux-x64-rocm"
+
+
+@pytest.mark.parametrize(
+    "platform, expected",
+    [
+        ("linux", "deepreefmap-linux-x64-cu130"),
+        ("win32", "deepreefmap-windows-x64-cu130.exe"),
+    ],
+)
+def test_resolve_asset_name_cu130(platform, expected, monkeypatch):
+    from deepreefmap.gui import binary_swap
+
+    # A Blackwell (cu130) install must update to the cu130 asset, not the cu126 default.
+    monkeypatch.setattr(binary_swap, "_is_rocm_build", lambda: False)
+    monkeypatch.setattr(binary_swap, "_cuda_variant_suffix", lambda: "-cu130")
+    assert binary_swap.resolve_asset_name(platform) == expected
+
+
+@pytest.mark.parametrize("cuda, expected", [("13.0", "-cu130"), ("12.6", ""), (None, "")])
+def test_cuda_variant_suffix_from_torch_version(cuda, expected, monkeypatch):
+    import torch
+
+    from deepreefmap.gui import binary_swap
+
+    monkeypatch.delenv("PYAPP", raising=False)
+    monkeypatch.setattr(torch.version, "cuda", cuda, raising=False)
+    assert binary_swap._cuda_variant_suffix() == expected
 
 
 def test_is_rocm_build_from_pyapp_binary_name(monkeypatch):

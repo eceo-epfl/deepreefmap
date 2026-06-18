@@ -29,7 +29,12 @@ jobs:
             artifact: deepreefmap-linux-x64
             ext: ""
             filetype: ELF
-            torch_variant: default
+            torch_variant: cu126
+          - os: ubuntu-latest
+            artifact: deepreefmap-linux-x64-cu130
+            ext: ""
+            filetype: ELF
+            torch_variant: cu130
           - os: ubuntu-latest
             artifact: deepreefmap-linux-x64-rocm
             ext: ""
@@ -39,7 +44,12 @@ jobs:
             artifact: deepreefmap-windows-x64
             ext: ".exe"
             filetype: ""
-            torch_variant: cuda
+            torch_variant: cu126
+          - os: windows-latest
+            artifact: deepreefmap-windows-x64-cu130
+            ext: ".exe"
+            filetype: ""
+            torch_variant: cu130
           - os: macos-latest
             artifact: deepreefmap-macos-arm64
             ext: ""
@@ -100,8 +110,8 @@ jobs:
             echo "version=${proj_ver}+g${sha}" >> "$GITHUB_OUTPUT"
           fi
 
-      # build.sh takes the output artifact name as $1; build.ps1 hardcodes the
-      # windows name. `shell:` can't reference the matrix context, so split by OS.
+      # build.sh and build.ps1 both take the output artifact name as their first arg.
+      # `shell:` can't reference the matrix context, so the step is split by OS.
       - name: Build PyApp binary (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -115,7 +125,7 @@ jobs:
         env:
           TORCH_VARIANT: ${{ matrix.torch_variant }}
           DRM_BUILD_VERSION: ${{ steps.label.outputs.version }}
-        run: ./scripts/build.ps1
+        run: ./scripts/build.ps1 "${{ matrix.artifact }}${{ matrix.ext }}"
 
       - name: Label binary
         shell: bash
@@ -167,8 +177,10 @@ jobs:
         with:
           files: |
             dist/deepreefmap-linux-x64-${{ steps.label.outputs.value }}
+            dist/deepreefmap-linux-x64-cu130-${{ steps.label.outputs.value }}
             dist/deepreefmap-linux-x64-rocm-${{ steps.label.outputs.value }}
             dist/deepreefmap-windows-x64-${{ steps.label.outputs.value }}.exe
+            dist/deepreefmap-windows-x64-cu130-${{ steps.label.outputs.value }}.exe
             dist/deepreefmap-macos-arm64-${{ steps.label.outputs.value }}
           generate_release_notes: true
         env:

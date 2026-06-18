@@ -1,4 +1,8 @@
 #!/usr/bin/env pwsh
+param(
+    # Output name; CI passes the matrix artifact so cu130 doesn't overwrite the default.
+    [string]$OutputName = "deepreefmap-windows-x64.exe"
+)
 $ErrorActionPreference = "Stop"
 
 Remove-Item -Force -ErrorAction SilentlyContinue dist\*.whl, dist\*.tar.gz
@@ -104,9 +108,23 @@ $env:PYAPP_PROJECT_PATH = $wheelPath
 # Install loger + gopro extras into the bundled venv (PyApp appends [features] to the
 # embedded wheel). py-gpmf-parser (gopro) is marker-gated to linux/x86_64, so on
 # Windows it is simply skipped; loger pulls einops/roma/etc. for the LoGeR backend.
-$features = "loger,gopro"
-if ($env:TORCH_VARIANT -eq "rocm") { $features = "$features,rocm" }
+# Map TORCH_VARIANT to its extra + index. The --extra-index-url goes through
+# PYAPP_PIP_EXTRA_ARGS so PyApp's first-run `uv pip install` reaches the pinned wheel.
+$backend = switch ($env:TORCH_VARIANT) {
+    "cu126" { ",cu126" }
+    "cu130" { ",cu130" }
+    "rocm"  { ",rocm" }
+    default { "" }
+}
+$torchIndex = switch ($env:TORCH_VARIANT) {
+    "cu126" { "https://download.pytorch.org/whl/cu126" }
+    "cu130" { "https://download.pytorch.org/whl/cu130" }
+    "rocm"  { "https://download.pytorch.org/whl/rocm6.4" }
+    default { "" }
+}
+$features = "loger,gopro$backend"
 $env:PYAPP_PROJECT_FEATURES = $features
+$env:PYAPP_PIP_EXTRA_ARGS = if ($torchIndex) { "--extra-index-url $torchIndex" } else { "" }
 $env:PYAPP_EXEC_SPEC = "deepreefmap.bootstrap:main"
 $env:PYAPP_PYTHON_VERSION = "3.11"
 $env:PYAPP_FULL_ISOLATION = "1"
@@ -117,6 +135,6 @@ cargo install --path $pyappDir --force --root $pyappRoot
 if ($LASTEXITCODE -ne 0) { throw "cargo install failed" }
 
 New-Item -ItemType Directory -Force -Path dist | Out-Null
-Copy-Item (Join-Path $pyappRoot "bin\pyapp.exe") "dist\deepreefmap-windows-x64.exe" -Force
+Copy-Item (Join-Path $pyappRoot "bin\pyapp.exe") "dist\$OutputName" -Force
 
-& "dist\deepreefmap-windows-x64.exe" self remove 2>$null
+& "dist\$OutputName" self remove 2>$null

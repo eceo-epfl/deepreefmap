@@ -33,14 +33,30 @@ def _is_rocm_build() -> bool:
         return False
 
 
+def _cuda_variant_suffix() -> str:
+    """``-cu130`` for a CUDA 13 build, else ``""``. Keeps an in-app update on its variant."""
+    try:
+        import torch
+
+        cuda = getattr(torch.version, "cuda", None)
+        if cuda:
+            return "-cu130" if cuda.split(".")[0] == "13" else ""
+    except Exception:
+        pass
+    pyapp = os.environ.get("PYAPP")
+    if pyapp and "cu130" in Path(pyapp).name:
+        return "-cu130"
+    return ""
+
+
 def resolve_asset_name(platform: str | None = None) -> str:
     p = (platform or sys.platform).lower()
     if p.startswith("linux"):
         if _is_rocm_build():
             return "deepreefmap-linux-x64-rocm"
-        return "deepreefmap-linux-x64"
+        return f"deepreefmap-linux-x64{_cuda_variant_suffix()}"
     if p.startswith("win"):
-        return "deepreefmap-windows-x64.exe"
+        return f"deepreefmap-windows-x64{_cuda_variant_suffix()}.exe"
     if p.startswith("darwin"):
         return "deepreefmap-macos-arm64"
     raise BinarySwapError(f"No binary asset is built for platform {p!r}")

@@ -68,8 +68,11 @@ gopro = [
   "py-gpmf-parser>=0.1.1,<0.2.0; sys_platform == 'linux' and platform_machine == 'x86_64'"
 ]
 train = ["wandb>=0.20.0", "tensorboard>=2.18.0"]
-cuda = ["torch>=2.7,<3", "torchvision>=0.22,<1"]
-rocm = ["torch>=2.7,<3", "torchvision>=0.22,<1", "pytorch-triton-rocm>=3.0"]
+# Exact +local pins per backend. PyApp installs the wheel via `uv pip install`, which
+# ignores [tool.uv.sources], so only an exact local version pulls the right wheel.
+cu126 = ["torch==2.12.1+cu126", "torchvision==0.27.1+cu126"]
+cu130 = ["torch==2.12.1+cu130", "torchvision==0.27.1+cu130"]
+rocm = ["torch==2.9.1+rocm6.4", "torchvision==0.24.1+rocm6.4", "pytorch-triton-rocm>=3.0"]
 dev = ["pytest>=8.4.0", "ruff>=0.12.0", "mypy>=2.0.0", "types-PyYAML", "types-tqdm"]
 
 [project.urls]
@@ -96,19 +99,33 @@ namespaces = true
 
 [tool.uv]
 conflicts = [
-  [{ extra = "cuda" }, { extra = "rocm" }],
+  [{ extra = "cu126" }, { extra = "cu130" }, { extra = "rocm" }],
 ]
 
 [[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
 name = "pytorch-rocm"
-url = "https://download.pytorch.org/whl/rocm6.3"
+url = "https://download.pytorch.org/whl/rocm6.4"
 explicit = true
 
 [tool.uv.sources]
 torch = [
+  { index = "pytorch-cu126", extra = "cu126" },
+  { index = "pytorch-cu130", extra = "cu130" },
   { index = "pytorch-rocm", extra = "rocm" },
 ]
 torchvision = [
+  { index = "pytorch-cu126", extra = "cu126" },
+  { index = "pytorch-cu130", extra = "cu130" },
   { index = "pytorch-rocm", extra = "rocm" },
 ]
 pytorch-triton-rocm = [

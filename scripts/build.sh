@@ -90,15 +90,21 @@ fn exec_gui(mut command: Command) -> Result<()> {
 }
 RUST
 
-FEATURES="loger,gopro"
-if [ "$TORCH_VARIANT" = "rocm" ]; then
-  FEATURES="$FEATURES,rocm"
-fi
+# Map TORCH_VARIANT to its extra + index. The --extra-index-url goes through
+# PYAPP_PIP_EXTRA_ARGS so PyApp's first-run `uv pip install` reaches the pinned wheel.
+case "$TORCH_VARIANT" in
+  cu126) BACKEND=",cu126"; TORCH_INDEX="https://download.pytorch.org/whl/cu126" ;;
+  cu130) BACKEND=",cu130"; TORCH_INDEX="https://download.pytorch.org/whl/cu130" ;;
+  rocm)  BACKEND=",rocm";  TORCH_INDEX="https://download.pytorch.org/whl/rocm6.4" ;;
+  *)     BACKEND="";       TORCH_INDEX="" ;;
+esac
+FEATURES="loger,gopro${BACKEND}"
 
 PYAPP_PROJECT_NAME=deepreefmap \
 PYAPP_PROJECT_VERSION="$VERSION" \
 PYAPP_PROJECT_PATH="$PWD/$WHEEL" \
 PYAPP_PROJECT_FEATURES="$FEATURES" \
+PYAPP_PIP_EXTRA_ARGS="${TORCH_INDEX:+--extra-index-url ${TORCH_INDEX}}" \
 PYAPP_EXEC_SPEC="deepreefmap.bootstrap:main" \
 PYAPP_PYTHON_VERSION=3.11 \
 PYAPP_FULL_ISOLATION=1 \
