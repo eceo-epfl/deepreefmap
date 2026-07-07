@@ -100,6 +100,9 @@ RUST
 
 # Map TORCH_VARIANT to its extra + index. The --extra-index-url goes through
 # PYAPP_PIP_EXTRA_ARGS so PyApp's first-run `uv pip install` reaches the pinned wheel.
+# unsafe-best-match lets uv fall back to PyPI for packages the torch index also
+# carries but only at stale versions (eg. tqdm); the default first-index strategy
+# fails resolution outright.
 case "$TORCH_VARIANT" in
   cu126) BACKEND=",cu126"; TORCH_INDEX="https://download.pytorch.org/whl/cu126" ;;
   cu130) BACKEND=",cu130"; TORCH_INDEX="https://download.pytorch.org/whl/cu130" ;;
@@ -112,7 +115,7 @@ PYAPP_PROJECT_NAME=deepreefmap \
 PYAPP_PROJECT_VERSION="$VERSION" \
 PYAPP_PROJECT_PATH="$PWD/$WHEEL" \
 PYAPP_PROJECT_FEATURES="$FEATURES" \
-PYAPP_PIP_EXTRA_ARGS="${TORCH_INDEX:+--extra-index-url ${TORCH_INDEX}}" \
+PYAPP_PIP_EXTRA_ARGS="${TORCH_INDEX:+--extra-index-url ${TORCH_INDEX} --index-strategy unsafe-best-match}" \
 PYAPP_EXEC_SPEC="deepreefmap.bootstrap:main" \
 PYAPP_PYTHON_VERSION=3.11 \
 PYAPP_FULL_ISOLATION=1 \

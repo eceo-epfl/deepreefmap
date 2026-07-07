@@ -118,6 +118,9 @@ $env:PYAPP_PROJECT_PATH = $wheelPath
 # Windows it is simply skipped; loger pulls einops/roma/etc. for the LoGeR backend.
 # Map TORCH_VARIANT to its extra + index. The --extra-index-url goes through
 # PYAPP_PIP_EXTRA_ARGS so PyApp's first-run `uv pip install` reaches the pinned wheel.
+# unsafe-best-match lets uv fall back to PyPI for packages the torch index also
+# carries but only at stale versions (eg. tqdm); the default first-index strategy
+# fails resolution outright.
 $backend = switch ($env:TORCH_VARIANT) {
     "cu126" { ",cu126" }
     "cu130" { ",cu130" }
@@ -132,7 +135,7 @@ $torchIndex = switch ($env:TORCH_VARIANT) {
 }
 $features = "loger,gopro$backend"
 $env:PYAPP_PROJECT_FEATURES = $features
-$env:PYAPP_PIP_EXTRA_ARGS = if ($torchIndex) { "--extra-index-url $torchIndex" } else { "" }
+$env:PYAPP_PIP_EXTRA_ARGS = if ($torchIndex) { "--extra-index-url $torchIndex --index-strategy unsafe-best-match" } else { "" }
 $env:PYAPP_EXEC_SPEC = "deepreefmap.bootstrap:main"
 $env:PYAPP_PYTHON_VERSION = "3.11"
 $env:PYAPP_FULL_ISOLATION = "1"
