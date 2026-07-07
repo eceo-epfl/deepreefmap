@@ -27,7 +27,7 @@ def test_install_writes_entry_and_icon(xdg_home, tmp_path):
     assert "Terminal=false" in content
     icon = xdg_home / "icons" / "hicolor" / "512x512" / "apps" / "deepreefmap.png"
     assert icon.exists()
-    assert f"Icon={icon}" in content
+    assert "Icon=deepreefmap\n" in content
     assert desktop_entry.desktop_entry_installed()
 
 

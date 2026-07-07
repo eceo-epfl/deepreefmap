@@ -78,7 +78,9 @@ def install_desktop_entry(binary_path: str | os.PathLike[str]) -> Path:
         "Name=DeepReefMap\n"
         "Comment=Underwater 3D reconstruction and benthic cover mapping\n"
         f"Exec={binary}\n"
-        f"Icon={icon_dest}\n"
+        # Theme-name lookup against the hicolor icon installed above; KDE's
+        # launcher does not reliably render absolute Icon= paths.
+        "Icon=deepreefmap\n"
         "Terminal=false\n"
         "Categories=Science;\n"
     )
