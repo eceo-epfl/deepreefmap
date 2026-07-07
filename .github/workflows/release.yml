@@ -152,7 +152,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          uv run --no-project --with pillow python scripts/make_icons.py
+          # dist/icon.ico is produced by build.ps1 when it embeds the exe icon.
           $setupName = "${{ matrix.artifact }}-${{ steps.label.outputs.value }}" -replace '^deepreefmap-', 'deepreefmap-setup-'
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
             /DBinaryPath="dist\${{ matrix.artifact }}-${{ steps.label.outputs.value }}.exe" `

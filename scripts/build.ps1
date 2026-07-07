@@ -151,4 +151,16 @@ if ($LASTEXITCODE -ne 0) { throw "cargo install failed" }
 New-Item -ItemType Directory -Force -Path dist | Out-Null
 Copy-Item (Join-Path $pyappRoot "bin\pyapp.exe") "dist\$OutputName" -Force
 
+# Embed the app icon into the exe so Explorer shows it (shortcuts and the
+# Add/Remove entry get theirs from the installer). rcedit edits PE resources
+# post-build, avoiding a patch to PyApp's cargo build. Must run before any
+# code signing.
+uv run --no-project --with pillow python scripts/make_icons.py
+$rcedit = Join-Path $env:TEMP "rcedit-x64.exe"
+if (-not (Test-Path $rcedit)) {
+    Invoke-WebRequest -Uri "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe" -OutFile $rcedit
+}
+& $rcedit "dist\$OutputName" --set-icon "dist\icon.ico"
+if ($LASTEXITCODE -ne 0) { throw "rcedit failed" }
+
 & "dist\$OutputName" self remove 2>$null
