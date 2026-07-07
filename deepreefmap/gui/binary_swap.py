@@ -63,8 +63,18 @@ def resolve_asset_name(platform: str | None = None) -> str:
 
 
 def find_asset_url(release: dict, asset_name: str) -> str:
+    # Release assets carry a version label (deepreefmap-linux-x64-1.2.0[.exe])
+    # while resolve_asset_name yields the bare platform name, so accept both.
+    candidates = {asset_name}
+    tag = str(release.get("tag_name", "")).lstrip("v")
+    if tag:
+        stem, dot, ext = asset_name.rpartition(".")
+        if dot:
+            candidates.add(f"{stem}-{tag}.{ext}")
+        else:
+            candidates.add(f"{asset_name}-{tag}")
     for asset in release.get("assets", []):
-        if asset.get("name") == asset_name:
+        if asset.get("name") in candidates:
             url = asset.get("browser_download_url")
             if url:
                 return str(url)

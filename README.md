@@ -49,6 +49,26 @@ At a high level, a run does four things:
 3. Runs semantic segmentation and depth/pose reconstruction.
 4. Exports point clouds, ortho products, and reports.
 
+## Install the desktop app
+
+CI builds packages for every release. Grab yours from the [releases page](https://github.com/eceo-epfl/deepreefmap/releases).
+
+| Platform | File | Variants |
+|---|---|---|
+| Windows | `deepreefmap-setup-windows-x64-<version>.exe` | `-cu130` for RTX 50-series |
+| macOS (Apple Silicon) | `deepreefmap-macos-arm64-<version>.dmg` | |
+| Linux | `deepreefmap-linux-x64-<version>` | `-cu130` for RTX 50-series, `-rocm` for AMD |
+
+On Windows, run the installer. It installs per-user (no admin needed) and adds a Start Menu entry plus an uninstaller. Uninstalling keeps your outputs in `Documents\DeepReefMap` and asks before deleting downloaded models.
+
+On macOS, open the dmg and drag DeepReefMap to Applications. The app is not signed yet, so the first launch needs System Settings > Privacy & Security > "Open Anyway".
+
+On Linux, `chmod +x` the binary and run it. Use "Add to applications menu" in the Updates tab to register it in your launcher.
+
+The first launch installs a private Python environment (several GB, takes a few minutes). After that, install newer versions or roll back from the Updates tab; the binary is swapped in place, so shortcuts keep working. The plain `deepreefmap-windows-x64-*.exe` binaries on the release page are what the updater downloads, and also run standalone without the installer. The installed binary exposes the full CLI (ie. `deepreefmap.exe reconstruct --help`).
+
+Everything below covers development from source.
+
 ## Requirements
 
 - Python 3.10, 3.11, or 3.12

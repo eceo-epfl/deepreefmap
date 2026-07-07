@@ -40,7 +40,7 @@ from deepreefmap.gui.progress import (
     _RECON_PHASES,
     ProgressModel,
 )
-from deepreefmap.gui.version import _current_version
+from deepreefmap.gui.version import _current_version, _pyapp_binary_path
 from deepreefmap.gui.theme import WARN_BG, WARN_BORDER, WARN_TEXT
 from deepreefmap.gui.sunburst_widget import SunburstWidget
 
@@ -996,6 +996,20 @@ class FormPanelMixin(MixinBase):
         updates_layout.addWidget(self._update_show_all)
         self._available_releases: list[dict] = []
         self._current_version_str = _current_version()
+
+        # Linux menu integration. Windows/macOS get shortcuts from their
+        # installers; on Linux the bare binary registers itself on demand. The
+        # entry points at the current binary path, which the in-app updater
+        # swaps in place, so it survives updates and rollbacks.
+        from deepreefmap.gui.desktop_entry import desktop_entry_supported
+
+        self._desktop_entry_btn = QPushButton()
+        self._desktop_entry_btn.clicked.connect(self._on_toggle_desktop_entry)
+        self._desktop_entry_btn.setVisible(
+            desktop_entry_supported() and _pyapp_binary_path() is not None
+        )
+        self._refresh_desktop_entry_button()
+        updates_layout.addWidget(self._desktop_entry_btn)
 
         threading.Thread(target=self._check_for_update, daemon=True).start()
 

@@ -258,6 +258,33 @@ class VersionCheckMixin(MixinBase):
         if self._available_releases:
             self._populate_update_versions()
 
+    def _refresh_desktop_entry_button(self) -> None:
+        from deepreefmap.gui.desktop_entry import desktop_entry_installed
+
+        if desktop_entry_installed():
+            self._desktop_entry_btn.setText("Remove from applications menu")
+        else:
+            self._desktop_entry_btn.setText("Add to applications menu")
+
+    def _on_toggle_desktop_entry(self) -> None:
+        from deepreefmap.gui.desktop_entry import (
+            desktop_entry_installed,
+            install_desktop_entry,
+            remove_desktop_entry,
+        )
+
+        try:
+            if desktop_entry_installed():
+                remove_desktop_entry()
+            else:
+                pyapp_bin = _pyapp_binary_path()
+                if pyapp_bin is None:
+                    return
+                install_desktop_entry(pyapp_bin)
+        except OSError:
+            logger.exception("Desktop entry update failed")
+        self._refresh_desktop_entry_button()
+
     def _on_update(self) -> None:
         from deepreefmap.gui.update_dialog import UpdateProgressDialog
 

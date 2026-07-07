@@ -81,6 +81,14 @@ pub fn exec(mut command: Command) -> Result<()> {
 }
 
 fn exec_gui(mut command: Command) -> Result<()> {
+    // CLI invocations (any args) keep the launcher alive so the Python child
+    // can attach to the invoking terminal's console (see deepreefmap
+    // bootstrap._attach_parent_console) and the command blocks until done.
+    // Bare launches (double-click, shortcut) detach for a console-free GUI.
+    if std::env::args().len() > 1 {
+        let status = command.status()?;
+        exit(status.code().unwrap_or(1));
+    }
     let mut child = command.spawn()?;
     match child.try_wait() {
         Ok(Some(status)) => exit(status.code().unwrap_or(1)),

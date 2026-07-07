@@ -145,11 +145,39 @@ jobs:
             file "$f" | grep -q "${{ matrix.filetype }}"
           fi
 
+      # The raw binary asset stays on every release — the in-app updater
+      # downloads it to swap the installed binary in place. The installer/dmg
+      # is the first-install path for end users.
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          uv run --no-project --with pillow python scripts/make_icons.py
+          $setupName = "${{ matrix.artifact }}-${{ steps.label.outputs.value }}" -replace '^deepreefmap-', 'deepreefmap-setup-'
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            /DBinaryPath="dist\${{ matrix.artifact }}-${{ steps.label.outputs.value }}.exe" `
+            /DAppVersion="${{ steps.label.outputs.version }}" `
+            /DOutputName="$setupName" `
+            scripts\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      - name: Build macOS app bundle + dmg
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash scripts/make_app_bundle.sh \
+            "dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}" \
+            "${{ steps.label.outputs.version }}" \
+            "dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}.dmg"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}-${{ steps.label.outputs.value }}
-          path: dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}${{ matrix.ext }}
+          path: |
+            dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}${{ matrix.ext }}
+            dist/deepreefmap-setup-*-${{ steps.label.outputs.value }}.exe
+            dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}.dmg
           if-no-files-found: error
 
   release:
@@ -182,6 +210,9 @@ jobs:
             dist/deepreefmap-windows-x64-${{ steps.label.outputs.value }}.exe
             dist/deepreefmap-windows-x64-cu130-${{ steps.label.outputs.value }}.exe
             dist/deepreefmap-macos-arm64-${{ steps.label.outputs.value }}
+            dist/deepreefmap-setup-windows-x64-${{ steps.label.outputs.value }}.exe
+            dist/deepreefmap-setup-windows-x64-cu130-${{ steps.label.outputs.value }}.exe
+            dist/deepreefmap-macos-arm64-${{ steps.label.outputs.value }}.dmg
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

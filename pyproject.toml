@@ -137,7 +137,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 target-version = "py310"
-extend-exclude = ["third_party"]
+extend-exclude = ["third_party", "tests/e2e/_cache", "tests/e2e/_work"]
 
 [tool.mypy]
 python_version = "3.10"

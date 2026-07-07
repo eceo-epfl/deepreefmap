@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import json
+import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 
@@ -445,6 +446,24 @@ def test_find_asset_url_returns_match():
         find_asset_url({"tag_name": "v0.5.0", "assets": []}, "deepreefmap-linux-x64")
 
 
+def test_find_asset_url_matches_version_labelled_assets():
+    # Real releases label assets with the version (release.yml "Label binary");
+    # variant suffixes must not cross-match.
+    from deepreefmap.gui.binary_swap import find_asset_url
+
+    rel = {
+        "tag_name": "v1.2.0",
+        "assets": [
+            {"name": "deepreefmap-linux-x64-cu130-1.2.0", "browser_download_url": "https://x/cu130"},
+            {"name": "deepreefmap-linux-x64-1.2.0", "browser_download_url": "https://x/base"},
+            {"name": "deepreefmap-windows-x64-1.2.0.exe", "browser_download_url": "https://x/win"},
+        ],
+    }
+    assert find_asset_url(rel, "deepreefmap-linux-x64") == "https://x/base"
+    assert find_asset_url(rel, "deepreefmap-linux-x64-cu130") == "https://x/cu130"
+    assert find_asset_url(rel, "deepreefmap-windows-x64.exe") == "https://x/win"
+
+
 def test_download_to_streams_chunks_and_reports_progress(tmp_path):
     from deepreefmap.gui.binary_swap import download_to
 
@@ -750,6 +769,47 @@ def test_bootstrap_self_heals_then_reexecs_when_env_broken(monkeypatch, tmp_path
         os.environ.pop("DEEPREEFMAP_SELF_HEAL_ATTEMPTED", None)
 
 
+def _quiet_bootstrap(monkeypatch, tmp_path):
+    monkeypatch.delenv("PYAPP", raising=False)
+    monkeypatch.delenv("DEEPREEFMAP_SELF_HEAL_ATTEMPTED", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+
+
+def test_bootstrap_no_args_launches_gui(monkeypatch, tmp_path):
+    import deepreefmap.bootstrap as bootstrap
+    import deepreefmap.gui.app as gui_app
+
+    _quiet_bootstrap(monkeypatch, tmp_path)
+    monkeypatch.setattr(sys, "argv", ["deepreefmap"])
+    launched = []
+    monkeypatch.setattr(gui_app, "launch", lambda: launched.append(True))
+    bootstrap.main()
+    assert launched == [True]
+
+
+def test_bootstrap_args_dispatch_to_cli(monkeypatch, tmp_path):
+    import deepreefmap.bootstrap as bootstrap
+    import deepreefmap.cli.main as cli_main
+    import deepreefmap.gui.app as gui_app
+
+    _quiet_bootstrap(monkeypatch, tmp_path)
+    monkeypatch.setattr(sys, "argv", ["deepreefmap", "list-models"])
+    cli_calls = []
+    monkeypatch.setattr(cli_main, "app", lambda args: cli_calls.append(args))
+    monkeypatch.setattr(
+        gui_app, "launch", lambda: pytest.fail("GUI must not launch for CLI args")
+    )
+    bootstrap.main()
+    assert cli_calls == [["list-models"]]
+
+
+def test_refresh_uninstall_display_version_noop_off_windows(monkeypatch):
+    import deepreefmap.bootstrap as bootstrap
+
+    # Must never raise on non-Windows or when the installer key is absent.
+    bootstrap._refresh_uninstall_display_version()
+
+
 def test_pyapp_mock_path(monkeypatch):
     from deepreefmap.gui.app import _pyapp_binary_path
 
@@ -1008,6 +1068,41 @@ def test_updates_tab_dev_mode_vs_installed(qapp):
     window._apply_update_check("1.1.0", releases, "/tmp/mock-pyapp")
     assert not window._update_version_combo.isHidden()
     assert not window._update_show_all.isHidden()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux-only feature")
+def test_desktop_entry_button_toggles_install(qapp, monkeypatch, tmp_path):
+    pytest.importorskip("torch", reason="torch not loadable on this machine")
+    from deepreefmap.config.classes import load_classes
+    from deepreefmap.gui import desktop_entry
+    from deepreefmap.gui.app import DeepReefMapWindow
+
+    monkeypatch.setenv("DEEPREEFMAP_MOCK_PYAPP", "1")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(desktop_entry, "_refresh_menu_database", lambda: None)
+
+    window = DeepReefMapWindow(load_classes(), None)
+    assert not window._desktop_entry_btn.isHidden()
+    assert window._desktop_entry_btn.text() == "Add to applications menu"
+
+    window._on_toggle_desktop_entry()
+    assert desktop_entry.desktop_entry_installed()
+    assert window._desktop_entry_btn.text() == "Remove from applications menu"
+
+    window._on_toggle_desktop_entry()
+    assert not desktop_entry.desktop_entry_installed()
+    assert window._desktop_entry_btn.text() == "Add to applications menu"
+
+
+def test_desktop_entry_button_hidden_in_dev_mode(qapp, monkeypatch):
+    pytest.importorskip("torch", reason="torch not loadable on this machine")
+    from deepreefmap.config.classes import load_classes
+    from deepreefmap.gui.app import DeepReefMapWindow
+
+    monkeypatch.delenv("DEEPREEFMAP_MOCK_PYAPP", raising=False)
+    monkeypatch.delenv("PYAPP", raising=False)
+    window = DeepReefMapWindow(load_classes(), None)
+    assert window._desktop_entry_btn.isHidden()
 
 
 def test_overlay_has_reset_button_and_r_shortcut_triggers_view_reset(qapp):

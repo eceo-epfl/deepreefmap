@@ -89,6 +89,14 @@ pub fn exec(mut command: Command) -> Result<()> {
 }
 
 fn exec_gui(mut command: Command) -> Result<()> {
+    // CLI invocations (any args) keep the launcher alive so the Python child
+    // can attach to the invoking terminal's console (see deepreefmap
+    // bootstrap._attach_parent_console) and the command blocks until done.
+    // Bare launches (double-click, shortcut) detach for a console-free GUI.
+    if std::env::args().len() > 1 {
+        let status = command.status()?;
+        exit(status.code().unwrap_or(1));
+    }
     let mut child = command.spawn()?;
     match child.try_wait() {
         Ok(Some(status)) => exit(status.code().unwrap_or(1)),
@@ -130,6 +138,9 @@ $env:PYAPP_PYTHON_VERSION = "3.11"
 $env:PYAPP_FULL_ISOLATION = "1"
 $env:PYAPP_UV_ENABLED = "1"
 $env:PYAPP_PASS_LOCATION = "1"
+# GUI-subsystem binary: shortcut/double-click launches show no console window.
+# CLI invocations still get terminal output via bootstrap's AttachConsole shim.
+$env:PYAPP_IS_GUI = "1"
 
 cargo install --path $pyappDir --force --root $pyappRoot
 if ($LASTEXITCODE -ne 0) { throw "cargo install failed" }
