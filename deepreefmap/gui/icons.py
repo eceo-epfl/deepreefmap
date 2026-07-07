@@ -50,28 +50,6 @@ def refresh_icon(size: int = 24, color: QColor | None = None) -> QIcon:
     return QIcon(pm)
 
 
-def fit_icon(size: int = 24, color: QColor | None = None) -> QIcon:
-    c = color or QColor(230, 230, 230)
-    pm, p = _px(size)
-    pen = QPen(c, 1.6)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    p.setPen(pen)
-    m = size * 0.2
-    s = size - 2 * m
-    corner_len = s * 0.3
-    rect = QRectF(m, m, s, s)
-    for cx, cy, dx, dy in [
-        (rect.left(), rect.top(), 1, 1),
-        (rect.right(), rect.top(), -1, 1),
-        (rect.left(), rect.bottom(), 1, -1),
-        (rect.right(), rect.bottom(), -1, -1),
-    ]:
-        p.drawLine(QPointF(cx, cy), QPointF(cx + dx * corner_len, cy))
-        p.drawLine(QPointF(cx, cy), QPointF(cx, cy + dy * corner_len))
-    p.end()
-    return QIcon(pm)
-
-
 def plus_icon(size: int = 24, color: QColor | None = None) -> QIcon:
     c = color or QColor(230, 230, 230)
     pm, p = _px(size)

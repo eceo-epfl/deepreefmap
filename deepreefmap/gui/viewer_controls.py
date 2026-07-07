@@ -616,7 +616,6 @@ class ViewerControlsMixin(MixinBase):
 
         from deepreefmap.gui.icons import (
             crosshair_icon,
-            fit_icon,
             refresh_icon,
         )
 
@@ -641,16 +640,6 @@ class ViewerControlsMixin(MixinBase):
         )
         buttons_row.addWidget(reset_btn)
 
-        fit_btn = QToolButton(overlay)
-        fit_btn.setIcon(fit_icon(18))
-        fit_btn.setText("Fit")
-        fit_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        fit_btn.setToolTip(
-            "Zoom to fit all visible geometry (preserves view orientation).\n"
-            "F triggers."
-        )
-        buttons_row.addWidget(fit_btn)
-
         layout.addLayout(buttons_row)
 
         hints_row = QHBoxLayout()
@@ -664,10 +653,6 @@ class ViewerControlsMixin(MixinBase):
         reset_hint.setObjectName("pick_mode_shortcut")
         reset_hint.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         hints_row.addWidget(reset_hint, 1)
-        fit_hint = QLabel("F", overlay)
-        fit_hint.setObjectName("pick_mode_shortcut")
-        fit_hint.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        hints_row.addWidget(fit_hint, 1)
         layout.addLayout(hints_row)
 
         # --- Display controls section (visible once a run is loaded) ---
@@ -833,23 +818,12 @@ class ViewerControlsMixin(MixinBase):
             except Exception:
                 logger.debug("Failed to reset view", exc_info=True)
 
-        def _on_fit_clicked() -> None:
-            try:
-                plotter = self._viewer._plotter
-                if plotter is not None:
-                    plotter.reset_camera()
-                    plotter.render()
-            except Exception:
-                logger.debug("Failed to fit view", exc_info=True)
-
         btn.toggled.connect(_on_button_toggled)
         self._viewer.pick_mode_changed.connect(_on_viewer_pick_mode_changed)
         reset_btn.clicked.connect(_on_reset_clicked)
-        fit_btn.clicked.connect(_on_fit_clicked)
 
         QShortcut(QKeySequence("P"), self).activated.connect(lambda: btn.toggle())
         QShortcut(QKeySequence("R"), self).activated.connect(_on_reset_clicked)
-        QShortcut(QKeySequence("F"), self).activated.connect(_on_fit_clicked)
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self).activated.connect(
             lambda: btn.setChecked(False) if btn.isChecked() else None
         )

@@ -802,6 +802,14 @@ class QtPointCloudViewer(QWidget):
         self._geometry_frame_order: list[int] = []
         self._geometry_xyz: np.ndarray | None = None
 
+        # Cached (position, focal_point, up) for the default transect view,
+        # computed once at load so reset_view can reapply it without re-running
+        # the SVD-based orientation fit over the whole cloud on every click.
+        self._fit_camera_params: (
+            tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
+            | None
+        ) = None
+
         self._last_t: int | None = None
         self._last_accumulate: bool | None = None
         self._last_semantic: bool | None = None
@@ -876,6 +884,13 @@ class QtPointCloudViewer(QWidget):
         if obj is self._canvas_container and event.type() == QEvent.Type.Resize:
             self.legend_overlay.reposition()
             self.canvas_resized.emit()
+            self._schedule_canvas_repaint()
+        if obj is self.window() and event.type() in (
+            QEvent.Type.Move,
+            QEvent.Type.Resize,
+            QEvent.Type.WindowActivate,
+        ):
+            self._schedule_canvas_repaint()
         if (
             obj is self._canvas_container
             and event.type() == QEvent.Type.MouseButtonDblClick
@@ -970,7 +985,49 @@ class QtPointCloudViewer(QWidget):
         # Keep the legend on top after the plotter is added below it.
         self.legend_overlay.raise_()
         self._install_scroll_zoom()
+        # QtInteractor paints its GL surface straight to screen, so moving or
+        # resizing the top-level window leaves the translucent overlays' old
+        # background smeared over the viewport (Qt never recomposites the area
+        # behind them). Watch the window for move/resize to force a full VTK
+        # re-render, which repaints the whole viewport and clears the trails.
+        window = self.window()
+        if window is not None and not getattr(self, "_window_filter_installed", False):
+            window.installEventFilter(self)
+            self._window_filter_installed = True
         return self._plotter
+
+    def _schedule_canvas_repaint(self) -> None:
+        """Coalesce a burst of move/resize events into one delayed repaint.
+
+        Move/resize fire continuously while the user drags; rendering a large
+        cloud on each would stutter. A short single-shot timer collapses the
+        burst so we re-render once the motion settles.
+        """
+        timer = getattr(self, "_repaint_timer", None)
+        if timer is None:
+            from PySide6.QtCore import QTimer
+
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(40)
+            timer.timeout.connect(self._force_canvas_repaint)
+            self._repaint_timer = timer
+        timer.start()
+
+    def _force_canvas_repaint(self) -> None:
+        """Repaint the VTK viewport and re-raise the overlays on top of it."""
+        if self._plotter is None:
+            return
+        try:
+            self._plotter.render()
+        except Exception:
+            return
+        self.legend_overlay.raise_()
+        self.legend_overlay.update()
+        for child in self._canvas_container.findChildren(QWidget):
+            if child.objectName() == "pick_mode_overlay":
+                child.raise_()
+                child.update()
 
     def _install_scroll_zoom(self) -> None:
         """Scroll-wheel zoom toward the cursor position instead of screen center.
@@ -1983,6 +2040,7 @@ class QtPointCloudViewer(QWidget):
         self._geometry_mode = False
         self._geometry_frame_order = []
         self._geometry_xyz = None
+        self._fit_camera_params = None
         self._frame_batch = None
         self._mapping_result = None
         self._frame_panel_cache.clear()
@@ -2008,6 +2066,17 @@ class QtPointCloudViewer(QWidget):
                 cam_origins = None
         world_up = _estimate_world_up(positions, cam_origins)
         cam_pos, focal, up = _compute_transect_view(positions, cam_origins, world_up)
+        self._fit_camera_params = (cam_pos, focal, up)
+        self._apply_camera_params(cam_pos, focal, up)
+
+    def _apply_camera_params(
+        self,
+        cam_pos: tuple[float, float, float],
+        focal: tuple[float, float, float],
+        up: tuple[float, float, float],
+    ) -> None:
+        if self._plotter is None:
+            return
         self._plotter.camera.position = cam_pos
         self._plotter.camera.focal_point = focal
         self._plotter.camera.up = up
@@ -2016,11 +2085,19 @@ class QtPointCloudViewer(QWidget):
     def reset_view(self) -> None:
         """Re-orient the camera to the default transect-lengthwise view.
 
-        Same algorithm as the initial fit-on-load: pulls camera origins out of
-        the current mapping result, computes the principal axis, and points
-        the camera so the transect runs left-to-right with frustums above.
+        The orientation is computed once at load (`_auto_fit_camera`) and cached,
+        so this just reapplies it — no re-concatenating the cloud or re-running
+        the SVD fit on every click. Falls back to a recompute if the cache is
+        missing.
         """
         if self._plotter is None:
+            return
+        if self._fit_camera_params is not None:
+            self._apply_camera_params(*self._fit_camera_params)
+            try:
+                self._plotter.render()
+            except Exception:
+                pass
             return
         if self._geometry_mode:
             combined = self._geometry_xyz
