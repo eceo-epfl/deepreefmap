@@ -146,8 +146,17 @@ asset=$(py "$bin_old" -c 'from deepreefmap.gui.binary_swap import resolve_asset_
 serve="$work/serve"; mkdir -p "$serve"
 cp "$bin_new" "$serve/$asset"
 
+# Provision the new binary now so its interpreter can serve immediately below (a
+# fresh env's first run installs for minutes, which the readiness wait won't cover).
+# This is the env the relaunch keeps, so it is not wasted work.
+echo "==> Provisioning the new binary"
+py "$bin_new" -c 'import deepreefmap; print("  new binary provisioned")'
+
+# Serve with the NEW binary's interpreter, not the old one: the server holds its
+# env's files open for the whole run, and Windows cannot delete open files. Pinning
+# it to the new (kept) env leaves the old env free to prune below on every OS.
 echo "==> Serving the new binary on 127.0.0.1:$port"
-( cd "$serve" && exec "$bin_old" self python -m http.server "$port" ) >/dev/null 2>&1 &
+( cd "$serve" && exec "$bin_new" self python -m http.server "$port" ) >/dev/null 2>&1 &
 http_pid=$!
 for _ in $(seq 1 50); do
     if py "$bin_old" -c "import socket, sys; sys.exit(0 if socket.socket().connect_ex(('127.0.0.1', $port)) == 0 else 1)"; then
