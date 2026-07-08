@@ -23,7 +23,7 @@ _DEFAULT_GH_REPO = "eceo-epfl/deepreefmap"
 def _gh_releases_url() -> str:
     # Full-URL override points the release check at a local server, so the real
     # download + swap + provision + prune path can be validated without a public
-    # release (see tests/e2e/serve_local_release.sh). DEEPREEFMAP_GH_REPO swaps
+    # release (see tests/e2e/update_interactive.sh). DEEPREEFMAP_GH_REPO swaps
     # only the owner/repo against the real GitHub host.
     override = os.environ.get("DEEPREEFMAP_GH_API_URL")
     if override:
