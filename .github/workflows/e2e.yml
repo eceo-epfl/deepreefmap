@@ -2,8 +2,9 @@ name: E2E
 
 # The real-binary update test builds two binaries and provisions their
 # environments. Runner storage is ephemeral (discarded when the job ends), so
-# the cost is job minutes only; it runs per push/PR plus tags and on demand, in
-# a job separate from the release so it never blocks publishing.
+# the cost is job minutes only; it runs per push/PR plus tags and on demand. Each
+# OS leg exercises its own replace_binary branch (Windows renames the running .exe;
+# unix chmod+rename; macOS also swaps the binary inside the shipped .app bundle).
 on:
   workflow_dispatch:
   pull_request:
@@ -21,27 +22,42 @@ permissions:
 
 jobs:
   update-method:
-    name: update method (linux-x64)
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    name: update method (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x64
+          - os: windows-latest
+            name: windows-x64
+          - os: macos-latest
+            name: macos-arm64
     env:
       QT_QPA_PLATFORM: offscreen
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
         with:
           submodules: recursive
 
-      # Two coexisting environments peak around 16 GB; a stock runner has ~21 GB
-      # free on /. Reclaim preinstalled toolchains we don't use so provisioning
-      # can't hit "no space left on device".
+      # Two coexisting environments peak around 16 GB; a stock Linux runner has
+      # ~21 GB free on /. Reclaim preinstalled toolchains we don't use so
+      # provisioning can't hit "no space left on device".
       - name: Free up disk space
+        if: runner.os == 'Linux'
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
             /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
 
       - name: Install Qt/OpenGL runtime libraries
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
