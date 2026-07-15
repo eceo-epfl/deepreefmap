@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol, cast
 
 import cv2
 import imageio.v3 as iio
@@ -41,7 +41,8 @@ logger = logging.getLogger(__name__)
 class RunViewer(Protocol):
     """Stage-by-stage viewer contract the orchestrator drives during a run.
 
-    Implemented structurally by the Qt viewer (`visualization/qt_viewer.py`).
+    Implemented structurally by the Qt viewer (`gui/viewer.py::QtPointCloudViewer`) and by
+    the browser viewers (`visualization/viser_app.py`, `simple_viser_app.py`).
     """
 
     def start_run(self, run_label: str, output_dir: str) -> None: ...
@@ -57,6 +58,8 @@ class RunViewer(Protocol):
     def set_data(self, **kwargs: object) -> None: ...
     def mark_outputs_ready(self, output_dir: str, output_files: list[str]) -> None: ...
     def fail_run(self, stage: str, error_message: str) -> None: ...
+    def close(self) -> None: ...
+    def wait_forever(self) -> None: ...
 
 
 class ReconstructionCancelled(Exception):
@@ -71,6 +74,20 @@ def _check_cancel(
         pause_event.wait()
     if cancel_event is not None and cancel_event.is_set():
         raise ReconstructionCancelled("Reconstruction cancelled by user")
+
+
+def _finish_viser(viewer: "RunViewer | None", enable_viser: bool, keep_viser_open: bool) -> None:
+    """Block on or close an internally-constructed viser viewer.
+
+    Gated on ``enable_viser`` so an injected Qt viewer (owned by the GUI) is never
+    touched here; its ``wait_forever`` is a no-op anyway.
+    """
+    if viewer is None or not enable_viser:
+        return
+    if keep_viser_open:
+        viewer.wait_forever()
+    else:
+        viewer.close()
 
 
 def run_reconstruction(
@@ -98,6 +115,9 @@ def run_reconstruction(
     skip_segmentation: bool = False,
     refine_intrinsics_from_mapper: bool = False,
     viewer: RunViewer | None = None,
+    enable_viser: bool = False,
+    viser_port: int = 8080,
+    keep_viser_open: bool = True,
     run_name: str | None = None,
     cancel_event: threading.Event | None = None,
     pause_event: threading.Event | None = None,
@@ -117,6 +137,25 @@ def run_reconstruction(
 
     logger.info("Loading classes from %s", classes_path if classes_path is not None else "built-in")
     classes_config = load_classes(classes_path)
+    if viewer is None and enable_viser:
+        # Lazy import keeps viser's web stack off the headless and Qt-GUI paths.
+        if skip_segmentation:
+            from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
+
+            # Typed set_data signatures don't structurally match the Protocol's **kwargs form,
+            # but the apps honour the contract at runtime (as the Qt viewer does).
+            viewer = cast(RunViewer, SimpleGeometryViserApp(port=viser_port))
+        else:
+            from deepreefmap.visualization.viser_app import ViserLiveApp
+
+            viewer = cast(
+                RunViewer,
+                ViserLiveApp(
+                    class_colors=classes_config.id_to_color,
+                    class_names=classes_config.id_to_name,
+                    port=viser_port,
+                ),
+            )
     if viewer is not None:
         viewer.start_run(run_label="DeepReefMap reconstruction", output_dir=str(output_dir))
         viewer.set_stage("startup", "running", "Loading camera + segmentation + mapping backends")
@@ -446,6 +485,7 @@ def run_reconstruction(
                 )
                 viewer.mark_outputs_ready(str(output_dir), output_files)
             logger.info("Done. Outputs in %s", output_dir)
+            _finish_viser(viewer, enable_viser, keep_viser_open)
             return
 
         _check_cancel(cancel_event, pause_event)
@@ -617,6 +657,7 @@ def run_reconstruction(
         if viewer is not None:
             viewer.mark_outputs_ready(str(output_dir), output_files)
         logger.info("Done. Outputs in %s", output_dir)
+        _finish_viser(viewer, enable_viser, keep_viser_open)
     except ReconstructionCancelled:
         logger.info("Reconstruction cancelled by user at stage '%s'", active_stage)
         raise
