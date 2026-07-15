@@ -372,18 +372,9 @@ class FormPanelMixin(MixinBase):
         self._vram_notice.setVisible(False)
         setup_layout.addWidget(self._vram_notice)
 
-        # Early RAM-profile notice: the same estimate the pre-flight dialog uses,
-        # surfaced as soon as fps/resolution/video make the run look too big, so
-        # the user learns before reaching for the play button. Links to System.
-        self._memory_notice = QLabel()
-        self._memory_notice.setWordWrap(True)
-        self._memory_notice.setStyleSheet("font-size: 11px; margin: 2px 0 4px 0;")
-        self._memory_notice.setVisible(False)
-        self._memory_notice.linkActivated.connect(
-            lambda _: self._sidebar_tabs.setCurrentIndex(self._TAB_SYSTEM)
-        )
-        setup_layout.addWidget(self._memory_notice)
-        # Anything that changes the projected frame count re-grades the run.
+        # The memory grade is surfaced as a warning icon beside the play button
+        # (built in _build_top_bar), not inline here. Anything that changes the
+        # projected frame count re-grades the run.
         self._fps_spin.valueChanged.connect(self._update_memory_profile_warning)
         self._begin_spin.valueChanged.connect(self._update_memory_profile_warning)
         self._end_spin.valueChanged.connect(self._update_memory_profile_warning)
@@ -1124,10 +1115,28 @@ class FormPanelMixin(MixinBase):
         h.addWidget(self._status_label, 3)
         h.addWidget(self._progress_stack)
         h.addWidget(self._eta_total_label)
+
+        # Memory-risk icon sits immediately left of the play button. Hidden when
+        # the run fits; a click jumps to the System tab. The run itself is never
+        # gated on it, so the tooltip ends with "will run anyway".
+        self._memory_warn_icon = QLabel()
+        self._memory_warn_icon.setVisible(False)
+        self._memory_warn_icon.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._memory_warn_icon.setText(
+            '<a href="#system" style="color:#e05050; text-decoration:none; font-size:16px;">&#9888;</a>'
+        )
+        self._memory_warn_icon.linkActivated.connect(
+            lambda _: self._sidebar_tabs.setCurrentIndex(self._TAB_SYSTEM)
+        )
+        h.addWidget(self._memory_warn_icon)
+
         h.addWidget(self._start_btn)
         h.addWidget(self._pause_btn)
         h.addWidget(self._spinner_stop)
 
+        # The form (fps, resolution, any restored video duration) is already built,
+        # so grade the run once now to flag the icon on startup, not just on edit.
+        self._update_memory_profile_warning()
         return bar
 
     def _build_log_panel(self) -> QWidget:
@@ -1273,21 +1282,24 @@ class FormPanelMixin(MixinBase):
         self._update_memory_profile_warning()
 
     def _update_memory_profile_warning(self) -> None:
-        """Show the RAM-profile notice as soon as the configured run looks too big.
+        """Grade the configured run and flag the icon beside the play button.
 
-        Same estimate as the pre-flight dialog, but surfaced while the form is
-        being filled in, before the play button. Hidden when the video duration
-        is unknown, the estimate fails, or the run fits comfortably.
+        Hidden when the video duration is unknown, the estimate fails, or the run
+        fits comfortably. On warn/block the icon appears (amber/red) with the full
+        estimate in its tooltip. The run is never gated on it.
         """
+        icon = getattr(self, "_memory_warn_icon", None)
+        if icon is None:  # top bar not built yet during early form setup
+            return
         try:
             from deepreefmap.gui.run_history import history_key, load_expected_peaks
             from deepreefmap.memory_estimate import estimate_peak_bytes, preflight_check
-            from deepreefmap.system_probe import format_bytes, probe_system
+            from deepreefmap.system_probe import probe_system
 
             fps = self._fps_spin.value()
             frames = self._estimate_frame_count(fps)
             if not frames:
-                self._memory_notice.setVisible(False)
+                icon.setVisible(False)
                 return
             w, h = self._proc_width_spin.value(), self._proc_height_spin.value()
             mapping = self._map_combo.currentText()
@@ -1298,22 +1310,18 @@ class FormPanelMixin(MixinBase):
             )
             verdict = preflight_check(probe_system(), est)
         except Exception:
-            self._memory_notice.setVisible(False)
+            icon.setVisible(False)
             return
         if verdict.level == "ok":
-            self._memory_notice.setVisible(False)
+            icon.setVisible(False)
             return
         colour = "#e05050" if verdict.level == "block" else "#e0a030"
-        outlook = (
-            "likely to run out of memory" if verdict.level == "block" else "may be tight on memory"
+        headline = "Potential to crash" if verdict.level == "block" else "Memory may be tight"
+        icon.setText(
+            f'<a href="#system" style="color:{colour}; text-decoration:none; font-size:16px;">&#9888;</a>'
         )
-        self._memory_notice.setStyleSheet(f"color: {colour}; font-size: 11px; margin: 2px 0 4px 0;")
-        self._memory_notice.setText(
-            f"Estimated peak RAM {format_bytes(verdict.ram_need_bytes)} vs "
-            f"{format_bytes(verdict.ram_available_bytes)} free — {outlook}. "
-            f'<a href="#system" style="color: {colour};">View System tab</a>'
-        )
-        self._memory_notice.setVisible(True)
+        icon.setToolTip(f"{headline}. {verdict.message} The run will proceed anyway.")
+        icon.setVisible(True)
 
     def _update_gated_warning(self) -> None:
         seg_name = self._seg_combo.currentText()

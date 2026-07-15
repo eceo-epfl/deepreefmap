@@ -171,7 +171,7 @@ if TYPE_CHECKING:
         _ortho_rgb_preview: QLabel
         _ortho_seg_preview: QLabel
         _run_meta_banner: QLabel
-        _memory_notice: QLabel
+        _memory_warn_icon: QLabel
         _status_label: QLabel
         _update_status_label: QLabel
         _update_version_label: QLabel
