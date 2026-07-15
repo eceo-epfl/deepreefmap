@@ -49,7 +49,10 @@ STAGES: tuple[StageSpec, ...] = (
     StageSpec("mapping", "Mapping", FRAMES, 25.0),
     StageSpec("cloud", "Cloud", POINTS_NLOGN, 13.0),
     StageSpec("ortho", "Ortho", POINTS, 22.0),
-    StageSpec("save_view", "Save + view", POINTS, 21.0),
+    StageSpec("save_view", "Save + view", POINTS, 7.0),
+    # The scene .zarr.zip re-serialises the whole cloud + every frame, so it
+    # scales with points and was the untimed "reconstruction complete" tail.
+    StageSpec("scene_save", "Scene file", POINTS, 14.0),
 )
 
 _STAGE_BY_KEY = {s.key: s for s in STAGES}
@@ -75,6 +78,7 @@ _PHASE_TO_STAGE = {
     "viewer_upload": "save_view",
     "viewer_finalise": "save_view",
     "ortho_save": "save_view",
+    "scene_save": "scene_save",
 }
 
 # Only trust the live extrapolation once a stage has made enough progress that its
@@ -161,6 +165,7 @@ class RunEtaEstimator:
     frames: int
     priors: dict[str, float] = field(default_factory=dict)
     points: int | None = None
+    expected_points: int | None = None
     _runs: dict[str, _StageRun] = field(default_factory=dict)
     _order: list[str] = field(default_factory=list)
 
@@ -208,8 +213,10 @@ class RunEtaEstimator:
         run.frac = frac
 
     def _driver_value(self, spec: StageSpec) -> float | None:
-        # Point-driven stages have no honest size until N is known.
-        return driver_denominator(spec.driver, self.frames, self.points)
+        # Point-driven stages have no true N until mapping ends, so fall back to
+        # the historical N from comparable runs; set_points supplies the real one.
+        points = self.points if self.points is not None else self.expected_points
+        return driver_denominator(spec.driver, self.frames, points)
 
     def _completed_seconds_per_weight(self, now: float) -> float | None:
         """Seconds-per-weight calibrated from stages already finished this run.

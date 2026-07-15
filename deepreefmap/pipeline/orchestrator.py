@@ -376,14 +376,17 @@ def run_reconstruction(
                 processing_image_size=processing_image_size,
                 refine_intrinsics_from_mapper=refine_intrinsics_from_mapper,
             )
-            # Compressing the depth maps and per-pixel 3D point arrays (~1GB for a
-            # few hundred frames) to mapping_outputs.npz for resume takes tens of
-            # seconds. Report it as its own indeterminate step so the bar is not
-            # pinned at "Mapping complete" with nothing explaining the wait.
+            # This save sits on the interactive critical path before the viewer
+            # shows results, so it is uncompressed: zlib on the multi-GB point
+            # arrays cost minutes, while a raw write is seconds. local_points is
+            # not saved: its only reader is intrinsics refinement, which runs live
+            # before this point, so it is write-only dead weight on resume (the
+            # refined K is already baked into intrinsics). world_points stays; the
+            # cloud builder needs it or falls back to degraded depth-unprojection.
             if viewer is not None:
                 viewer.update_progress("mapping", current=0, total=0, message="Saving depth + points for resume")
             t_save = time.monotonic()
-            np.savez_compressed(
+            np.savez(
                 output_dir / "mapping_outputs.npz",
                 frame_indices=mapping_result.frame_indices,
                 depth=mapping_result.depth_maps,
@@ -392,7 +395,6 @@ def run_reconstruction(
                 confidence=np.asarray([]) if mapping_result.confidence is None else mapping_result.confidence,
                 gravity_vectors=np.asarray([]) if mapping_result.gravity_vectors is None else mapping_result.gravity_vectors,
                 world_points=np.asarray([]) if mapping_result.world_points is None else mapping_result.world_points,
-                local_points=np.asarray([]) if mapping_result.local_points is None else mapping_result.local_points,
                 scale_type=np.asarray(mapping_result.scale_type),
             )
             logger.info("Saved mapping_outputs.npz in %.1fs", time.monotonic() - t_save)
@@ -441,20 +443,9 @@ def run_reconstruction(
 
         _check_cancel(cancel_event, pause_event)
         stage_marks["cloud"] = time.monotonic()
-        if viewer is not None and not skip_segmentation:
-            viewer.set_stage("outputs", "running", "Building preview point cloud")
-            preview_xyz, preview_rgb = _build_geometry_cloud(
-                frame_batch=frame_batch,
-                mapping_result=mapping_result_for_cloud,
-                voxel_size=0.01,
-            )
-            if preview_xyz.shape[0] > 0:
-                viewer.set_data(
-                    frame_batch=frame_batch,
-                    mapping_result=mapping_result,
-                    geometry_xyz=preview_xyz,
-                    geometry_rgb=preview_rgb,
-                )
+        # No throwaway preview cloud: it was a second full pass over every point
+        # just to show geometry early. The semantic build below reports per-frame
+        # progress instead, so the bar moves while the authoritative cloud forms.
 
         if skip_segmentation:
             logger.info("Skip segmentation: building geometry-only point cloud...")
@@ -532,6 +523,10 @@ def run_reconstruction(
                     _CLOUD_STAGE_LABELS.get(name, f"Cloud {name}"),
                 )
 
+        def _cloud_progress(done: int, total: int) -> None:
+            if viewer is not None:
+                viewer.update_progress("outputs", current=done, total=total, message="Building semantic cloud")
+
         reference_cloud = build_semantic_reference_cloud(
             frame_batch,
             mapping_result_for_cloud,
@@ -543,6 +538,7 @@ def run_reconstruction(
                 replacement_radius_estimation_frames=replacement_radius_estimation_frames,
                 replacement_radius_override=replacement_radius_override,
             ),
+            progress_cb=_cloud_progress,
             stage_cb=_cloud_stage,
         )
 
@@ -682,6 +678,14 @@ def run_reconstruction(
             logger.info("Scene file saved: %s", output_dir / sfn)
         except Exception:
             logger.warning("Failed to generate scene file", exc_info=True)
+
+        # The scene save is the slowest write; capture it in its own span and
+        # re-write the manifest so the learned profile sees the real end-of-run
+        # tail. It was previously untimed, leaving the UI on "complete" for ~1min.
+        stage_marks["scene_end"] = time.monotonic()
+        manifest_dict["output_files"] = list(output_files)
+        manifest_dict["stage_durations"] = _durations_from_marks(stage_marks)
+        save_run_manifest(output_dir / "run_manifest.json", manifest_dict)
 
         if viewer is not None:
             viewer.mark_outputs_ready(str(output_dir), output_files)
@@ -1127,6 +1131,7 @@ _STAGE_SPANS: tuple[tuple[str, str, str], ...] = (
     ("cloud", "ortho", "cloud"),
     ("ortho", "save", "ortho"),
     ("save", "end", "save_view"),
+    ("end", "scene_end", "scene_save"),
 )
 
 

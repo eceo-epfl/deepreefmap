@@ -147,3 +147,75 @@ def test_load_mapping_result_roundtrip(tmp_path: Path) -> None:
 
 def test_load_mapping_result_returns_none_when_missing(tmp_path: Path) -> None:
     assert resume_mod.load_mapping_result(tmp_path) is None
+
+
+def _reef_classes():
+    from deepreefmap.config.classes import ClassConfig, SemanticClass
+
+    return ClassConfig(
+        classes=(SemanticClass(1, "reef", (10, 10, 10), frozenset()),),
+        path=Path("test"),
+    )
+
+
+def test_resumed_cloud_is_byte_identical_to_fresh(tmp_path: Path) -> None:
+    """Dropping local_points and uncompressing the resume npz must not change the cloud.
+
+    The fresh run holds local_points in memory; the resumed run loads the npz the
+    orchestrator now writes (uncompressed, no local_points). The semantic cloud the
+    two produce must be byte-identical, since the cloud builder reads world_points
+    and never local_points.
+    """
+    from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
+    from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_reference_cloud
+
+    rng = np.random.default_rng(7)
+    h, w, n = 4, 6, 3
+    frames = tuple(
+        PreparedFrame(
+            frame_index=i,
+            image_rgb=rng.integers(0, 256, size=(h, w, 3), dtype=np.uint8),
+            labels=np.ones((h, w), dtype=np.int32),
+            keep_mask=np.full((h, w), 255, dtype=np.uint8),
+        )
+        for i in range(n)
+    )
+    batch = FrameBatch(frames=frames, intrinsics=np.eye(3, dtype=np.float32), image_size=(w, h), clip_counts=(n,))
+    depth = rng.random((n, h, w), dtype=np.float64).astype(np.float32) + 0.5
+    poses = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
+    world = (rng.random((n, h, w, 3), dtype=np.float64).astype(np.float32) * 0.05)
+    confidence = np.ones((n, h, w), dtype=np.float32)
+
+    fresh = MappingSequenceResult(
+        frame_indices=np.arange(n, dtype=np.int32),
+        depth_maps=depth,
+        poses_w_c=poses,
+        intrinsics=np.eye(3, dtype=np.float32),
+        world_points=world,
+        local_points=rng.random((n, h, w, 3), dtype=np.float64).astype(np.float32),
+        confidence=confidence,
+        scale_type="relative",
+    )
+    np.savez(
+        tmp_path / "mapping_outputs.npz",
+        frame_indices=fresh.frame_indices,
+        depth=fresh.depth_maps,
+        poses_w_c=fresh.poses_w_c,
+        intrinsics=fresh.intrinsics,
+        confidence=fresh.confidence,
+        gravity_vectors=np.asarray([]),
+        world_points=fresh.world_points,
+        scale_type=np.asarray(fresh.scale_type),
+    )
+    resumed = resume_mod.load_mapping_result(tmp_path)
+    assert resumed is not None and resumed.local_points is None
+
+    cfg = PointFilterConfig(
+        voxel_size=None, replacement_radius_factor=1.0, confidence_percentile=None, min_confidence=0.0
+    )
+    a = build_semantic_reference_cloud(batch, fresh, _reef_classes(), cfg)
+    b = build_semantic_reference_cloud(batch, resumed, _reef_classes(), cfg)
+    assert np.array_equal(a.xyz, b.xyz)
+    assert np.array_equal(a.rgb, b.rgb)
+    assert np.array_equal(a.labels, b.labels)
+    assert np.array_equal(a.confidence, b.confidence)

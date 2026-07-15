@@ -42,6 +42,29 @@ def test_history_prior_used_for_pending_frame_stage():
     assert abs(rows["mapping"].seconds - 100.0) < 1e-6
 
 
+def test_expected_points_lets_point_stage_predict_before_mapping_ends():
+    # The 2nd-run bug: without a provisional N, cloud/ortho/save collapse to a few
+    # seconds. Seeding N from history makes them predict properly pre-mapping.
+    seeded = RunEtaEstimator(frames=100, priors={"cloud": 1e-6}, expected_points=5_000_000)
+    unseeded = RunEtaEstimator(frames=100, priors={"cloud": 1e-6})
+    seeded.update("preprocess", current=1, total=100, now=0.0)
+    unseeded.update("preprocess", current=1, total=100, now=0.0)
+    cloud_seeded = {r.key: r for r in seeded.stage_rows(now=1.0)}["cloud"]
+    cloud_unseeded = {r.key: r for r in unseeded.stage_rows(now=1.0)}["cloud"]
+    # 5e6 * log(5e6) * 1e-6 ~= 77s from the point prior, not a weight guess.
+    assert cloud_seeded.seconds > 50.0
+    assert cloud_unseeded.seconds == 0.0
+
+
+def test_real_points_override_expected_points():
+    est = RunEtaEstimator(frames=100, priors={"ortho": 1e-6}, expected_points=1_000_000)
+    est.update("preprocess", current=1, total=100, now=0.0)
+    est.set_points(9_000_000)
+    ortho = {r.key: r for r in est.stage_rows(now=1.0)}["ortho"]
+    # POINTS driver: 9e6 * 1e-6 = 9s from the true N, not the 1e6 seed.
+    assert abs(ortho.seconds - 9.0) < 1e-6
+
+
 def test_point_stage_waits_for_known_n_before_using_point_prior():
     est = RunEtaEstimator(frames=100, priors={"ortho": 1e-6})
     est.update("preprocess", current=1, total=100, now=0.0)

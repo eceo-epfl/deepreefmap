@@ -82,6 +82,9 @@ _RECON_PHASES: list[tuple[str, float]] = [
     ("viewer_upload", 6.0),
     ("viewer_finalise", 1.0),
     ("ortho_save", 2.0),
+    # The scene file is the last write and the slowest; give it real weight so the
+    # total bar keeps moving instead of freezing at "Reconstruction complete".
+    ("scene_save", 8.0),
 ]
 
 # cloud_concat / cloud_replace / cloud_voxel are the silent post-frame steps
@@ -165,6 +168,7 @@ _STAGE_MESSAGE_TO_PHASE: dict[str, str] = {
     "Saving cover report": "ortho_save",
     "Writing run manifest": "ortho_save",
     "Saving outputs": "ortho_save",
+    "Saving scene file": "scene_save",
     "Building geometry cloud": "outputs",
     "Generating outputs": "outputs",
 }
@@ -219,7 +223,7 @@ class ProgressBarsMixin(MixinBase):
 
     def _new_run_estimator(self) -> RunEtaEstimator:
         """Estimator seeded from this machine's history for the selected backends."""
-        from deepreefmap.gui.run_history import history_key, load_priors
+        from deepreefmap.gui.run_history import history_key, load_expected_points, load_priors
 
         try:
             key = history_key(
@@ -227,11 +231,14 @@ class ProgressBarsMixin(MixinBase):
                 self._seg_combo.currentText(),
                 self._proc_width_spin.value(),
                 self._proc_height_spin.value(),
+                self._fps_spin.value(),
             )
             priors = load_priors(key)
+            expected_points = load_expected_points(key)
         except Exception:
             priors = {}
-        return RunEtaEstimator(frames=0, priors=priors)
+            expected_points = None
+        return RunEtaEstimator(frames=0, priors=priors, expected_points=expected_points)
 
     def _reset_progress_bars(self) -> None:
         # Bars stay visible but empty when idle so the top-right cluster always

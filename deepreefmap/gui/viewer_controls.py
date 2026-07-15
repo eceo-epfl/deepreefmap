@@ -76,12 +76,22 @@ class ViewerControlsMixin(MixinBase):
                 str(manifest.get("segmentation_model", "")),
                 int(manifest.get("processing_width", 0)),
                 int(manifest.get("processing_height", 0)),
+                int(manifest.get("fps", 0)),
             )
+            params = {
+                k: manifest.get(k)
+                for k in (
+                    "fps", "mapping_backend", "segmentation_model", "processing_width",
+                    "processing_height", "mapping_options", "enable_tsdf", "grid_bins",
+                )
+                if manifest.get(k) is not None
+            }
             record_run(
                 key,
                 {k: float(v) for k, v in durations.items()},
                 frames=int(manifest.get("frames_processed", 0)),
                 points=manifest.get("metric_points"),
+                params=params,
             )
         except Exception:
             logger.warning("Could not record run timings", exc_info=True)

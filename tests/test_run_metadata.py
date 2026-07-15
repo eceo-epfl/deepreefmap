@@ -79,6 +79,15 @@ def test_durations_from_marks_reports_completed_spans_only():
     assert set(partial) == {"startup", "preprocess", "mapping"}
 
 
+def test_durations_from_marks_includes_scene_save_tail():
+    # The scene save (end -> scene_end) is the previously-untimed tail.
+    marks = {"start": 0.0, "preprocess": 2.0, "mapping": 12.0, "cloud": 42.0,
+             "ortho": 47.0, "save": 55.0, "end": 58.0, "scene_end": 115.0}
+    durations = _durations_from_marks(marks)
+    assert durations["save_view"] == 3.0
+    assert durations["scene_save"] == 57.0
+
+
 def test_build_manifest_records_stage_durations(tmp_path: Path) -> None:
     fb = _fake_frame_batch(tmp_path)
     mr = SimpleNamespace(frame_indices=np.array([0], dtype=np.int32))

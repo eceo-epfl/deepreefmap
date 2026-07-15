@@ -36,14 +36,28 @@ def timings_path() -> Path:
     return Path(platformdirs.user_data_dir("deepreefmap", appauthor=False)) / "run_timings.json"
 
 
-def history_key(mapping_backend: str, seg_model: str, proc_w: int, proc_h: int) -> str:
+def history_key(mapping_backend: str, seg_model: str, proc_w: int, proc_h: int, fps: int) -> str:
     """Profile key grouping comparable runs.
 
-    Backend and resolution dominate the hardware-bound per-frame cost, so a CPU
-    run must not seed a GPU one and a 720p run must not seed a 1080p one. Keying
-    on both keeps each seeded prediction drawn only from like-for-like runs.
+    Backend, models, resolution and fps dominate the hardware-bound per-frame cost
+    and the memory regime (5fps can thrash RAM where 3fps does not, changing the
+    per-frame time), so a prediction is only ever seeded from like-for-like runs.
+    Other params ride along as inspectable metadata on each run, not in the key, so
+    the short rolling history is not fragmented into singletons.
     """
-    return f"{mapping_backend}|{seg_model}|{proc_w}x{proc_h}"
+    return f"{mapping_backend}|{seg_model}|{proc_w}x{proc_h}|{fps}fps"
+
+
+def load_expected_points(key: str, path: Path | None = None) -> int | None:
+    """Median final point count over stored runs for `key`, or None if unseen.
+
+    Point-driven stages (cloud, ortho, saves) scale with the final cloud size,
+    unknown until mapping ends. Same key means a comparable cloud, so past runs'
+    point count is the best provisional N; set_points supersedes it with the real
+    N once mapping produces the cloud.
+    """
+    points = [int(r["points"]) for r in _load_all(path or timings_path()).get(key, []) if r.get("points")]
+    return int(statistics.median(points)) if points else None
 
 
 def _load_all(path: Path) -> dict[str, list[dict]]:
@@ -84,12 +98,19 @@ def record_run(
     stage_durations: dict[str, float],
     frames: int,
     points: int | None,
+    params: dict | None = None,
     path: Path | None = None,
 ) -> None:
-    """Append one finished run to the profile, capped to the rolling window."""
+    """Append one finished run to the profile, capped to the rolling window.
+
+    `params` records the full run configuration (fps, models, resolution, mapping
+    options) as inspectable metadata alongside the durations it produced.
+    """
     target = path or timings_path()
     all_runs = _load_all(target)
-    entry = {"stage_durations": stage_durations, "frames": frames, "points": points}
+    entry: dict = {"stage_durations": stage_durations, "frames": frames, "points": points}
+    if params:
+        entry["params"] = params
     all_runs.setdefault(key, []).append(entry)
     all_runs[key] = all_runs[key][-_MAX_RUNS_PER_KEY:]
     try:

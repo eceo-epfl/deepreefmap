@@ -5,6 +5,7 @@ from __future__ import annotations
 from deepreefmap.gui.run_history import (
     _MAX_RUNS_PER_KEY,
     history_key,
+    load_expected_points,
     load_priors,
     record_run,
 )
@@ -12,7 +13,7 @@ from deepreefmap.gui.run_history import (
 
 def test_round_trip_and_median_fit(tmp_path):
     path = tmp_path / "run_timings.json"
-    key = history_key("loger", "segformer-b2", 1280, 720)
+    key = history_key("loger", "segformer-b2", 1280, 720, 5)
     # Three runs, 100 frames each, preprocess 40/50/60s → median 0.5 s/frame.
     for secs in (40.0, 50.0, 60.0):
         record_run(key, {"preprocess": secs, "mapping": secs}, frames=100, points=1_000_000, path=path)
@@ -20,13 +21,36 @@ def test_round_trip_and_median_fit(tmp_path):
     assert abs(priors["preprocess"] - 0.5) < 1e-6
 
 
+def test_key_includes_fps():
+    assert history_key("loger", "segformer-b2", 1280, 720, 5) != history_key("loger", "segformer-b2", 1280, 720, 3)
+
+
 def test_missing_key_returns_empty(tmp_path):
-    assert load_priors("never|seen|0x0", path=tmp_path / "absent.json") == {}
+    assert load_priors("never|seen|0x0|5fps", path=tmp_path / "absent.json") == {}
+
+
+def test_expected_points_is_median_over_runs(tmp_path):
+    path = tmp_path / "run_timings.json"
+    key = history_key("loger", "segformer-b2", 1280, 720, 5)
+    for pts in (10_000_000, 14_000_000, 18_000_000):
+        record_run(key, {"cloud": 1.0}, frames=100, points=pts, path=path)
+    assert load_expected_points(key, path=path) == 14_000_000
+    assert load_expected_points("unseen|key|0x0|5fps", path=path) is None
+
+
+def test_params_metadata_round_trips(tmp_path):
+    path = tmp_path / "run_timings.json"
+    key = history_key("loger", "segformer-b2", 1280, 720, 5)
+    record_run(key, {"cloud": 1.0}, frames=100, points=1, params={"fps": 5, "enable_tsdf": False}, path=path)
+    import json
+
+    stored = json.loads(path.read_text())[key][0]
+    assert stored["params"] == {"fps": 5, "enable_tsdf": False}
 
 
 def test_rolling_cap(tmp_path):
     path = tmp_path / "run_timings.json"
-    key = history_key("scsfmlearner", "segformer-b2", 640, 480)
+    key = history_key("scsfmlearner", "segformer-b2", 640, 480, 5)
     for i in range(_MAX_RUNS_PER_KEY + 5):
         record_run(key, {"preprocess": float(i)}, frames=100, points=None, path=path)
     import json
@@ -39,7 +63,7 @@ def test_rolling_cap(tmp_path):
 
 def test_point_stage_prior_uses_nlogn_denominator(tmp_path):
     path = tmp_path / "run_timings.json"
-    key = history_key("loger", "segformer-b2", 1280, 720)
+    key = history_key("loger", "segformer-b2", 1280, 720, 5)
     record_run(key, {"cloud": 10.0}, frames=100, points=1_000_000, path=path)
     priors = load_priors(key, path=path)
     # cloud is N log N; the fitted constant times n_log_n reproduces the duration.
