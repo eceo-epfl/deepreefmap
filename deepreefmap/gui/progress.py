@@ -65,7 +65,14 @@ class ProgressModel:
 _RECON_PHASES: list[tuple[str, float]] = [
     ("startup", 1.0),
     ("preprocess", 18.0),
-    ("mapping", 25.0),
+    # Mapping is three real steps the user waits through: window inference, the
+    # float64 pose re-anchor, and the resume-npz write. Splitting them stops the
+    # bar pinning at 100% for minutes after the last inference window. Shares
+    # reflect the measured post-optimisation run (inference ~87s, align ~55s,
+    # save now seconds once the npz is uncompressed).
+    ("mapping", 15.0),
+    ("mapping_align", 8.0),
+    ("mapping_save", 2.0),
     ("outputs", 2.0),
     ("cloud_concat", 2.0),
     ("cloud_replace", 10.0),
@@ -152,6 +159,9 @@ _LOAD_STAGE_TO_PHASE: dict[str, str] = {
 # from the messages the orchestrator emits while building the ortho grid
 # and writing the final files.
 _STAGE_MESSAGE_TO_PHASE: dict[str, str] = {
+    "Aligning poses to world frame": "mapping_align",
+    "Saving depth + points for resume": "mapping_save",
+    "Mapping complete": "mapping_save",
     "Concatenating point arrays": "cloud_concat",
     "Applying replacement radius": "cloud_replace",
     "Replacement radius: computing voxel keys": "cloud_replace",

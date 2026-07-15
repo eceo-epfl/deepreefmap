@@ -131,3 +131,27 @@ def test_phase_folding():
     assert stage_for_phase("viewer_upload") == "save_view"
     assert stage_for_phase("cloud_replace") == "cloud"
     assert stage_for_phase("nonsense") is None
+
+
+def test_mapping_substeps_fold_onto_the_one_mapping_stage():
+    # The align and resume-save sub-phases are their own bars on the total, but
+    # the estimator keeps them under a single learnable "mapping" stage so the
+    # coarse status label stays "Mapping" and mapping isn't marked done early.
+    from deepreefmap.gui.eta import stage_label_for_phase
+
+    assert stage_for_phase("mapping_align") == "mapping"
+    assert stage_for_phase("mapping_save") == "mapping"
+    assert stage_label_for_phase("mapping_align") == "Mapping"
+    assert stage_label_for_phase("mapping_save") == "Mapping"
+
+
+def test_mapping_stage_not_marked_done_by_align_or_save():
+    est = RunEtaEstimator(frames=100)
+    est.update("mapping", current=1, total=100, now=0.0)
+    est.update("mapping_align", current=1, total=1, now=30.0)
+    est.update("mapping_save", current=0, total=0, now=45.0)
+    rows = {r.key: r for r in est.stage_rows(now=45.0)}
+    assert rows["mapping"].state == "running"
+    # Only the cloud starting ends mapping.
+    est.update("outputs", current=1, total=10, now=50.0)
+    assert {r.key: r for r in est.stage_rows(now=50.0)}["mapping"].state == "done"

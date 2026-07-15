@@ -1017,12 +1017,16 @@ class ViewerControlsMixin(MixinBase):
             total = int(cast(SupportsInt, kwargs.get("total", 0) or 0))
             stage = str(kwargs.get("stage", ""))
             message = str(kwargs.get("message", "") or "")
+            # A named sub-step (pose re-anchor, resume save) routes to its own phase
+            # so the total bar advances through mapping instead of pinning at 100%;
+            # unnamed messages fall back to the coarse stage key.
+            phase_key = _STAGE_MESSAGE_TO_PHASE.get(message, stage)
             # The coarse stage is now coloured into the status line, so the label
             # is just the sub-step message (e.g. "Preparing frames for LoGeR").
             label = message or (_STAGE_LABELS.get(stage, stage) or "Working")
             # total == 0 is a deliberate "indeterminate" signal (e.g. the LoGeR
             # resize/upload prep), so drive the bar rather than dropping the update.
-            self._apply_progress(stage, label, current, total)
+            self._apply_progress(phase_key, label, current, total)
         elif event == "data_ready":
             if self._viewer.has_scene_data:
                 if not self._viewer.is_geometry_mode:

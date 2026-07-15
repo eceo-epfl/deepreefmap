@@ -295,10 +295,11 @@ class LoGeRBackend(MappingBackend):
             logger.info("LoGeR outputs validated: %d/%d frames have depth and poses", n_out, n_in)
 
             # Re-anchoring left-multiplies every point by inv(pose[0]) in float64,
-            # a pass over every pixel of every frame, so flag it as its own step.
+            # a pass over every pixel of every frame. It runs in point-blocks that
+            # each report progress, so the bar advances instead of pinning at 100%.
             if progress_callback is not None:
                 progress_callback(0, 0, "Aligning poses to world frame")
-            poses, world_points = _reanchor_to_first_camera(poses, world_points)
+            poses, world_points = _reanchor_to_first_camera(poses, world_points, progress_callback)
             _assert_pose_convention(poses)
 
             confidence = _tensor_to_numpy(out.get("conf"))
@@ -346,6 +347,7 @@ class LoGeRBackend(MappingBackend):
 def _reanchor_to_first_camera(
     poses: np.ndarray,
     world_points: np.ndarray | None,
+    progress_callback: ProgressCallback | None = None,
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Canonicalize the world frame so camera 0 sits at the origin.
 
@@ -369,11 +371,14 @@ def _reanchor_to_first_camera(
 
     flat = world_points.astype(np.float64).reshape(-1, 3)
     transform = reference_inv.T
-    out = np.empty((flat.shape[0], 3), dtype=np.float64)
-    for start in range(0, flat.shape[0], _REANCHOR_POINT_BLOCK):
+    total = flat.shape[0]
+    out = np.empty((total, 3), dtype=np.float64)
+    for start in range(0, total, _REANCHOR_POINT_BLOCK):
         block = flat[start : start + _REANCHOR_POINT_BLOCK]
         homog = np.concatenate([block, np.ones((block.shape[0], 1), dtype=np.float64)], axis=1)
         out[start : start + _REANCHOR_POINT_BLOCK] = (homog @ transform)[:, :3]
+        if progress_callback is not None:
+            progress_callback(min(start + _REANCHOR_POINT_BLOCK, total), total, "Aligning poses to world frame")
     rebased_world = out.reshape(world_points.shape).astype(world_points.dtype)
     return rebased_poses, rebased_world
 

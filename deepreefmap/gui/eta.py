@@ -62,6 +62,11 @@ _PHASE_TO_STAGE = {
     "startup": "startup",
     "preprocess": "preprocess",
     "mapping": "mapping",
+    # Align + resume-save are shown as their own bars on the total, but fold back
+    # onto the one learnable "mapping" stage: we have no separate history for them
+    # and the coarse status label should stay "Mapping" throughout.
+    "mapping_align": "mapping",
+    "mapping_save": "mapping",
     "outputs": "cloud",
     "cloud_concat": "cloud",
     "cloud_replace": "cloud",
