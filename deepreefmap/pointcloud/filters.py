@@ -38,12 +38,13 @@ def _pack_voxel_key(ix: np.ndarray, iy: np.ndarray, iz: np.ndarray) -> np.ndarra
 
 
 def _pack_voxel_keys_int64(keys: np.ndarray) -> np.ndarray | None:
-    """Pack an ``(N, 3)`` int voxel-index array into one int64 per row.
+    """Pack an ``(N, 3)`` int voxel-index array into one int64 per row, ix most significant.
 
-    Returns ``None`` if any axis falls outside the 21-bit-per-axis range, so
-    callers fall back to a per-axis lexsort. With a typical replacement radius
-    (a few mm) the range spans thousands of metres, so overflow never happens on
-    real reef scans — the guard just keeps the fast path safe.
+    Returns ``None`` if any axis leaves the 21-bit-per-axis range so callers fall
+    back to a per-axis lexsort. ix sits in the high bits so ascending packed order
+    reproduces the old ix-major (ix, iy, iz) lexsort exactly, keeping the kept rows
+    and their PLY byte-identical. At real voxel/replacement radii the range spans
+    thousands of metres, so overflow never happens on real reef scans.
     """
     xa = keys[:, 0].astype(np.int64, copy=False) + _BIAS
     ya = keys[:, 1].astype(np.int64, copy=False) + _BIAS
@@ -54,9 +55,9 @@ def _pack_voxel_keys_int64(keys: np.ndarray) -> np.ndarray | None:
     if not bool(np.all(in_range)):
         return None
     return (
-        xa.astype(np.uint64)
+        (xa.astype(np.uint64) << np.uint64(42))
         | (ya.astype(np.uint64) << np.uint64(21))
-        | (za.astype(np.uint64) << np.uint64(42))
+        | za.astype(np.uint64)
     ).astype(np.int64)
 
 
@@ -417,12 +418,12 @@ def nearest_camera_replace_semantic_cloud(
     keys = np.floor(cloud.xyz / float(radius)).astype(np.int64)
     distance = np.asarray(cloud.distance_to_camera, dtype=np.float32).reshape(-1)
     _emit("sort")
-    # Grouping by voxel only needs a collision-free key, not the canonical
-    # per-axis order. Packing the three axes into one int64 turns the 5-key
-    # lexsort (arange + distance + 3 axes) into a 2-key sort, roughly halving
-    # both time and peak memory on multi-million-point clouds. lexsort is
-    # already stable, so equal (voxel, distance) pairs keep original order —
-    # the explicit arange tie-break key the old path carried was redundant.
+    # Pack the three axes into one int64 (ix in the high bits) so a 2-key sort
+    # reproduces the old (ix, iy, iz, distance) lexsort exactly: same nearest
+    # point per voxel and same row order, so the cloud and its PLY stay
+    # byte-identical while the sort roughly halves in time and peak memory.
+    # lexsort is stable, so equal (voxel, distance) rows keep input order like
+    # the old explicit arange key. Per-axis fallback if a voxel index overflows.
     packed = _pack_voxel_keys_int64(keys)
     if packed is not None:
         order = np.lexsort((distance, packed))
@@ -444,7 +445,14 @@ def nearest_camera_replace_semantic_cloud(
 
 
 def _voxel_sort_order(keys: np.ndarray) -> np.ndarray:
-    return np.lexsort((np.arange(keys.shape[0], dtype=np.int64), keys[:, 2], keys[:, 1], keys[:, 0]))
+    # ix in the high bits makes ascending packed order match the per-axis
+    # (ix, iy, iz) lexsort, with arange breaking ties to the original index, so
+    # the reduced cloud keeps byte-identical row order. Per-axis on overflow.
+    arange = np.arange(keys.shape[0], dtype=np.int64)
+    packed = _pack_voxel_keys_int64(keys)
+    if packed is not None:
+        return np.lexsort((arange, packed))
+    return np.lexsort((arange, keys[:, 2], keys[:, 1], keys[:, 0]))
 
 
 def nearest_camera_filter(cloud: SemanticPointCloud, neighborhood_size: float) -> SemanticPointCloud:
