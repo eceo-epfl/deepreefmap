@@ -77,6 +77,19 @@ def test_utilisation_vram_percent():
     assert sp.Utilisation(1, 2, 50.0, 10.0, None, None).vram_percent is None
 
 
+def test_utilisation_swap_percent():
+    u = sp.Utilisation(1, 2, 50.0, 10.0, None, None, swap_used_bytes=200, swap_total_bytes=1000)
+    assert u.swap_percent == 20.0
+    # No swap configured -> None, not a divide-by-zero.
+    assert sp.Utilisation(1, 2, 50.0, 10.0, None, None).swap_percent is None
+
+
+def test_sample_utilisation_reports_swap():
+    u = sp.sample_utilisation()
+    assert u.swap_total_bytes >= 0
+    assert 0 <= u.swap_used_bytes <= max(u.swap_total_bytes, u.swap_used_bytes)
+
+
 def test_format_bytes():
     assert sp.format_bytes(None) == "—"
     assert sp.format_bytes(2 * 1024**3) == "2.0 GB"

@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from typing import cast
 
-from PySide6.QtCore import QFileSystemWatcher, QSettings, QSize, QStandardPaths, Qt, QUrl
+from PySide6.QtCore import QFileSystemWatcher, QSettings, QSize, QStandardPaths, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QStyle,
     QTabWidget,
     QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -47,6 +48,28 @@ from deepreefmap.gui.sunburst_widget import SunburstWidget
 from deepreefmap.gui.timing_popup import HoverColumn
 
 logger = logging.getLogger(__name__)
+
+
+class _InstantTipLabel(QLabel):
+    """A QLabel whose tooltip appears the instant the cursor enters, no delay.
+
+    Matches the progress-bar hover, which shows its popup immediately rather than
+    after Qt's standard tooltip wait. Rich-text tooltips word-wrap, so the message
+    renders multiline instead of one long line. `clicked` lets the whole label act
+    as a button, so the glyph can be a plain colour-honouring span rather than an
+    anchor (Qt paints anchor links in the palette colour, ignoring inline color).
+    """
+
+    clicked = Signal()
+
+    def enterEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if self.toolTip():
+            QToolTip.showText(event.globalPosition().toPoint(), self.toolTip(), self)
+        super().enterEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        self.clicked.emit()
+        super().mousePressEvent(event)
 
 
 def _probe_video_duration_s(video_path: str) -> float | None:
@@ -372,9 +395,18 @@ class FormPanelMixin(MixinBase):
         self._vram_notice.setVisible(False)
         setup_layout.addWidget(self._vram_notice)
 
-        # The memory grade is surfaced as a warning icon beside the play button
-        # (built in _build_top_bar), not inline here. Anything that changes the
-        # projected frame count re-grades the run.
+        # System-RAM grade, shown inline like the VRAM notice above so it is a
+        # visible indicator (not just the compact icon by the play button). Links
+        # to the System tab. Anything that changes the projected frame count
+        # re-grades the run.
+        self._memory_notice = QLabel()
+        self._memory_notice.setWordWrap(True)
+        self._memory_notice.setStyleSheet("color: #e0a030; font-size: 11px; margin: 2px 0 4px 0;")
+        self._memory_notice.setVisible(False)
+        self._memory_notice.linkActivated.connect(
+            lambda _: self._sidebar_tabs.setCurrentIndex(self._TAB_SYSTEM)
+        )
+        setup_layout.addWidget(self._memory_notice)
         self._fps_spin.valueChanged.connect(self._update_memory_profile_warning)
         self._begin_spin.valueChanged.connect(self._update_memory_profile_warning)
         self._end_spin.valueChanged.connect(self._update_memory_profile_warning)
@@ -1117,16 +1149,14 @@ class FormPanelMixin(MixinBase):
         h.addWidget(self._eta_total_label)
 
         # Memory-risk icon sits immediately left of the play button. Hidden when
-        # the run fits; a click jumps to the System tab. The run itself is never
-        # gated on it, so the tooltip ends with "will run anyway".
-        self._memory_warn_icon = QLabel()
+        # the run fits; a click jumps to the System tab. Its tooltip shows on the
+        # instant of hover (no delay) and word-wraps. The run is never gated on it.
+        self._memory_warn_icon = _InstantTipLabel()
         self._memory_warn_icon.setVisible(False)
         self._memory_warn_icon.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._memory_warn_icon.setText(
-            '<a href="#system" style="color:#e05050; text-decoration:none; font-size:16px;">&#9888;</a>'
-        )
-        self._memory_warn_icon.linkActivated.connect(
-            lambda _: self._sidebar_tabs.setCurrentIndex(self._TAB_SYSTEM)
+        self._memory_warn_icon.setText('<span style="color:#e05050; font-size:16px;">&#9888;</span>')
+        self._memory_warn_icon.clicked.connect(
+            lambda: self._sidebar_tabs.setCurrentIndex(self._TAB_SYSTEM)
         )
         h.addWidget(self._memory_warn_icon)
 
@@ -1282,24 +1312,31 @@ class FormPanelMixin(MixinBase):
         self._update_memory_profile_warning()
 
     def _update_memory_profile_warning(self) -> None:
-        """Grade the configured run and flag the icon beside the play button.
+        """Grade the configured run and show the memory notice + play-button icon.
 
-        Hidden when the video duration is unknown, the estimate fails, or the run
-        fits comfortably. On warn/block the icon appears (amber/red) with the full
-        estimate in its tooltip. The run is never gated on it.
+        Both are hidden when the video duration is unknown (no frame count yet),
+        the estimate fails, or the run fits comfortably. On warn/block the inline
+        notice (amber/red) and the icon appear; the icon's tooltip carries the
+        full multiline message. The run is never gated on either.
         """
         icon = getattr(self, "_memory_warn_icon", None)
-        if icon is None:  # top bar not built yet during early form setup
+        notice = getattr(self, "_memory_notice", None)
+        if icon is None or notice is None:  # top bar / form not built yet
             return
+
+        def hide() -> None:
+            icon.setVisible(False)
+            notice.setVisible(False)
+
         try:
             from deepreefmap.gui.run_history import history_key, load_expected_peaks
             from deepreefmap.memory_estimate import estimate_peak_bytes, preflight_check
-            from deepreefmap.system_probe import probe_system
+            from deepreefmap.system_probe import format_bytes, probe_system
 
             fps = self._fps_spin.value()
             frames = self._estimate_frame_count(fps)
             if not frames:
-                icon.setVisible(False)
+                hide()
                 return
             w, h = self._proc_width_spin.value(), self._proc_height_spin.value()
             mapping = self._map_combo.currentText()
@@ -1308,19 +1345,36 @@ class FormPanelMixin(MixinBase):
                 frames, w, h, mapping, seg,
                 recorded=load_expected_peaks(history_key(mapping, seg, w, h, fps)),
             )
-            verdict = preflight_check(probe_system(), est)
+            profile = probe_system()
+            verdict = preflight_check(profile, est)
         except Exception:
-            icon.setVisible(False)
+            hide()
             return
         if verdict.level == "ok":
-            icon.setVisible(False)
+            hide()
             return
+
         colour = "#e05050" if verdict.level == "block" else "#e0a030"
         headline = "Potential to crash" if verdict.level == "block" else "Memory may be tight"
-        icon.setText(
-            f'<a href="#system" style="color:{colour}; text-decoration:none; font-size:16px;">&#9888;</a>'
+        swap_txt = (
+            f" +{format_bytes(profile.free_swap_bytes)} swap" if profile.free_swap_bytes else ""
         )
-        icon.setToolTip(f"{headline}. {verdict.message} The run will proceed anyway.")
+
+        # Inline notice: concise, always-visible indicator in the form.
+        notice.setStyleSheet(f"color: {colour}; font-size: 11px; margin: 2px 0 4px 0;")
+        notice.setText(
+            f"{headline}: needs ~{format_bytes(verdict.ram_need_bytes)} RAM vs "
+            f"{format_bytes(verdict.ram_available_bytes)} free{swap_txt}. "
+            f'<a href="#system" style="color:{colour};">System tab</a>'
+        )
+        notice.setVisible(True)
+
+        # Icon by the play button: a plain span so the colour tracks the grade
+        # (amber warn / red block); the tooltip word-wraps into multiple lines.
+        icon.setText(f'<span style="color:{colour}; font-size:16px;">&#9888;</span>')
+        icon.setToolTip(
+            f"<b>{headline}</b><br>{verdict.message}<br><i>The run will proceed anyway.</i>"
+        )
         icon.setVisible(True)
 
     def _update_gated_warning(self) -> None:

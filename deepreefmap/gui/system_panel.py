@@ -37,7 +37,7 @@ class SystemPanelMixin(MixinBase):
         grid.setColumnStretch(1, 1)
         self._sys_gauges: dict[str, tuple[QProgressBar, QLabel]] = {}
         for row, (key, name) in enumerate(
-            (("ram", "RAM"), ("vram", "VRAM"), ("cpu", "CPU"), ("disk", "Disk"))
+            (("ram", "RAM"), ("swap", "Swap"), ("vram", "VRAM"), ("cpu", "CPU"), ("disk", "Disk"))
         ):
             grid.addWidget(QLabel(name), row, 0)
             bar = QProgressBar()
@@ -92,6 +92,13 @@ class SystemPanelMixin(MixinBase):
             return
         self._set_gauge("ram", util.ram_percent, f"{format_bytes(util.ram_used_bytes)} / {format_bytes(util.ram_total_bytes)}")
         self._set_gauge("cpu", util.cpu_percent, f"{util.cpu_percent:.0f}%")
+        if util.swap_percent is not None:
+            self._set_gauge(
+                "swap", util.swap_percent,
+                f"{format_bytes(util.swap_used_bytes)} / {format_bytes(util.swap_total_bytes)}",
+            )
+        else:
+            self._set_gauge("swap", None, "none")
         if util.vram_percent is not None:
             self._set_gauge(
                 "vram", util.vram_percent,

@@ -49,6 +49,7 @@ def test_gauges_reflect_a_sampled_utilisation(qapp, monkeypatch):
         lambda: probe.Utilisation(
             ram_used_bytes=8 * 1024**3, ram_total_bytes=32 * 1024**3, ram_percent=25.0,
             cpu_percent=40.0, vram_used_bytes=None, vram_total_bytes=None,
+            swap_used_bytes=2 * 1024**3, swap_total_bytes=8 * 1024**3,
         ),
     )
     window._refresh_system_gauges()
@@ -57,6 +58,10 @@ def test_gauges_reflect_a_sampled_utilisation(qapp, monkeypatch):
     assert "8.0 GB" in ram_label.text()
     # No distinct VRAM -> the gauge reads as shared, not a fake percentage.
     assert "shared" in window._sys_gauges["vram"][1].text()
+    # Swap gauge reflects the sample (2/8 GB = 25%).
+    swap_bar, swap_label = window._sys_gauges["swap"]
+    assert swap_bar.value() == 25
+    assert "2.0 GB" in swap_label.text()
 
 
 def test_benchmark_button_fills_the_readout(qapp, monkeypatch):
@@ -77,3 +82,69 @@ def test_benchmark_button_fills_the_readout(qapp, monkeypatch):
     text = window._benchmark_output.text()
     assert "RTX 4090" in text
     assert "should handle about" in text
+
+
+def _low_ram_profile(probe):
+    return probe.SystemProfile(
+        os_name="Linux", os_release="x", cpu_logical=8, cpu_physical=4,
+        total_ram_bytes=32 * 1024**3, available_ram_bytes=6 * 1024**3,
+        total_swap_bytes=0, free_swap_bytes=0,
+        gpu=probe.GpuInfo(probe.GPU_NONE, "CPU only", None, None),
+        disk_total_bytes=0, disk_free_bytes=0, disk_path="/",
+    )
+
+
+def test_memory_warning_shows_inline_notice_and_icon(qapp, monkeypatch):
+    import deepreefmap.system_probe as probe
+
+    window = _make_window(qapp)
+    monkeypatch.setattr(probe, "probe_system", lambda *a, **k: _low_ram_profile(probe))
+    window._video_duration_s = 378.0
+    window._fps_spin.setValue(5)
+    window._update_memory_profile_warning()
+    assert not window._memory_notice.isHidden()
+    assert not window._memory_warn_icon.isHidden()
+    # The icon tooltip is multiline rich text, not one long plain line.
+    assert "<br>" in window._memory_warn_icon.toolTip()
+
+
+def test_memory_warning_hidden_without_a_video(qapp):
+    window = _make_window(qapp)
+    window._video_duration_s = None  # no frame count is knowable yet
+    window._update_memory_profile_warning()
+    assert window._memory_notice.isHidden()
+    assert window._memory_warn_icon.isHidden()
+
+
+def test_memory_icon_colour_tracks_warn_vs_block(qapp, monkeypatch):
+    import deepreefmap.system_probe as probe
+
+    window = _make_window(qapp)
+    window._video_duration_s = 378.0
+    window._fps_spin.setValue(5)
+
+    def profile(avail_gb, swap_gb):
+        return probe.SystemProfile(
+            os_name="Linux", os_release="x", cpu_logical=8, cpu_physical=4,
+            total_ram_bytes=32 * 1024**3, available_ram_bytes=avail_gb * 1024**3,
+            total_swap_bytes=swap_gb * 1024**3, free_swap_bytes=swap_gb * 1024**3,
+            gpu=probe.GpuInfo(probe.GPU_NONE, "CPU only", None, None),
+            disk_total_bytes=0, disk_free_bytes=0, disk_path="/",
+        )
+
+    # Fits only with swap -> amber warn.
+    monkeypatch.setattr(probe, "probe_system", lambda *a, **k: profile(20, 30))
+    window._update_memory_profile_warning()
+    assert "#e0a030" in window._memory_warn_icon.text()
+
+    # Exceeds RAM and swap -> red block. The icon colour must change, not just the text.
+    monkeypatch.setattr(probe, "probe_system", lambda *a, **k: profile(6, 0))
+    window._update_memory_profile_warning()
+    assert "#e05050" in window._memory_warn_icon.text()
+
+
+def test_memory_icon_click_opens_system_tab(qapp):
+    window = _make_window(qapp)
+    window._sidebar_tabs.setCurrentIndex(window._TAB_RUN)
+    window._memory_warn_icon.clicked.emit()
+    assert window._sidebar_tabs.currentIndex() == window._TAB_SYSTEM

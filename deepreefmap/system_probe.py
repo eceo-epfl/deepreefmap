@@ -130,6 +130,8 @@ class Utilisation:
     cpu_percent: float
     vram_used_bytes: int | None
     vram_total_bytes: int | None
+    swap_used_bytes: int = 0
+    swap_total_bytes: int = 0
 
     @property
     def vram_percent(self) -> float | None:
@@ -137,15 +139,27 @@ class Utilisation:
             return None
         return 100.0 * self.vram_used_bytes / self.vram_total_bytes
 
+    @property
+    def swap_percent(self) -> float | None:
+        """Swap in use as a percent, or None when the machine has no swap."""
+        if not self.swap_total_bytes:
+            return None
+        return 100.0 * self.swap_used_bytes / self.swap_total_bytes
+
 
 def sample_utilisation() -> Utilisation:
     """A cheap live snapshot for the GUI gauges, safe to call on a timer.
 
     ``cpu_percent`` is the non-blocking reading (percent since the previous call),
     so drive it from a steady interval rather than a one-off call for a real
-    figure.
+    figure. Swap comes from psutil on all three OSes (dynamic on macOS).
     """
     vm = psutil.virtual_memory()
+    try:
+        sw = psutil.swap_memory()
+        swap_used, swap_total = int(sw.used), int(sw.total)
+    except Exception:
+        swap_used = swap_total = 0
     vram_used = vram_total = None
     gpu = _probe_gpu()
     if gpu.has_distinct_vram and gpu.total_vram_bytes is not None and gpu.free_vram_bytes is not None:
@@ -158,6 +172,8 @@ def sample_utilisation() -> Utilisation:
         cpu_percent=psutil.cpu_percent(interval=None),
         vram_used_bytes=vram_used,
         vram_total_bytes=vram_total,
+        swap_used_bytes=swap_used,
+        swap_total_bytes=swap_total,
     )
 
 
