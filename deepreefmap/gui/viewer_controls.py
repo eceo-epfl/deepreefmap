@@ -92,6 +92,8 @@ class ViewerControlsMixin(MixinBase):
                 frames=int(manifest.get("frames_processed", 0)),
                 points=manifest.get("metric_points"),
                 params=params,
+                stage_peaks=manifest.get("stage_peaks") or None,
+                system_profile=manifest.get("system_profile") or None,
             )
         except Exception:
             logger.warning("Could not record run timings", exc_info=True)

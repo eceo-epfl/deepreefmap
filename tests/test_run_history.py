@@ -48,6 +48,23 @@ def test_params_metadata_round_trips(tmp_path):
     assert stored["params"] == {"fps": 5, "enable_tsdf": False}
 
 
+def test_stage_peaks_and_system_profile_round_trip(tmp_path):
+    path = tmp_path / "run_timings.json"
+    key = history_key("loger_star", "coralscapes-vit-b-dpt", 1376, 768, 5)
+    peaks = {"mapping": {"ram_bytes": 34_000_000_000, "vram_bytes": 9_000_000_000}}
+    profile = {"os_name": "Linux", "total_ram_bytes": 33_000_000_000, "gpu": {"kind": "cuda"}}
+    record_run(
+        key, {"mapping": 100.0}, frames=1000, points=1,
+        stage_peaks=peaks, system_profile=profile, path=path,
+    )
+    import json
+
+    stored = json.loads(path.read_text())[key][0]
+    assert stored["version"] == 1
+    assert stored["stage_peaks"] == peaks
+    assert stored["system_profile"]["total_ram_bytes"] == 33_000_000_000
+
+
 def test_rolling_cap(tmp_path):
     path = tmp_path / "run_timings.json"
     key = history_key("scsfmlearner", "segformer-b2", 640, 480, 5)

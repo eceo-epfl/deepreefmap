@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 # keep a short rolling window and fit with the median rather than the mean.
 _MAX_RUNS_PER_KEY = 10
 
+# Stamped on each entry so a future schema change can tell old (peak-less) runs
+# from new ones. Bump when the entry shape changes incompatibly.
+_ENTRY_VERSION = 1
+
 
 def timings_path() -> Path:
     """Location of the local timing profile, overridable for tests."""
@@ -58,6 +62,38 @@ def load_expected_points(key: str, path: Path | None = None) -> int | None:
     """
     points = [int(r["points"]) for r in _load_all(path or timings_path()).get(key, []) if r.get("points")]
     return int(statistics.median(points)) if points else None
+
+
+def load_expected_peaks(key: str, path: Path | None = None) -> dict | None:
+    """Median measured peak RAM/VRAM (over all stages) and frame count for `key`.
+
+    Returned as `{ram_bytes, vram_bytes|None, frames}` so the pre-run memory check
+    can scale a real peak by this run's frame count. None when no run for the key
+    has recorded peaks yet, so the caller falls back to the analytic estimate.
+    """
+    runs = [r for r in _load_all(path or timings_path()).get(key, []) if r.get("stage_peaks") and r.get("frames")]
+    if not runs:
+        return None
+    rams: list[int] = []
+    vrams: list[int] = []
+    frames: list[int] = []
+    for run in runs:
+        stages = run["stage_peaks"].values()
+        ram = [s["ram_bytes"] for s in stages if s.get("ram_bytes")]
+        if not ram:
+            continue
+        rams.append(max(ram))
+        vram = [s["vram_bytes"] for s in stages if s.get("vram_bytes")]
+        if vram:
+            vrams.append(max(vram))
+        frames.append(int(run["frames"]))
+    if not rams:
+        return None
+    return {
+        "ram_bytes": int(statistics.median(rams)),
+        "vram_bytes": int(statistics.median(vrams)) if vrams else None,
+        "frames": int(statistics.median(frames)),
+    }
 
 
 def _load_all(path: Path) -> dict[str, list[dict]]:
@@ -99,18 +135,25 @@ def record_run(
     frames: int,
     points: int | None,
     params: dict | None = None,
+    stage_peaks: dict | None = None,
+    system_profile: dict | None = None,
     path: Path | None = None,
 ) -> None:
     """Append one finished run to the profile, capped to the rolling window.
 
     `params` records the full run configuration (fps, models, resolution, mapping
-    options) as inspectable metadata alongside the durations it produced.
+    options); `stage_peaks` the measured per-stage peak RAM/VRAM; `system_profile`
+    the machine it ran on. Peaks + profile feed the pre-run memory check.
     """
     target = path or timings_path()
     all_runs = _load_all(target)
-    entry: dict = {"stage_durations": stage_durations, "frames": frames, "points": points}
+    entry: dict = {"version": _ENTRY_VERSION, "stage_durations": stage_durations, "frames": frames, "points": points}
     if params:
         entry["params"] = params
+    if stage_peaks:
+        entry["stage_peaks"] = stage_peaks
+    if system_profile:
+        entry["system_profile"] = system_profile
     all_runs.setdefault(key, []).append(entry)
     all_runs[key] = all_runs[key][-_MAX_RUNS_PER_KEY:]
     try:
