@@ -143,6 +143,26 @@ class LoGeRBackend(MappingBackend):
         del frame_index, image_rgb
         raise RuntimeError("LoGeR must be run with process_sequence(); per-frame proxy estimates are disabled.")
 
+    def _install_window_progress(self, model, n_windows: int, progress_callback: ProgressCallback | None):
+        """Wrap model.decode to report window k/N, returning a restore callable.
+
+        decode is invoked once per sliding window, so counting calls tracks the
+        inference loop exactly. A no-op (with a no-op restore) when there is no
+        callback or only one window, which keeps the single-pass case indeterminate.
+        """
+        if progress_callback is None or n_windows <= 1:
+            return lambda: None
+        original = model.decode
+        counter = {"k": 0}
+
+        def _counting_decode(*args, **kwargs):
+            counter["k"] += 1
+            progress_callback(counter["k"], n_windows, "LoGeR inference")
+            return original(*args, **kwargs)
+
+        model.decode = _counting_decode
+        return lambda: setattr(model, "decode", original)
+
     def process_sequence(
         self,
         frame_indices: list[int],
@@ -169,12 +189,16 @@ class LoGeRBackend(MappingBackend):
             target_w, target_h = self._target_resolution
             target_w = _nearest_multiple(target_w, 14)
             target_h = _nearest_multiple(target_h, 14)
+            # Resize + GPU upload is a short prep sub-phase before the real work.
+            # Report it indeterminate so it does not fill the mapping bar to 100%
+            # and then reset when the inference windows start counting.
+            if progress_callback is not None:
+                progress_callback(0, 0, "Preparing frames for LoGeR")
             t_resize = time.monotonic()
-            resized = []
-            for i, frm in enumerate(images_rgb):
-                resized.append(cv2.resize(frm, (target_w, target_h), interpolation=cv2.INTER_AREA))
-                if progress_callback is not None:
-                    progress_callback(i + 1, total_frames, "Preparing frames for LoGeR")
+            resized = [
+                cv2.resize(frm, (target_w, target_h), interpolation=cv2.INTER_AREA)
+                for frm in images_rgb
+            ]
             logger.info(
                 "LoGeR input resize complete for %d/%d frames to %dx%d in %.1fs",
                 len(resized),
@@ -207,28 +231,35 @@ class LoGeRBackend(MappingBackend):
             if cancel_event is not None and cancel_event.is_set():
                 from deepreefmap.pipeline.orchestrator import ReconstructionCancelled
                 raise ReconstructionCancelled("Cancelled before LoGeR inference")
-            # The forward pass is a single unhookable call, so switch the bar to
-            # indeterminate (total 0) rather than leaving it frozen at N/N.
-            if progress_callback is not None:
-                progress_callback(0, 0, "LoGeR inference (single pass)")
+            # Inference is a Python loop over sliding windows with one decode per
+            # window, so wrapping decode gives a real per-window countdown instead
+            # of a frozen bar. A single-window sequence has nothing to count, so it
+            # stays indeterminate.
+            n_windows = _count_windows(total_frames, self.default_window_size, self._overlap_size)
+            restore_decode = self._install_window_progress(model, n_windows, progress_callback)
             t_infer = time.monotonic()
-            with torch.no_grad(), autocast_context(self._device):
-                try:
-                    out = model(
-                        batch_t,
-                        **forward_kwargs,
-                    )
-                except (NotImplementedError, RuntimeError) as exc:
-                    if self._device.type != "mps" or "not currently implemented for the MPS device" not in str(exc):
-                        raise
-                    logger.warning("LoGeR op unsupported on MPS, retrying on CPU: %s", exc)
-                    model = model.cpu()
-                    batch_t = batch_t.cpu()
-                    self._device = torch.device("cpu")
-                    out = model(batch_t, **forward_kwargs)
+            try:
+                with torch.no_grad(), autocast_context(self._device):
+                    try:
+                        out = model(
+                            batch_t,
+                            **forward_kwargs,
+                        )
+                    except (NotImplementedError, RuntimeError) as exc:
+                        if self._device.type != "mps" or "not currently implemented for the MPS device" not in str(exc):
+                            raise
+                        logger.warning("LoGeR op unsupported on MPS, retrying on CPU: %s", exc)
+                        model = model.cpu()
+                        batch_t = batch_t.cpu()
+                        self._device = torch.device("cpu")
+                        out = model(batch_t, **forward_kwargs)
+            finally:
+                restore_decode()
             logger.info("LoGeR inference finished in %.1fs", time.monotonic() - t_infer)
             if progress_callback is not None:
-                progress_callback(total_frames, total_frames, "LoGeR inference complete")
+                # Windows merge and pose alignment still follow, so report an
+                # indeterminate tail rather than claiming the stage is complete.
+                progress_callback(0, 0, "Merging windows")
             if cancel_event is not None and cancel_event.is_set():
                 from deepreefmap.pipeline.orchestrator import ReconstructionCancelled
                 raise ReconstructionCancelled("Cancelled after LoGeR inference")
@@ -368,6 +399,26 @@ def _assert_pose_convention(poses: np.ndarray) -> None:
 
 def _nearest_multiple(value: int, multiple: int) -> int:
     return max(multiple, int(round(value / multiple)) * multiple)
+
+
+def _count_windows(n_frames: int, window_size: int, overlap_size: int) -> int:
+    """Number of sliding windows Pi3 will run for a sequence.
+
+    Mirrors the window construction in third_party/LoGeR/loger/models/pi3.py so
+    the progress bar can count down real windows. LoGeR runs one decode per
+    window, so this is the exact iteration count of the inference loop.
+    """
+    if window_size <= 0 or window_size >= n_frames:
+        return 1
+    step = max(window_size - overlap_size, 1)
+    count = 0
+    for start_idx in range(0, n_frames, step):
+        end_idx = min(start_idx + window_size, n_frames)
+        if end_idx - start_idx >= overlap_size or (end_idx == n_frames and start_idx < n_frames):
+            count += 1
+        if end_idx == n_frames:
+            break
+    return max(1, count)
 
 
 def _tensor_to_numpy(value) -> np.ndarray | None:

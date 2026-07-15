@@ -4,6 +4,7 @@ import pytest
 from deepreefmap.camera.intrinsics import scale_intrinsics
 from deepreefmap.mapping.loger_backend import (
     LoGeRBackend,
+    _count_windows,
     _estimate_intrinsics_from_local_points,
     _assert_pose_convention,
     _nearest_multiple,
@@ -17,6 +18,15 @@ def test_loger_disables_per_frame_proxy_path():
 
     with pytest.raises(RuntimeError, match="process_sequence"):
         backend.process_frame(0, np.zeros((4, 4, 3), dtype=np.uint8))
+
+
+def test_count_windows_matches_pi3_sliding_scheme():
+    # Whole sequence fits in one window → single pass, no countdown.
+    assert _count_windows(10, window_size=32, overlap_size=3) == 1
+    assert _count_windows(10, window_size=0, overlap_size=3) == 1
+    # step = window - overlap = 29; windows start at 0, 29, 58, ... until N.
+    assert _count_windows(100, window_size=32, overlap_size=3) == 4
+    assert _count_windows(64, window_size=32, overlap_size=3) == 3
 
 
 def test_loger_target_resolution_uses_patch_multiple():

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from deepreefmap.pipeline.orchestrator import _build_manifest
+from deepreefmap.pipeline.orchestrator import _build_manifest, _durations_from_marks
 from deepreefmap.pipeline.run_loader import _world_points_fallback_warning
 
 
@@ -64,6 +64,42 @@ def test_build_manifest_merges_run_params_and_bumps_schema(tmp_path: Path) -> No
     assert manifest["scale_type"] == "metric"
     assert manifest["transect"]["applied"] is True
     assert manifest["run_timestamp"] == "2026-05-27T08:00:00+00:00"
+
+
+def test_durations_from_marks_reports_completed_spans_only():
+    # A full run: startup 2s, preprocess 10s, mapping 30s, cloud 5s, ortho 8s, save 3s.
+    marks = {"start": 0.0, "preprocess": 2.0, "mapping": 12.0, "cloud": 42.0, "ortho": 47.0, "save": 55.0, "end": 58.0}
+    durations = _durations_from_marks(marks)
+    assert durations == {
+        "startup": 2.0, "preprocess": 10.0, "mapping": 30.0,
+        "cloud": 5.0, "ortho": 8.0, "save_view": 3.0,
+    }
+    # Geometry-only shortcut never reaches ortho, so those spans are omitted.
+    partial = _durations_from_marks({"start": 0.0, "preprocess": 1.0, "mapping": 3.0, "cloud": 9.0, "end": 12.0})
+    assert set(partial) == {"startup", "preprocess", "mapping"}
+
+
+def test_build_manifest_records_stage_durations(tmp_path: Path) -> None:
+    fb = _fake_frame_batch(tmp_path)
+    mr = SimpleNamespace(frame_indices=np.array([0], dtype=np.int32))
+    manifest = _build_manifest(
+        output_dir=tmp_path,
+        frame_batch=fb,
+        mapping_result=mr,
+        frames_processed=1,
+        segmentation_name="segformer-b2",
+        mapping_name="loger",
+        camera_profile_name="gopro",
+        classes_path=None,
+        reference_cloud_size=4,
+        metric_cloud_size=4,
+        pixel_size_m=None,
+        gravity_telemetry=False,
+        output_files=["run_manifest.json"],
+        mode="semantic",
+        stage_durations={"preprocess": 10.0, "mapping": 30.0},
+    )
+    assert manifest["stage_durations"] == {"preprocess": 10.0, "mapping": 30.0}
 
 
 def test_build_manifest_without_run_params_is_minimal(tmp_path: Path) -> None:

@@ -129,6 +129,9 @@ def run_reconstruction(
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     run_started_at = datetime.now(timezone.utc).isoformat()
+    # Wall-clock marks at each coarse stage boundary, turned into per-stage
+    # durations for the manifest (and thence the machine's timing profile).
+    stage_marks: dict[str, float] = {"start": time.monotonic()}
 
     from deepreefmap.device import resolve_device
 
@@ -217,6 +220,7 @@ def run_reconstruction(
             viewer.set_stage("preprocess", "running", "Rectifying + segmenting + masking")
         active_stage = "preprocess"
         t_start = time.monotonic()
+        stage_marks["preprocess"] = t_start
         progress_cb: Callable[[int, int | None, int, float], None] | None = None
         if viewer is not None:
             active_viewer_prep = viewer
@@ -318,6 +322,7 @@ def run_reconstruction(
                 viewer.set_stage("preprocess", "warning", warning)
 
         logger.info("Prepared %d sampled frames in %.1fs", frame_count, time.monotonic() - t_start)
+        stage_marks["mapping"] = time.monotonic()
 
         map_key_options = dict(mapping_options or {})
         map_key_options["refine_intrinsics_from_mapper"] = bool(refine_intrinsics_from_mapper)
@@ -427,6 +432,7 @@ def run_reconstruction(
         }
 
         _check_cancel(cancel_event, pause_event)
+        stage_marks["cloud"] = time.monotonic()
         if viewer is not None and not skip_segmentation:
             viewer.set_stage("outputs", "running", "Building preview point cloud")
             preview_xyz, preview_rgb = _build_geometry_cloud(
@@ -458,6 +464,7 @@ def run_reconstruction(
                 "geometry_cloud.ply",
             ]
             save_geometry_cloud(output_dir / "geometry_cloud.ply", geometry_xyz, geometry_rgb)
+            stage_marks["end"] = time.monotonic()
             save_run_manifest(output_dir / "run_manifest.json", _build_manifest(
                 output_dir=output_dir,
                 frame_batch=frame_batch,
@@ -483,6 +490,7 @@ def run_reconstruction(
                         "applied": False,
                     },
                 },
+                stage_durations=_durations_from_marks(stage_marks),
             ))
             if viewer is not None:
                 viewer.set_data(
@@ -566,6 +574,7 @@ def run_reconstruction(
         if viewer is not None:
             viewer.set_stage("outputs", "running", "Generating outputs")
         active_stage = "outputs"
+        stage_marks["ortho"] = time.monotonic()
         crop = (
             TransectCropParams(transect_length_m=transect_length, crop_width_m=transect_crop_width)
             if transect_length is not None and transect_crop_width is not None
@@ -580,6 +589,7 @@ def run_reconstruction(
             progress=_ortho_progress,
         )
         grid = ortho_outputs.grid
+        stage_marks["save"] = time.monotonic()
 
         if viewer is not None:
             viewer.set_data(
@@ -609,6 +619,7 @@ def run_reconstruction(
 
         if viewer is not None:
             viewer.set_stage("outputs", "running", "Writing run manifest")
+        stage_marks["end"] = time.monotonic()
         manifest_dict = _build_manifest(
             output_dir=output_dir,
             frame_batch=frame_batch,
@@ -634,6 +645,7 @@ def run_reconstruction(
                     "applied": transect_length is not None and transect_crop_width is not None,
                 },
             },
+            stage_durations=_durations_from_marks(stage_marks),
         )
         save_run_manifest(output_dir / "run_manifest.json", manifest_dict)
 
@@ -1097,6 +1109,32 @@ def _package_version() -> str:
         return "0.0.0"
 
 
+# Coarse pipeline stages, in order, that the timing marks bracket. The GUI reads
+# these durations back to build a per-machine cost profile (gui/run_history.py),
+# so the keys match gui/eta.py's stage keys.
+_STAGE_SPANS: tuple[tuple[str, str, str], ...] = (
+    ("start", "preprocess", "startup"),
+    ("preprocess", "mapping", "preprocess"),
+    ("mapping", "cloud", "mapping"),
+    ("cloud", "ortho", "cloud"),
+    ("ortho", "save", "ortho"),
+    ("save", "end", "save_view"),
+)
+
+
+def _durations_from_marks(marks: dict[str, float]) -> dict[str, float]:
+    """Wall-clock seconds per coarse stage from sequential monotonic marks.
+
+    A span is only reported when both of its marks were reached, so a run that
+    took the geometry-only shortcut simply omits the stages it never ran.
+    """
+    durations: dict[str, float] = {}
+    for begin, end, stage in _STAGE_SPANS:
+        if begin in marks and end in marks and marks[end] >= marks[begin]:
+            durations[stage] = marks[end] - marks[begin]
+    return durations
+
+
 def _build_manifest(
     output_dir: Path,
     frame_batch: FrameBatch,
@@ -1115,6 +1153,7 @@ def _build_manifest(
     run_name: str | None = None,
     input_videos: list[str] | None = None,
     run_params: dict[str, object] | None = None,
+    stage_durations: dict[str, float] | None = None,
 ) -> dict[str, object]:
     manifest: dict[str, object] = {
         "schema_version": 3,
@@ -1138,6 +1177,7 @@ def _build_manifest(
         "clip_counts": list(frame_batch.clip_counts),
         "depth_maps": "mapping_outputs.npz",
         "mapping_frame_indices": mapping_result.frame_indices.tolist(),
+        "stage_durations": stage_durations or {},
     }
     if run_params:
         manifest.update(run_params)
