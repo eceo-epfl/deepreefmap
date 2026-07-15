@@ -62,7 +62,7 @@ def resolve_asset_name(platform: str | None = None) -> str:
     raise BinarySwapError(f"No binary asset is built for platform {p!r}")
 
 
-def find_asset_url(release: dict, asset_name: str) -> str:
+def match_asset_url(release: dict, asset_name: str) -> str | None:
     # Release assets carry a version label (deepreefmap-linux-x64-1.2.0[.exe])
     # while resolve_asset_name yields the bare platform name, so accept both.
     candidates = {asset_name}
@@ -78,10 +78,17 @@ def find_asset_url(release: dict, asset_name: str) -> str:
             url = asset.get("browser_download_url")
             if url:
                 return str(url)
-    raise BinarySwapError(
-        f"Release {release.get('tag_name', '?')} has no {asset_name!r} asset. "
-        "This release may pre-date binary distribution. Pick a newer version."
-    )
+    return None
+
+
+def find_asset_url(release: dict, asset_name: str) -> str:
+    url = match_asset_url(release, asset_name)
+    if url is None:
+        raise BinarySwapError(
+            f"Release {release.get('tag_name', '?')} has no {asset_name!r} asset. "
+            "This release may pre-date binary distribution. Pick a newer version."
+        )
+    return url
 
 
 def download_to(

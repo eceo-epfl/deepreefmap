@@ -67,10 +67,15 @@ def _fetch_release_versions(timeout: float = 8.0) -> list[str] | None:
 def _fetch_releases(timeout: float = 8.0) -> list[dict] | None:
     """Return raw release records (with `assets`) for binary swap.
 
+    Drafts and releases without a binary asset for this platform are dropped,
+    so pre-binary releases (v1.0.0) and failed asset uploads are never offered.
+
     Mock via `DEEPREEFMAP_MOCK_VERSIONS`: synthesises records with one
     `deepreefmap-linux-x64` asset per version pointing at a placeholder URL.
     """
     import urllib.request
+
+    from deepreefmap.gui.binary_swap import BinarySwapError, match_asset_url, resolve_asset_name
 
     mock = os.environ.get("DEEPREEFMAP_MOCK_VERSIONS")
     if mock is not None:
@@ -98,7 +103,15 @@ def _fetch_releases(timeout: float = 8.0) -> list[dict] | None:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             releases = json.load(resp)
         kept = [rel for rel in releases if rel.get("tag_name") and not rel.get("draft")]
-        return kept if kept else None
+        try:
+            asset_name = resolve_asset_name()
+        except BinarySwapError:
+            asset_name = None  # unsupported platform: dev mode, install controls stay hidden
+        if asset_name is not None:
+            kept = [rel for rel in kept if match_asset_url(rel, asset_name) is not None]
+        # Empty list means "reached GitHub, nothing installable" (renders as
+        # "No releases found."); None is reserved for fetch failures.
+        return kept
     except Exception as exc:
         logger.warning("Failed to fetch release metadata from GitHub: %s", exc)
         return None

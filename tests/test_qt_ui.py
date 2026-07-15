@@ -346,22 +346,9 @@ def test_fetch_releases_mock_synthesises_assets(monkeypatch):
     assert "deepreefmap-windows-x64.exe" in names
 
 
-def test_fetch_releases_keeps_assets_from_github_response():
+def _fetch_releases_via_local_server(releases):
+    """Serve one fake GitHub /releases response and run _fetch_releases against it."""
     from deepreefmap.gui.app import _fetch_releases
-
-    releases = [
-        {
-            "tag_name": "v2.0.0",
-            "draft": False,
-            "assets": [
-                {
-                    "name": "deepreefmap-linux-x64",
-                    "browser_download_url": "https://example.invalid/v2.0.0/deepreefmap-linux-x64",
-                },
-            ],
-        },
-        {"tag_name": "v1.0.0", "draft": True, "assets": []},
-    ]
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -375,21 +362,85 @@ def test_fetch_releases_keeps_assets_from_github_response():
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
     port = server.server_address[1]
-    t = threading.Thread(target=server.handle_request, daemon=True)
-    t.start()
+    threading.Thread(target=server.handle_request, daemon=True).start()
 
     import deepreefmap.gui.version as mod
     orig = mod._gh_releases_url
     mod._gh_releases_url = lambda: f"http://127.0.0.1:{port}/releases"
     try:
-        result = _fetch_releases(timeout=5.0)
+        return _fetch_releases(timeout=5.0)
     finally:
         mod._gh_releases_url = orig
         server.server_close()
 
+
+def test_fetch_releases_keeps_assets_from_github_response(monkeypatch):
+    from deepreefmap.gui import binary_swap
+
+    monkeypatch.setattr(binary_swap, "resolve_asset_name", lambda platform=None: "deepreefmap-linux-x64")
+    releases = [
+        {
+            "tag_name": "v2.0.0",
+            "draft": False,
+            "assets": [
+                {
+                    "name": "deepreefmap-linux-x64",
+                    "browser_download_url": "https://example.invalid/v2.0.0/deepreefmap-linux-x64",
+                },
+            ],
+        },
+        {"tag_name": "v1.0.0", "draft": True, "assets": []},
+    ]
+    result = _fetch_releases_via_local_server(releases)
     assert result is not None and len(result) == 1
     assert result[0]["tag_name"] == "v2.0.0"
     assert result[0]["assets"][0]["browser_download_url"].endswith("/deepreefmap-linux-x64")
+
+
+def test_fetch_releases_drops_releases_without_platform_binary(monkeypatch):
+    # The published v1.0.0 pre-dates binary distribution (no assets); it must
+    # never be offered, nor a release carrying only another platform's binary.
+    from deepreefmap.gui import binary_swap
+
+    monkeypatch.setattr(binary_swap, "resolve_asset_name", lambda platform=None: "deepreefmap-linux-x64")
+    releases = [
+        {
+            "tag_name": "v2.0.0",
+            "draft": False,
+            "assets": [
+                {
+                    "name": "deepreefmap-linux-x64-2.0.0",
+                    "browser_download_url": "https://example.invalid/v2.0.0/deepreefmap-linux-x64-2.0.0",
+                },
+            ],
+        },
+        {
+            "tag_name": "v1.5.0",
+            "draft": False,
+            "assets": [
+                {
+                    "name": "deepreefmap-windows-x64-1.5.0.exe",
+                    "browser_download_url": "https://example.invalid/v1.5.0/deepreefmap-windows-x64-1.5.0.exe",
+                },
+            ],
+        },
+        {"tag_name": "v1.0.0", "draft": False, "assets": []},
+    ]
+    result = _fetch_releases_via_local_server(releases)
+    assert result is not None
+    assert [r["tag_name"] for r in result] == ["v2.0.0"]
+
+
+def test_fetch_releases_all_filtered_returns_empty_not_none(monkeypatch):
+    # Empty list means "reached GitHub, nothing installable" and renders as
+    # "No releases found."; None is reserved for fetch failures.
+    from deepreefmap.gui import binary_swap
+
+    monkeypatch.setattr(binary_swap, "resolve_asset_name", lambda platform=None: "deepreefmap-linux-x64")
+    result = _fetch_releases_via_local_server(
+        [{"tag_name": "v1.0.0", "draft": False, "assets": []}]
+    )
+    assert result == []
 
 
 # --- Binary swap helpers ---
@@ -518,6 +569,12 @@ def test_find_asset_url_returns_match():
     assert find_asset_url(rel, "deepreefmap-linux-x64") == "https://x/y"
     with pytest.raises(BinarySwapError):
         find_asset_url({"tag_name": "v0.5.0", "assets": []}, "deepreefmap-linux-x64")
+
+
+def test_match_asset_url_returns_none_when_absent():
+    from deepreefmap.gui.binary_swap import match_asset_url
+
+    assert match_asset_url({"tag_name": "v1.0.0", "assets": []}, "deepreefmap-linux-x64") is None
 
 
 def test_find_asset_url_matches_version_labelled_assets():
