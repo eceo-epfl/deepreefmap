@@ -39,6 +39,10 @@ dependencies = [
   "PySide6>=6.7,<7",
   "pyvista>=0.44",
   "pyvistaqt>=0.11",
+  # Browser viewer served by `reconstruct --viser` / `view-run`. Bundled (not an extra) so
+  # the shipped binary keeps the interactive viewer; imported lazily so a viser problem
+  # never breaks the Qt GUI or headless CLI paths.
+  "viser>=1.0.27",
   "tqdm>=4.67.3",
   "zarr>=2.18,<3",
   "numcodecs>=0.12,<0.16",
@@ -155,4 +159,11 @@ module = [
   "loger.*",
   "py_gpmf_parser.*",
 ]
+ignore_missing_imports = true
+
+# viser ships a loose py.typed; its GUI/scene handles surface as `object`. Treat it as
+# untyped like the other UI/native libs above so its stubs don't leak into our checks.
+[[tool.mypy.overrides]]
+module = ["viser.*"]
+follow_imports = "skip"
 ignore_missing_imports = true
