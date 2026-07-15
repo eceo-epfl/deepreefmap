@@ -1,8 +1,21 @@
 from __future__ import annotations
 
+import time
+
 from deepreefmap.gui._window_protocol import MixinBase
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
+
+
+def _fmt_elapsed(seconds: float) -> str:
+    """Render a stage duration as `37s`, `2m 14s`, or `1h 03m`."""
+    secs = int(seconds)
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m {secs % 60:02d}s"
+    return f"{secs // 3600}h {(secs % 3600) // 60:02d}m"
 
 
 class ProgressModel:
@@ -163,6 +176,16 @@ _STAGE_MESSAGE_TO_PHASE: dict[str, str] = {
 class ProgressBarsMixin(MixinBase):
     """DeepReefMapWindow methods that drive the per-step + unified progress bars."""
 
+    def _ensure_status_tick_timer(self) -> QTimer:
+        # Mixins have no __init__, so the ticker is created lazily on first use.
+        timer = getattr(self, "_status_tick_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setInterval(1000)
+            timer.timeout.connect(self._render_status)
+            self._status_tick_timer = timer
+        return timer
+
     def _begin_progress(self, model: ProgressModel) -> None:
         """Switch the active progress model and show both bars from zero."""
         model.reset()
@@ -173,6 +196,10 @@ class ProgressBarsMixin(MixinBase):
         self._total_progress_bar.setRange(0, 100)
         self._total_progress_bar.setValue(0)
         self._total_progress_bar.setVisible(True)
+        self._status_base_text = ""
+        self._status_phase_key = None
+        self._status_phase_started = time.monotonic()
+        self._ensure_status_tick_timer().start()
 
     def _reset_progress_bars(self) -> None:
         self._progress_bar.setRange(0, 100)
@@ -182,6 +209,22 @@ class ProgressBarsMixin(MixinBase):
         self._total_progress_bar.setValue(0)
         self._total_progress_bar.setVisible(False)
         self._active_progress_model = None
+        timer = getattr(self, "_status_tick_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._status_base_text = ""
+        self._status_phase_key = None
+
+    def _render_status(self) -> None:
+        """Recompose the status label from its base text plus stage elapsed time."""
+        base = getattr(self, "_status_base_text", "")
+        if not base:
+            return
+        started = getattr(self, "_status_phase_started", None)
+        if started is None:
+            self._status_label.setText(base)
+            return
+        self._status_label.setText(f"{base} · {_fmt_elapsed(time.monotonic() - started)}")
 
     def _apply_progress(
         self,
@@ -198,18 +241,25 @@ class ProgressBarsMixin(MixinBase):
         - `total <= 0`: per-step bar is indeterminate.
         Total bar always reflects the active model's weighted progress.
         """
+        # Reset the stage stopwatch when the phase key changes so elapsed time
+        # is per-stage, not per-run.
+        if getattr(self, "_status_phase_key", None) != phase_key:
+            self._status_phase_key = phase_key
+            self._status_phase_started = time.monotonic()
+
         if total > 1:
             if self._progress_bar.minimum() != 0 or self._progress_bar.maximum() != total:
                 self._progress_bar.setRange(0, total)
             self._progress_bar.setValue(current)
-            self._status_label.setText(f"{label}… {current}/{total}")
+            self._status_base_text = f"{label}… {current}/{total}"
         elif total == 1:
             self._progress_bar.setRange(0, 1)
             self._progress_bar.setValue(1)
-            self._status_label.setText(f"{label}…")
+            self._status_base_text = f"{label}…"
         else:
             self._progress_bar.setRange(0, 0)
-            self._status_label.setText(f"{label}…")
+            self._status_base_text = f"{label}…"
+        self._render_status()
         self._progress_bar.setVisible(True)
 
         if self._active_progress_model is not None:

@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from deepreefmap.gui.log_view import LogView
     from deepreefmap.gui.progress import ProgressModel
     from deepreefmap.gui.pick_tooltip import PickCard
+    from deepreefmap.gui.spinner import SpinnerStopButton
     from deepreefmap.pipeline.artifacts import SemanticPointCloud
     from deepreefmap.pointcloud.grid_ortho import OrthoGrid
     from deepreefmap.gui.viewer import QtPointCloudViewer
@@ -64,6 +65,10 @@ if TYPE_CHECKING:
         _playback_timer: QTimer
         _pipeline_thread: threading.Thread | None
         _active_progress_model: ProgressModel | None
+        _status_tick_timer: QTimer
+        _status_base_text: str
+        _status_phase_key: str | None
+        _status_phase_started: float
         _active_run_manifest: dict | None
         _results_output_dir: Path | None
         _TAB_RUN: int
@@ -121,12 +126,11 @@ if TYPE_CHECKING:
         _desktop_entry_btn: QPushButton
         _discover_btn: QPushButton
         _hf_auth_btn: QPushButton
-        _load_cancel_btn: QPushButton
         _pause_btn: QPushButton
         _rename_btn: QPushButton
         _rename_cancel_btn: QPushButton
         _rename_ok_btn: QPushButton
-        _stop_btn: QPushButton
+        _spinner_stop: SpinnerStopButton
         _submit_btn: QPushButton
         _update_btn: QPushButton
 
@@ -236,6 +240,7 @@ if TYPE_CHECKING:
         def _refresh_run_warnings_view(self) -> None: ...
         def _required_model_names(self) -> set[str]: ...
         def _reset_progress_bars(self) -> None: ...
+        def _render_status(self) -> None: ...
         def _reveal_legend_overlay(self) -> None: ...
         def _set_app_mode(self, mode: str) -> None: ...
         def _set_form_enabled(self, enabled: bool) -> None: ...

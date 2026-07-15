@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     import torch
 
 from deepreefmap.camera.intrinsics import scale_intrinsics
-from deepreefmap.mapping.base import FrameEstimate, MappingBackend
+from deepreefmap.mapping.base import FrameEstimate, MappingBackend, ProgressCallback
 from deepreefmap.paths import loger_ckpts_dir
 from deepreefmap.pipeline.artifacts import MappingSequenceResult
 
@@ -149,6 +149,7 @@ class LoGeRBackend(MappingBackend):
         images_rgb: list[np.ndarray],
         gravity_vectors: np.ndarray | None = None,
         cancel_event: threading.Event | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> MappingSequenceResult:
         if gravity_vectors is not None:
             logger.info("Gravity telemetry is available but LoGeR pose output is left unchanged.")
@@ -169,7 +170,11 @@ class LoGeRBackend(MappingBackend):
             target_w = _nearest_multiple(target_w, 14)
             target_h = _nearest_multiple(target_h, 14)
             t_resize = time.monotonic()
-            resized = [cv2.resize(frm, (target_w, target_h), interpolation=cv2.INTER_AREA) for frm in images_rgb]
+            resized = []
+            for i, frm in enumerate(images_rgb):
+                resized.append(cv2.resize(frm, (target_w, target_h), interpolation=cv2.INTER_AREA))
+                if progress_callback is not None:
+                    progress_callback(i + 1, total_frames, "Preparing frames for LoGeR")
             logger.info(
                 "LoGeR input resize complete for %d/%d frames to %dx%d in %.1fs",
                 len(resized),
@@ -202,6 +207,10 @@ class LoGeRBackend(MappingBackend):
             if cancel_event is not None and cancel_event.is_set():
                 from deepreefmap.pipeline.orchestrator import ReconstructionCancelled
                 raise ReconstructionCancelled("Cancelled before LoGeR inference")
+            # The forward pass is a single unhookable call, so switch the bar to
+            # indeterminate (total 0) rather than leaving it frozen at N/N.
+            if progress_callback is not None:
+                progress_callback(0, 0, "LoGeR inference (single pass)")
             t_infer = time.monotonic()
             with torch.no_grad(), autocast_context(self._device):
                 try:
@@ -218,6 +227,8 @@ class LoGeRBackend(MappingBackend):
                     self._device = torch.device("cpu")
                     out = model(batch_t, **forward_kwargs)
             logger.info("LoGeR inference finished in %.1fs", time.monotonic() - t_infer)
+            if progress_callback is not None:
+                progress_callback(total_frames, total_frames, "LoGeR inference complete")
             if cancel_event is not None and cancel_event.is_set():
                 from deepreefmap.pipeline.orchestrator import ReconstructionCancelled
                 raise ReconstructionCancelled("Cancelled after LoGeR inference")

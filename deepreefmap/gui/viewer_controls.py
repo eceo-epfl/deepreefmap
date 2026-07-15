@@ -59,7 +59,7 @@ class ViewerControlsMixin(MixinBase):
         # we set a flag so _apply_loaded_run drops the result when it eventually
         # arrives. The thread is a daemon and will exit with the process.
         self._load_cancelled = True
-        self._load_cancel_btn.setVisible(False)
+        self._spinner_stop.setVisible(False)
         self._reset_progress_bars()
         self._status_label.setText("Load cancelled.")
 
@@ -983,9 +983,14 @@ class ViewerControlsMixin(MixinBase):
             current = int(cast(SupportsInt, kwargs.get("current", 0) or 0))
             total = int(cast(SupportsInt, kwargs.get("total", 0) or 0))
             stage = str(kwargs.get("stage", ""))
-            label = _STAGE_LABELS.get(stage, stage) or "Working"
-            if total:
-                self._apply_progress(stage, label, current, total)
+            message = str(kwargs.get("message", "") or "")
+            stage_label = _STAGE_LABELS.get(stage, stage) or "Working"
+            # Sub-step messages (e.g. "Preparing frames for LoGeR") name what's
+            # happening inside the stage; keep the stage prefix for context.
+            label = f"{stage_label}: {message}" if message else stage_label
+            # total == 0 is a deliberate "indeterminate" signal (e.g. the LoGeR
+            # forward pass), so drive the bar rather than dropping the update.
+            self._apply_progress(stage, label, current, total)
         elif event == "data_ready":
             if self._viewer.has_scene_data:
                 if not self._viewer.is_geometry_mode:
@@ -1032,7 +1037,7 @@ class ViewerControlsMixin(MixinBase):
             self._status_label.setText(f"Outputs saved to {output_dir}")
             self._reset_progress_bars()
             self._set_form_enabled(True)
-            self._stop_btn.setVisible(False)
+            self._spinner_stop.setVisible(False)
             self._pause_btn.setVisible(False)
             if output_dir:
                 self._show_results(str(output_dir))
@@ -1052,7 +1057,7 @@ class ViewerControlsMixin(MixinBase):
             self._status_label.setText(f"Failed: {error}")
             self._reset_progress_bars()
             self._set_form_enabled(True)
-            self._stop_btn.setVisible(False)
+            self._spinner_stop.setVisible(False)
             self._pause_btn.setVisible(False)
             close_run_log_file(self._run_log_file_handler)
             self._run_log_file_handler = None

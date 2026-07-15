@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
 
 from deepreefmap.mapping.gravity import align_poses_to_gravity
 from deepreefmap.pipeline.artifacts import ScaleType
+
+ProgressCallback = Callable[[int, int, str], None]
 
 
 @dataclass
@@ -40,6 +43,7 @@ class MappingBackend(ABC):
         images_rgb: list[np.ndarray],
         gravity_vectors: np.ndarray | None = None,
         cancel_event: threading.Event | None = None,
+        progress_callback: ProgressCallback | None = None,
     ):
         """Return depth + pose estimates for an ordered image sequence.
 
@@ -51,10 +55,13 @@ class MappingBackend(ABC):
         from deepreefmap.pipeline.orchestrator import ReconstructionCancelled
 
         estimates = []
-        for idx, image in zip(frame_indices, images_rgb):
+        total = len(images_rgb)
+        for i, (idx, image) in enumerate(zip(frame_indices, images_rgb)):
             if cancel_event is not None and cancel_event.is_set():
                 raise ReconstructionCancelled("Cancelled during mapping")
             estimates.append(self.process_frame(frame_index=idx, image_rgb=image))
+            if progress_callback is not None:
+                progress_callback(i + 1, total, "Estimating depth and pose")
         if not estimates:
             raise RuntimeError("Cannot process an empty mapping sequence")
         confidence = None

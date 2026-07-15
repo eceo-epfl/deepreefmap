@@ -24,7 +24,7 @@ class RunLoadingMixin(MixinBase):
         # we set a flag so _apply_loaded_run drops the result when it eventually
         # arrives. The thread is a daemon and will exit with the process.
         self._load_cancelled = True
-        self._load_cancel_btn.setVisible(False)
+        self._spinner_stop.setVisible(False)
         self._reset_progress_bars()
         self._status_label.setText("Load cancelled.")
 
@@ -117,10 +117,10 @@ class RunLoadingMixin(MixinBase):
         self._cancel_event = threading.Event()
         self._pause_event = threading.Event()
         self._pause_event.set()
-        self._stop_btn.setVisible(True)
-        self._stop_btn.setEnabled(True)
-        self._stop_btn.setText("Stop")
+        self._spinner_stop.set_stopping(False)
+        self._spinner_stop.setVisible(True)
         self._pause_btn.setVisible(True)
+        self._pause_btn.setEnabled(True)
         self._pause_btn.setChecked(False)
         self._pause_btn.setText("Pause")
 
@@ -159,7 +159,7 @@ class RunLoadingMixin(MixinBase):
         self._status_label.setText(f"Failed: {msg}")
         self._reset_progress_bars()
         self._set_form_enabled(True)
-        self._stop_btn.setVisible(False)
+        self._spinner_stop.setVisible(False)
         self._pause_btn.setVisible(False)
         close_run_log_file(self._run_log_file_handler)
         self._run_log_file_handler = None
@@ -169,21 +169,34 @@ class RunLoadingMixin(MixinBase):
         self._status_label.setText("Reconstruction stopped by user.")
         self._reset_progress_bars()
         self._set_form_enabled(True)
-        self._stop_btn.setVisible(False)
+        self._spinner_stop.setVisible(False)
         self._pause_btn.setVisible(False)
         close_run_log_file(self._run_log_file_handler)
         self._run_log_file_handler = None
         self._set_app_mode("SETUP")
 
     def _on_stop_clicked(self) -> None:
-        if hasattr(self, "_cancel_event") and self._cancel_event is not None:
+        # The spinner is shared between a live pipeline run and a cached-run
+        # load. A running pipeline owns the cancel/pause events; otherwise the
+        # click aborts a cached load.
+        pipeline_running = (
+            getattr(self, "_pipeline_thread", None) is not None
+            and self._pipeline_thread is not None
+            and self._pipeline_thread.is_alive()
+        )
+        if not pipeline_running:
+            self._cancel_load()
+            return
+        if getattr(self, "_cancel_event", None) is not None:
             self._cancel_event.set()
-        if hasattr(self, "_pause_event") and self._pause_event is not None:
+        if getattr(self, "_pause_event", None) is not None:
             self._pause_event.set()
-        self._stop_btn.setEnabled(False)
-        self._stop_btn.setText("Stopping…")
+        self._spinner_stop.set_stopping(True)
         self._pause_btn.setEnabled(False)
-        self._status_label.setText("Stopping reconstruction…")
+        # Route through the status base text so the elapsed-time ticker keeps
+        # this message rather than reverting it on its next tick.
+        self._status_base_text = "Stopping reconstruction…"
+        self._render_status()
 
     def _on_pause_toggled(self, paused: bool) -> None:
         if not hasattr(self, "_pause_event") or self._pause_event is None:
@@ -230,7 +243,8 @@ class RunLoadingMixin(MixinBase):
         self._begin_progress(self._load_model)
         # Indeterminate per-step bar until the first stage callback arrives.
         self._progress_bar.setRange(0, 0)
-        self._load_cancel_btn.setVisible(True)
+        self._spinner_stop.set_stopping(False)
+        self._spinner_stop.setVisible(True)
         threading.Thread(target=self._load_run_worker, args=(run_dir,), daemon=True).start()
 
     def _load_run_worker(self, run_dir: Path) -> None:
@@ -282,7 +296,7 @@ class RunLoadingMixin(MixinBase):
 
         _t0 = _time.monotonic()
 
-        self._load_cancel_btn.setVisible(False)
+        self._spinner_stop.setVisible(False)
 
         if self._load_cancelled:
             self._reset_progress_bars()

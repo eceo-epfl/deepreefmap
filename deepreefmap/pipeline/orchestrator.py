@@ -219,12 +219,15 @@ def run_reconstruction(
         t_start = time.monotonic()
         progress_cb: Callable[[int, int | None, int, float], None] | None = None
         if viewer is not None:
+            active_viewer_prep = viewer
+
             def progress_cb(current: int, total: int | None, frame_idx: int, elapsed_s: float) -> None:
-                viewer.update_progress(
+                del elapsed_s  # the GUI status ticker now renders elapsed time
+                active_viewer_prep.update_progress(
                     "preprocess",
                     current=current,
                     total=total,
-                    message=f"Rectify+segment+mask ({elapsed_s:.1f}s)",
+                    message="Rectify+segment+mask",
                     frame_index=frame_idx,
                 )
         frame_batch: FrameBatch | None = None
@@ -343,15 +346,21 @@ def run_reconstruction(
             mapping = create_mapping_backend(mapping_name, device=device, **(mapping_options or {}))
             mapping.initialize(image_size=processing_image_size, intrinsics=processing_intrinsics)
             logger.info("Running mapping backend '%s' on %d prepared frames...", mapping_name, frame_count)
+            mapping_progress_cb = None
             if viewer is not None:
-                viewer.set_stage("mapping", "running", "3D mapping pipeline in progress")
-                viewer.update_progress("mapping", current=0, total=frame_count, message="Starting mapping")
+                active_viewer = viewer
+                active_viewer.set_stage("mapping", "running", "3D mapping pipeline in progress")
+                active_viewer.update_progress("mapping", current=0, total=frame_count, message="Starting mapping")
+
+                def mapping_progress_cb(current: int, total: int, message: str) -> None:
+                    active_viewer.update_progress("mapping", current=current, total=total, message=message)
             active_stage = "mapping"
             mapping_result = mapping.process_sequence(
                 frame_batch.frame_indices,
                 frame_batch.images,
                 gravity_vectors=frame_batch.gravity_vectors,
                 cancel_event=cancel_event,
+                progress_callback=mapping_progress_cb,
             )
             _check_cancel(cancel_event, pause_event)
             mapping_result = _maybe_refine_intrinsics(

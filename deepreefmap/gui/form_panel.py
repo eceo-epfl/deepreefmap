@@ -42,6 +42,7 @@ from deepreefmap.gui.progress import (
 )
 from deepreefmap.gui.version import _current_version, _pyapp_binary_path
 from deepreefmap.gui.theme import WARN_BG, WARN_BORDER, WARN_TEXT
+from deepreefmap.gui.spinner import SpinnerStopButton
 from deepreefmap.gui.sunburst_widget import SunburstWidget
 
 logger = logging.getLogger(__name__)
@@ -193,10 +194,6 @@ class FormPanelMixin(MixinBase):
         self._log_toggle_btn.setCheckable(True)
         self._log_toggle_btn.setFixedHeight(24)
         self._log_toggle_btn.toggled.connect(self._set_log_panel_visible)
-
-        self._load_cancel_btn = QPushButton("Cancel")
-        self._load_cancel_btn.setVisible(False)
-        self._load_cancel_btn.clicked.connect(self._cancel_load)
 
         self._warnings_label_running = QLabel("")
         self._warnings_label_running.setWordWrap(True)
@@ -584,24 +581,6 @@ class FormPanelMixin(MixinBase):
         self._submit_btn.clicked.connect(self._on_submit)
         setup_layout.addWidget(self._submit_btn)
 
-        run_ctl_row = QHBoxLayout()
-        run_ctl_row.setContentsMargins(0, 0, 0, 0)
-        self._stop_btn = QPushButton("Stop")
-        self._stop_btn.setToolTip("Cancel the running reconstruction")
-        self._stop_btn.setVisible(False)
-        self._stop_btn.clicked.connect(self._on_stop_clicked)
-        run_ctl_row.addWidget(self._stop_btn)
-        self._pause_btn = QPushButton("Pause")
-        self._pause_btn.setToolTip(
-            "Pause the reconstruction at the next safe checkpoint. "
-            "Long mapping passes may take time to respond."
-        )
-        self._pause_btn.setCheckable(True)
-        self._pause_btn.setVisible(False)
-        self._pause_btn.toggled.connect(self._on_pause_toggled)
-        run_ctl_row.addWidget(self._pause_btn)
-        setup_layout.addLayout(run_ctl_row)
-
         self._batch_btn = QPushButton("Batch reconstruction…")
         self._batch_btn.setToolTip(
             "Run a CSV of reconstructions sequentially. "
@@ -668,6 +647,23 @@ class FormPanelMixin(MixinBase):
         self._recon_model = ProgressModel(_RECON_PHASES)
         self._load_model = ProgressModel(_LOAD_PHASES)
         self._active_progress_model: ProgressModel | None = None
+
+        # Run controls live in the top bar so they sit alongside the status and
+        # progress bars. Pause holds at the next safe checkpoint; the spinner is
+        # the animated "busy" indicator and the abort button in one.
+        self._pause_btn = QPushButton("Pause")
+        self._pause_btn.setToolTip(
+            "Pause the reconstruction at the next safe checkpoint. "
+            "Long mapping passes may take time to respond."
+        )
+        self._pause_btn.setCheckable(True)
+        self._pause_btn.setMaximumWidth(80)
+        self._pause_btn.setVisible(False)
+        self._pause_btn.toggled.connect(self._on_pause_toggled)
+
+        self._spinner_stop = SpinnerStopButton()
+        self._spinner_stop.setVisible(False)
+        self._spinner_stop.clicked.connect(self._on_stop_clicked)
 
         self._viewer_controls_group = QGroupBox("Viewer controls")
         self._viewer_controls_group.setVisible(False)
@@ -1062,7 +1058,8 @@ class FormPanelMixin(MixinBase):
         h.addWidget(self._progress_bar)
         self._total_progress_bar.setMaximumWidth(160)
         h.addWidget(self._total_progress_bar)
-        h.addWidget(self._load_cancel_btn)
+        h.addWidget(self._pause_btn)
+        h.addWidget(self._spinner_stop)
 
         return bar
 
