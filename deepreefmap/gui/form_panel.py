@@ -108,8 +108,8 @@ class FormPanelMixin(MixinBase):
         self._TAB_RUN = 0
         self._TAB_RESULTS = 1
         self._TAB_MODELS = 2
-        self._TAB_UPDATES = 3
-        self._TAB_SYSTEM = 4
+        # System hosts both the live machine gauges and the updates section.
+        self._TAB_SYSTEM = 3
         self._sidebar_tabs = QTabWidget()
         # Tabs expand to share the panel width equally so labels of different
         # length (Run / Results / Models / Updates) end up the same visible width.
@@ -129,20 +129,19 @@ class FormPanelMixin(MixinBase):
         models_layout = QVBoxLayout(self._models_tab)
         models_layout.setContentsMargins(4, 6, 4, 4)
         models_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self._updates_tab = QWidget()
-        updates_layout = QVBoxLayout(self._updates_tab)
-        updates_layout.setContentsMargins(4, 6, 4, 4)
-        # No layout-level AlignTop here: it shrinks the layout to its size hint,
-        # which makes word-wrapped labels wrap at a narrow heuristic width. The
-        # trailing addStretch() keeps content top-aligned while letting labels
-        # use the full panel width.
         from deepreefmap.gui.system_panel import build_system_tab
 
+        # The System tab hosts the gauges/benchmark first, with the updates
+        # section appended below (widgets added later in this method into the
+        # same layout). Its layout deliberately has no AlignTop: that shrinks
+        # the layout to its size hint, making word-wrapped labels wrap at a
+        # narrow heuristic width. The trailing addStretch() keeps content
+        # top-aligned while letting labels use the full panel width.
         self._system_tab, system_layout = build_system_tab(self._sidebar_tabs)
+        updates_layout = system_layout
         self._sidebar_tabs.addTab(self._run_tab, "Run")
         self._sidebar_tabs.addTab(self._viewer_tab, "Results")
         self._sidebar_tabs.addTab(self._models_tab, "Models")
-        self._sidebar_tabs.addTab(self._updates_tab, "Updates")
         self._sidebar_tabs.addTab(self._system_tab, "System")
         self._build_system_panel(system_layout)
         # Results tab has nothing to show until a run loads — disable it so
@@ -372,6 +371,22 @@ class FormPanelMixin(MixinBase):
         self._vram_notice.setStyleSheet("color: #e0a030; font-size: 11px; margin: 2px 0 4px 0;")
         self._vram_notice.setVisible(False)
         setup_layout.addWidget(self._vram_notice)
+
+        # Early RAM-profile notice: the same estimate the pre-flight dialog uses,
+        # surfaced as soon as fps/resolution/video make the run look too big, so
+        # the user learns before reaching for the play button. Links to System.
+        self._memory_notice = QLabel()
+        self._memory_notice.setWordWrap(True)
+        self._memory_notice.setStyleSheet("font-size: 11px; margin: 2px 0 4px 0;")
+        self._memory_notice.setVisible(False)
+        self._memory_notice.linkActivated.connect(
+            lambda _: self._sidebar_tabs.setCurrentIndex(self._TAB_SYSTEM)
+        )
+        setup_layout.addWidget(self._memory_notice)
+        # Anything that changes the projected frame count re-grades the run.
+        self._fps_spin.valueChanged.connect(self._update_memory_profile_warning)
+        self._begin_spin.valueChanged.connect(self._update_memory_profile_warning)
+        self._end_spin.valueChanged.connect(self._update_memory_profile_warning)
 
         self._advanced_panel = QWidget()
         adv_layout = QVBoxLayout(self._advanced_panel)
@@ -1255,6 +1270,50 @@ class FormPanelMixin(MixinBase):
             self._vram_auto_label.setVisible(False)
             self._vram_notice.setVisible(False)
         self._update_dpt_warning()
+        self._update_memory_profile_warning()
+
+    def _update_memory_profile_warning(self) -> None:
+        """Show the RAM-profile notice as soon as the configured run looks too big.
+
+        Same estimate as the pre-flight dialog, but surfaced while the form is
+        being filled in, before the play button. Hidden when the video duration
+        is unknown, the estimate fails, or the run fits comfortably.
+        """
+        try:
+            from deepreefmap.gui.run_history import history_key, load_expected_peaks
+            from deepreefmap.memory_estimate import estimate_peak_bytes, preflight_check
+            from deepreefmap.system_probe import format_bytes, probe_system
+
+            fps = self._fps_spin.value()
+            frames = self._estimate_frame_count(fps)
+            if not frames:
+                self._memory_notice.setVisible(False)
+                return
+            w, h = self._proc_width_spin.value(), self._proc_height_spin.value()
+            mapping = self._map_combo.currentText()
+            seg = self._seg_combo.currentText()
+            est = estimate_peak_bytes(
+                frames, w, h, mapping, seg,
+                recorded=load_expected_peaks(history_key(mapping, seg, w, h, fps)),
+            )
+            verdict = preflight_check(probe_system(), est)
+        except Exception:
+            self._memory_notice.setVisible(False)
+            return
+        if verdict.level == "ok":
+            self._memory_notice.setVisible(False)
+            return
+        colour = "#e05050" if verdict.level == "block" else "#e0a030"
+        outlook = (
+            "likely to run out of memory" if verdict.level == "block" else "may be tight on memory"
+        )
+        self._memory_notice.setStyleSheet(f"color: {colour}; font-size: 11px; margin: 2px 0 4px 0;")
+        self._memory_notice.setText(
+            f"Estimated peak RAM {format_bytes(verdict.ram_need_bytes)} vs "
+            f"{format_bytes(verdict.ram_available_bytes)} free — {outlook}. "
+            f'<a href="#system" style="color: {colour};">View System tab</a>'
+        )
+        self._memory_notice.setVisible(True)
 
     def _update_gated_warning(self) -> None:
         seg_name = self._seg_combo.currentText()
@@ -1383,6 +1442,9 @@ class FormPanelMixin(MixinBase):
         self._begin_spin.setMaximum(max(duration, 1e9))
         self._begin_spin.setValue(0.0)
         self._end_spin.setValue(duration)
+        # Duration just became known, so the run's frame count (and therefore
+        # its memory grade) is finally computable.
+        self._update_memory_profile_warning()
 
     def _on_video_input_committed(self) -> None:
         """Probe duration if the user typed/pasted a path bypassing Browse."""

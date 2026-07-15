@@ -76,7 +76,6 @@ if TYPE_CHECKING:
         _results_output_dir: Path | None
         _TAB_RUN: int
         _TAB_RESULTS: int
-        _TAB_UPDATES: int
         _TAB_SYSTEM: int
         _downloading: set[str]
         _download_cancel_requested: set[str]
@@ -172,6 +171,7 @@ if TYPE_CHECKING:
         _ortho_rgb_preview: QLabel
         _ortho_seg_preview: QLabel
         _run_meta_banner: QLabel
+        _memory_notice: QLabel
         _status_label: QLabel
         _update_status_label: QLabel
         _update_version_label: QLabel
@@ -243,6 +243,7 @@ if TYPE_CHECKING:
         def _clear_run_warnings(self) -> None: ...
         def _collect_loger_options(self, mapping_name: str) -> dict | None: ...
         def _commit_rename(self) -> None: ...
+        def _estimate_frame_count(self, fps: int) -> int | None: ...
         def _recompute_submit_state(self) -> None: ...
         def _refresh_desktop_entry_button(self) -> None: ...
         def _refresh_model_status(self) -> None: ...

@@ -11,6 +11,7 @@ from deepreefmap.gui._window_protocol import MixinBase
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QFrame,
     QGridLayout,
     QLabel,
     QProgressBar,
@@ -57,7 +58,16 @@ class SystemPanelMixin(MixinBase):
         self._benchmark_output.setWordWrap(True)
         self._benchmark_output.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self._benchmark_output)
-        layout.addStretch(1)
+
+        # The updates section (version, install, desktop entry) is appended to
+        # this same layout by _build_form_panel; give it a labelled break. No
+        # trailing stretch here — the updates block ends with one.
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(divider)
+        updates_header = QLabel("<b>Updates</b>")
+        layout.addWidget(updates_header)
 
         # 1 Hz gauge tick, created lazily and run only while the tab is showing so
         # an idle background poll never costs anything.
@@ -143,9 +153,13 @@ class SystemPanelMixin(MixinBase):
 
 
 def build_system_tab(parent: QWidget) -> tuple[QWidget, QVBoxLayout]:
-    """A blank System tab widget + its layout, mirroring the other sidebar tabs."""
+    """A blank System tab widget + its layout, mirroring the other sidebar tabs.
+
+    No layout-level AlignTop: it shrinks the layout to its size hint and makes
+    word-wrapped labels wrap narrow. The updates block appended by the form
+    panel ends with a stretch that keeps everything top-aligned instead.
+    """
     tab = QWidget(parent)
     tab_layout = QVBoxLayout(tab)
     tab_layout.setContentsMargins(4, 6, 4, 4)
-    tab_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
     return tab, tab_layout

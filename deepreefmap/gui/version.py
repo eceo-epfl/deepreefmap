@@ -191,18 +191,18 @@ class VersionCheckMixin(MixinBase):
         self._sig_update_check_done.emit(current, releases, pyapp_bin)
 
     def _set_updates_tab_alert(self, latest: str | None) -> None:
-        """Flag the Updates tab amber with a dot when `latest` is available.
+        """Flag the System tab (which hosts updates) amber when `latest` is available.
 
         Passing None clears the alert and restores the default tab style.
         """
         bar = self._sidebar_tabs.tabBar()
-        idx = self._TAB_UPDATES
+        idx = self._TAB_SYSTEM
         if latest is None:
-            bar.setTabText(idx, "Updates")
+            bar.setTabText(idx, "System")
             bar.setTabTextColor(idx, QColor())  # invalid colour → theme default
             self._sidebar_tabs.setTabToolTip(idx, "")
             return
-        bar.setTabText(idx, "Updates ●")
+        bar.setTabText(idx, "System ●")
         bar.setTabTextColor(idx, _UPDATE_ACCENT)
         self._sidebar_tabs.setTabToolTip(idx, f"Version {latest} is available")
 
