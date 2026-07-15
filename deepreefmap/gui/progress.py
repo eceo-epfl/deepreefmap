@@ -225,6 +225,7 @@ class ProgressBarsMixin(MixinBase):
         self._total_progress_bar.setValue(0)
         self._total_progress_bar.setEnabled(True)
         self._status_base_text = ""
+        self._status_count_text = ""
         self._status_phase_key = None
         self._status_phase_started = time.monotonic()
         # ETA only applies to a reconstruction; a cached-run load has its own model.
@@ -269,33 +270,46 @@ class ProgressBarsMixin(MixinBase):
         if timer is not None:
             timer.stop()
         self._status_base_text = ""
+        self._status_count_text = ""
         self._status_phase_key = None
 
     def _render_status(self) -> None:
-        """Recompose the status label: coloured stage, detail, and stage elapsed."""
+        """Recompose the status label: coloured stage + label, then a metrics line.
+
+        The stage name and its description stay on the first line; the frame
+        count, stage elapsed, and stage remainder sit on a second line directly
+        underneath so the figures never widen the first line as they change.
+        """
         self._render_eta()
         base = getattr(self, "_status_base_text", "")
         if not base:
             return
         now = time.monotonic()
         started = getattr(self, "_status_phase_started", None)
-        detail = base if started is None else f"{base} · {format_duration(now - started)}"
-        # Keep the measured stage remainder visible no matter what: it is the same
-        # kind of live figure a tqdm bar shows, trustworthy even on a first run,
-        # and it is stage-scoped so it never masquerades as the whole-run total.
+        # Second line: count · stage elapsed · stage remainder. Kept off the
+        # first line so the label text never jumps as the numbers grow. The
+        # measured remainder is the same kind of live figure a tqdm bar shows,
+        # trustworthy even on a first run, and stage-scoped so it never
+        # masquerades as the whole-run total.
+        parts: list[str] = []
+        count = getattr(self, "_status_count_text", "")
+        if count:
+            parts.append(count)
+        if started is not None:
+            parts.append(format_duration(now - started))
         est = getattr(self, "_eta", None)
         stage_left = est.current_stage_remaining(now) if est is not None else None
         if stage_left is not None:
-            detail = f"{detail} · ~{format_duration(stage_left)} left"
+            parts.append(f"~{format_duration(stage_left)} left")
+        metrics = " · ".join(parts)
         # Colour the active coarse stage so the left text names it (and the stage
         # name is dropped from the bars). Rich text keeps it to one coloured token.
         stage = stage_label_for_phase(getattr(self, "_status_phase_key", "") or "")
         if stage:
-            self._status_label.setText(
-                f'<b><span style="color:{PRIMARY}">{stage}</span></b> · {detail}'
-            )
+            first = f'<b><span style="color:{PRIMARY}">{stage}</span></b> · {base}'
         else:
-            self._status_label.setText(detail)
+            first = base
+        self._status_label.setText(f"{first}<br>{metrics}" if metrics else first)
 
     def _render_eta(self) -> None:
         """Refresh the visible overall-estimate label and the breakdown popup."""
@@ -356,19 +370,23 @@ class ProgressBarsMixin(MixinBase):
             est.update(phase_key, current, total, time.monotonic())
 
         # The bars carry no text (the stage name is coloured in the status line);
-        # they only show fill. Indeterminate for total <= 0.
+        # they only show fill. Indeterminate for total <= 0. The frame count is
+        # kept out of the base text so it can sit on the metrics line.
         if total > 1:
             if self._progress_bar.minimum() != 0 or self._progress_bar.maximum() != total:
                 self._progress_bar.setRange(0, total)
             self._progress_bar.setValue(current)
-            self._status_base_text = f"{label}… {current}/{total}"
+            self._status_base_text = label
+            self._status_count_text = f"{current}/{total}"
         elif total == 1:
             self._progress_bar.setRange(0, 1)
             self._progress_bar.setValue(1)
-            self._status_base_text = f"{label}…"
+            self._status_base_text = label
+            self._status_count_text = ""
         else:
             self._progress_bar.setRange(0, 0)
-            self._status_base_text = f"{label}…"
+            self._status_base_text = label
+            self._status_count_text = ""
         self._render_status()
         self._progress_bar.setEnabled(True)
 

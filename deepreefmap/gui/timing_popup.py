@@ -95,7 +95,10 @@ class TimingPopup(QWidget):
             cells.append(
                 f"<tr><td style='padding-right:12px'>{row.label}</td>"
                 f"<td style='padding-right:12px;font-family:monospace'>{_bar(row.frac, colour)}</td>"
-                f"<td align='right' style='padding-right:14px'>{time_text}</td>"
+                # Fixed-width monospace so the count never reflows the column as
+                # it ticks from 9s to 14s to 2m 03s and the popup stops jumping.
+                f"<td align='right' width='64' "
+                f"style='padding-right:14px;font-family:monospace'>{time_text}</td>"
                 f"<td style='color:{colour}'>{note}</td></tr>"
             )
         if has_history:

@@ -200,6 +200,7 @@ class RunLoadingMixin(MixinBase):
         # Route through the status base text so the elapsed-time ticker keeps
         # this message rather than reverting it on its next tick.
         self._status_base_text = "Stopping reconstruction…"
+        self._status_count_text = ""
         self._render_status()
 
     def _on_pause_toggled(self, paused: bool) -> None:

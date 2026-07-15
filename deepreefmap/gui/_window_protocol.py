@@ -69,6 +69,7 @@ if TYPE_CHECKING:
         _active_progress_model: ProgressModel | None
         _status_tick_timer: QTimer
         _status_base_text: str
+        _status_count_text: str
         _status_phase_key: str | None
         _status_phase_started: float
         _active_run_manifest: dict | None
