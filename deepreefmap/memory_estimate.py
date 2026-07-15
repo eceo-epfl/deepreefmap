@@ -19,16 +19,31 @@ from dataclasses import dataclass
 
 from deepreefmap.system_probe import GPU_CUDA, GPU_MPS, SystemProfile, format_bytes
 
-# Analytic per-frame model (post-local_points-drop). Each retained frame holds
-# world_points (HxWx3 f32 = 12B/px) + depth (4B) + confidence (4B) = 20B/px.
-_BYTES_PER_PIXEL_FRAME = 20
-# The cloud stage concatenates a second copy of the points while the source is
-# still alive, so the true peak overlaps roughly two frame-sized sets.
-_PEAK_CONCURRENCY = 2.0
-# numpy temporaries and allocator fragmentation on top.
-_OVERHEAD = 1.25
+# Analytic per-frame model, derived from the arrays the pipeline actually holds
+# (traced through orchestrator/loger_backend/filters, validated against real
+# runs: 1134 frames peaked ~17 GB and fit a 31 GB box, 1890 frames did not).
+#
+# Two independent per-frame terms:
+# - Prepared frames stay in RAM for the whole run at the PROCESSING resolution:
+#   rgb uint8 (3) + labels int32 (4) + keep_mask uint8 (1) = 8 B/px.
+# - Mapping arrays live at LoGeR's own 504x280 inference grid, NOT the
+#   processing resolution. The peak stage is the pose re-anchor, where
+#   local_points + world_points + rebased output (f32, 12 each) + depth (4)
+#   are co-resident = 40 B per mapping pixel.
+#
+# The cloud stage (~110 B per kept point) overtakes the re-anchor only when
+# point filtering keeps an unusually large cloud; measured peaks catch that
+# case per machine. scsfmlearner maps frame-by-frame and is far lighter, so
+# this model is conservative for it.
+_FRAME_BATCH_BYTES_PER_PIXEL = 8
+# LoGeR's default target_resolution (loger_backend.py). If a backend override
+# changes it this drifts, but measured peaks supersede after one recorded run.
+_MAPPING_PIXELS_PER_FRAME = 504 * 280
+_REANCHOR_BYTES_PER_MAPPING_PIXEL = 40
+# Allocator slack, per-block float64 transients and the confidence array.
+_OVERHEAD = 1.15
 # Torch, model weights and interpreter working set, present regardless of frames.
-_BASELINE_APP_BYTES = int(2.5 * 1024**3)
+_BASELINE_APP_BYTES = int(2 * 1024**3)
 # Rough flat VRAM need (model weights + window activations); refined by measurement.
 _ANALYTIC_VRAM_BYTES = int(6 * 1024**3)
 
@@ -79,9 +94,16 @@ def estimate_peak_bytes(
             vram_bytes=int(rec_vram * ratio) if rec_vram else None,
             source="measured",
         )
-    pixels = max(1, width * height)
-    ram = _BASELINE_APP_BYTES + int(frames * pixels * _BYTES_PER_PIXEL_FRAME * _PEAK_CONCURRENCY * _OVERHEAD)
+    ram = _BASELINE_APP_BYTES + int(frames * _bytes_per_frame(width, height) * _OVERHEAD)
     return MemoryEstimate(ram_bytes=ram, vram_bytes=_ANALYTIC_VRAM_BYTES, source="analytic")
+
+
+def _bytes_per_frame(width: int, height: int) -> int:
+    """Per-frame resident bytes at the run's peak stage (see the model above)."""
+    return (
+        max(1, width * height) * _FRAME_BATCH_BYTES_PER_PIXEL
+        + _MAPPING_PIXELS_PER_FRAME * _REANCHOR_BYTES_PER_MAPPING_PIXEL
+    )
 
 
 def max_frames_for_ram(available_bytes: int, width: int, height: int, *, margin_bytes: int = _WARN_HEADROOM) -> int:
@@ -91,10 +113,8 @@ def max_frames_for_ram(available_bytes: int, width: int, height: int, *, margin_
     answer "how much can this machine take?" with no video loaded. Conservative:
     it keeps `margin_bytes` spare.
     """
-    pixels = max(1, width * height)
     budget = available_bytes - _BASELINE_APP_BYTES - margin_bytes
-    per_frame = pixels * _BYTES_PER_PIXEL_FRAME * _PEAK_CONCURRENCY * _OVERHEAD
-    return max(0, int(budget / per_frame))
+    return max(0, int(budget / (_bytes_per_frame(width, height) * _OVERHEAD)))
 
 
 def preflight_check(profile: SystemProfile, est: MemoryEstimate) -> Verdict:
