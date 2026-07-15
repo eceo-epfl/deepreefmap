@@ -90,14 +90,32 @@ def test_loger_entries_materialise_into_ckpts_dir():
     ] == _LOGER_CKPTS / "LoGeR_star" / "latest.pt"
 
 
+def _write_snapshot(cache_root, repo_id, files):
+    """Lay down a minimal HF-cache snapshot (refs/main + one revision) for a repo.
+
+    `files` maps repo-relative paths to bytes/str contents. Mirrors the real
+    cache layout closely enough for the offline verifier in model_manager.
+    """
+    repo_dir = cache_root / f"models--{repo_id.replace('/', '--')}"
+    commit = "0" * 40
+    (repo_dir / "refs").mkdir(parents=True, exist_ok=True)
+    (repo_dir / "refs" / "main").write_text(commit)
+    snap = repo_dir / "snapshots" / commit
+    snap.mkdir(parents=True, exist_ok=True)
+    for rel, content in files.items():
+        path = snap / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content if isinstance(content, bytes) else content.encode())
+    return snap
+
+
 def test_is_model_cached_requires_materialised_destinations(tmp_path, monkeypatch):
     from deepreefmap.gui import model_manager
     from deepreefmap.gui.model_manager import ModelInfo, is_model_cached
 
     fake_cache = tmp_path / "hf"
-    repo_dir = fake_cache / "models--fake--repo"
-    repo_dir.mkdir(parents=True)
     monkeypatch.setattr(model_manager, "_HF_CACHE_ROOT", fake_cache)
+    _write_snapshot(fake_cache, "fake/repo", {"model.safetensors": b"weights"})
 
     dest = tmp_path / "ckpts" / "weight.pt"
     info = ModelInfo(
@@ -112,6 +130,62 @@ def test_is_model_cached_requires_materialised_destinations(tmp_path, monkeypatc
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(b"x")
     assert is_model_cached(info)
+
+
+def test_config_only_snapshot_reads_as_partial(tmp_path, monkeypatch):
+    """A DPT head with only config.json (the crash-in-the-field state) must not
+    read as cached: the custom loader named in config.json is missing."""
+    from deepreefmap.gui import model_manager
+    from deepreefmap.gui.model_manager import ModelInfo, ModelStatus, is_model_cached, model_status
+
+    fake_cache = tmp_path / "hf"
+    monkeypatch.setattr(model_manager, "_HF_CACHE_ROOT", fake_cache)
+    _write_snapshot(
+        fake_cache,
+        "fake/dpt-head",
+        {"config.json": json.dumps({"hub_inference_module": "loader.py"})},
+    )
+    info = ModelInfo(
+        name="dpt-head-fake",
+        kind="segmentation",
+        hf_repos=["fake/dpt-head"],
+        gated=False,
+        description="test",
+    )
+    status, reason = model_status(info)
+    assert status is ModelStatus.PARTIAL
+    assert "loader.py" in reason
+    assert not is_model_cached(info)
+
+    _write_snapshot(
+        fake_cache,
+        "fake/dpt-head",
+        {
+            "config.json": json.dumps({"hub_inference_module": "loader.py"}),
+            "loader.py": "# custom loader",
+            "model.safetensors": b"weights",
+        },
+    )
+    assert model_status(info)[0] is ModelStatus.COMPLETE
+    assert is_model_cached(info)
+
+
+def test_metadata_only_snapshot_reads_as_absent(tmp_path, monkeypatch):
+    """A stub with only README/LICENSE is 'not downloaded', not a repair case."""
+    from deepreefmap.gui import model_manager
+    from deepreefmap.gui.model_manager import ModelInfo, ModelStatus, model_status
+
+    fake_cache = tmp_path / "hf"
+    monkeypatch.setattr(model_manager, "_HF_CACHE_ROOT", fake_cache)
+    _write_snapshot(fake_cache, "fake/stub", {"README.md": "hi", "LICENSE.md": "x"})
+    info = ModelInfo(
+        name="stub-fake",
+        kind="backbone",
+        hf_repos=["fake/stub"],
+        gated=True,
+        description="test",
+    )
+    assert model_status(info)[0] is ModelStatus.ABSENT
 
 
 def test_prefetch_refuses_when_disk_is_low(tmp_path, monkeypatch):

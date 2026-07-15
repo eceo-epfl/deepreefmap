@@ -121,9 +121,15 @@ class ModelManagementMixin(MixinBase):
             )
             btn.setStyleSheet("")
         else:
+            from deepreefmap.gui.model_manager import ModelStatus, model_status
+
+            status, why = model_status(info)
             btn.setText("")
             btn.setIcon(download_icon(16))
-            btn.setToolTip(f"{selected_name} not downloaded. Click to download.")
+            if status == ModelStatus.PARTIAL:
+                btn.setToolTip(f"{selected_name} download incomplete ({why}). Click to re-download.")
+            else:
+                btn.setToolTip(f"{selected_name} not downloaded. Click to download.")
             btn.setStyleSheet("")
 
     def _apply_downloading_style(
@@ -381,6 +387,18 @@ class ModelManagementMixin(MixinBase):
             bar.setFixedWidth(150)
             return bar
 
+        # A cache that exists but fails verification (interrupted/cancelled
+        # download: config.json landed, weights or the custom loader did not).
+        # Distinct from "never downloaded" so the row can prompt a repair
+        # instead of a silent re-download that reads as "nothing happened".
+        from deepreefmap.gui.model_manager import ModelStatus, model_status
+
+        partial_reason = ""
+        if not cached:
+            status, why = model_status(info)
+            if status == ModelStatus.PARTIAL:
+                partial_reason = why
+
         container = QWidget()
         hb = QHBoxLayout(container)
         hb.setContentsMargins(0, 0, 0, 0)
@@ -392,6 +410,9 @@ class ModelManagementMixin(MixinBase):
         if cached:
             icon.setText(f'<span style="color:{SUCCESS}; font-weight:bold">✓</span>')
             icon.setToolTip("cached")
+        elif partial_reason:
+            icon.setText(f'<span style="color:{WARNING}; font-weight:bold">⚠</span>')
+            icon.setToolTip(f"download incomplete — {partial_reason}")
         elif info.gated and not auth_user:
             icon.setText(f'<span style="color:{WARNING}; font-weight:bold">!</span>')
             icon.setToolTip(
@@ -415,10 +436,22 @@ class ModelManagementMixin(MixinBase):
             btn.clicked.connect(self._on_hf_auth_button)
         else:
             prior_error = self._download_errors.get(info.name)
-            btn_text = "Retry" if prior_error else "Download"
+            if partial_reason:
+                btn_text = "Repair"
+            elif prior_error:
+                btn_text = "Retry"
+            else:
+                btn_text = "Download"
             btn = QPushButton(btn_text)
             btn.setFixedWidth(110)
-            if prior_error:
+            if partial_reason:
+                # Re-download fills in the missing files. Flag it orange so an
+                # incomplete cache doesn't masquerade as a fresh download.
+                btn.setToolTip(
+                    f"Cached files are incomplete ({partial_reason}). Click to re-download."
+                )
+                btn.setStyleSheet(f"QPushButton {{ color: {WARNING}; }}")
+            elif prior_error:
                 # Surface the failure at the row so it survives the next
                 # status refresh, instead of disappearing from the shared
                 # status bar the moment the user clicks anywhere else.

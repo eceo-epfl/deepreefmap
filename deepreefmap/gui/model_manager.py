@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 from huggingface_hub.constants import HF_HUB_CACHE
@@ -273,20 +275,102 @@ def _hf_cache_dir(repo_id: str) -> Path:
     return _HF_CACHE_ROOT / f"models--{repo_id.replace('/', '--')}"
 
 
-def is_model_cached(info: ModelInfo) -> bool:
-    for repo in info.hf_repos:
-        if not _hf_cache_dir(repo).exists():
-            return False
-        if info.gated:
-            try:
-                from huggingface_hub import try_to_load_from_cache
+class ModelStatus(str, Enum):
+    """Verified on-disk state of a model's cache.
 
-                result = try_to_load_from_cache(repo, "config.json")
-                if not isinstance(result, str):
-                    return False
-            except Exception:
-                return False
-    return all(dest.exists() for dest in info.materialise_to.values())
+    COMPLETE is the only usable state. PARTIAL means files are present but the
+    set is incomplete or corrupt (an interrupted or cancelled download) — the
+    common trap where the HF cache dir exists and config.json loads but the
+    weights or a custom loader never landed, so the app crashes mid-run.
+    """
+
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+    ABSENT = "absent"
+
+
+# A repo is "downloaded" only once at least one of these lands. config.json
+# alone is never enough — that's exactly the stub state that fooled the old check.
+_WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth", ".ckpt")
+
+
+def _snapshot_dir(repo_id: str) -> Path | None:
+    """Resolve a repo's current snapshot dir from refs/main, offline.
+
+    Returns None when nothing usable is on disk (no cache dir, no ref, or the
+    referenced snapshot is missing). Never touches the network — field laptops
+    verify while offline.
+    """
+    ref = _hf_cache_dir(repo_id) / "refs" / "main"
+    try:
+        commit = ref.read_text().strip()
+    except OSError:
+        return None
+    snap = _hf_cache_dir(repo_id) / "snapshots" / commit
+    return snap if snap.is_dir() else None
+
+
+def _verify_repo(repo_id: str) -> tuple[ModelStatus, str]:
+    """Check one HF repo snapshot for completeness. Returns (status, reason)."""
+    snap = _snapshot_dir(repo_id)
+    if snap is None:
+        return ModelStatus.ABSENT, "not downloaded"
+
+    entries = [p for p in snap.rglob("*") if p.is_file() or p.is_symlink()]
+    # A symlink whose blob never finished downloading fails to resolve. This is
+    # the fingerprint of an interrupted (not merely cancelled-before-start) pull.
+    for p in entries:
+        if p.is_symlink() and not p.exists():
+            return ModelStatus.PARTIAL, f"incomplete data for {p.name}"
+
+    config = snap / "config.json"
+    has_config = config.exists()
+    has_weights = any(p.suffix in _WEIGHT_SUFFIXES for p in entries)
+    # Only README/LICENSE/.gitattributes and the like — nothing substantive was
+    # pulled (a metadata-only stub HF leaves for a gated repo, or a cancel before
+    # the first real file). Treat as not-downloaded so the row prompts a plain
+    # Download rather than a Repair.
+    if not has_config and not has_weights:
+        return ModelStatus.ABSENT, "not downloaded"
+
+    # DPT heads ship a custom loader named in config.json#hub_inference_module
+    # (coralscapes_hub_model.py). Its absence is the file that crashed at runtime.
+    if has_config:
+        try:
+            module = json.loads(config.read_text()).get("hub_inference_module")
+        except (OSError, ValueError):
+            return ModelStatus.PARTIAL, "config.json unreadable"
+        if module and not (snap / module).exists():
+            return ModelStatus.PARTIAL, f"missing loader {module}"
+
+    if not has_weights:
+        return ModelStatus.PARTIAL, "no weights file present"
+    return ModelStatus.COMPLETE, ""
+
+
+def model_status(info: ModelInfo) -> tuple[ModelStatus, str]:
+    """Verified state of a model across all its repos plus materialise targets.
+
+    Worst status wins: any ABSENT repo makes the model ABSENT, any PARTIAL makes
+    it PARTIAL. The reason string describes the first problem found, for tooltips.
+    """
+    worst = ModelStatus.COMPLETE
+    reason = ""
+    for repo in info.hf_repos:
+        status, why = _verify_repo(repo)
+        if status == ModelStatus.ABSENT:
+            return ModelStatus.ABSENT, f"{repo}: {why}"
+        if status == ModelStatus.PARTIAL and worst != ModelStatus.PARTIAL:
+            worst, reason = ModelStatus.PARTIAL, f"{repo}: {why}"
+    for dest in info.materialise_to.values():
+        if not dest.exists():
+            return ModelStatus.PARTIAL, f"missing {dest.name}"
+    return worst, reason
+
+
+def is_model_cached(info: ModelInfo) -> bool:
+    """True only when every file needed to load the model is verified on disk."""
+    return model_status(info)[0] == ModelStatus.COMPLETE
 
 
 
