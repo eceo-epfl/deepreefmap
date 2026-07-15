@@ -1,6 +1,6 @@
 [project]
 name = "deepreefmap"
-version = "0.1.0"
+version = "1.1.0"
 description = "Modular framework for semantic 3D mapping of coral reefs from videos"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
@@ -30,24 +30,39 @@ dependencies = [
   "open3d>=0.18.0",
   "transformers>=5.8.0",
   "huggingface_hub>=1.14.0",
-  # Keep PyTorch on CUDA 12.1 wheels for the workstation's NVIDIA 535 driver
-  # (CUDA 12.2). Newer torch releases may resolve to cu130 and fail CUDA init.
-  "torch==2.4.1",
-  "torchvision==0.19.1",
+  "torch>=2.7,<3",
+  "torchvision>=0.22,<1",
   # Upper-bounded so the dual-API fallback in deepreefmap.camera.colmap_calibration
   # (ImageReaderOptions.single_camera vs pycolmap.CameraMode.SINGLE) stays the
   # documented contract; bump after retesting calibrate against a new major.
   "pycolmap>=4.0.4,<5.0",
+  "PySide6>=6.7,<7",
+  "pyvista>=0.44",
+  "pyvistaqt>=0.11",
+  # Browser viewer served by `reconstruct --viser` / `view-run`. Bundled (not an extra) so
+  # the shipped binary keeps the interactive viewer; imported lazily so a viser problem
+  # never breaks the Qt GUI or headless CLI paths.
   "viser>=1.0.27",
   "tqdm>=4.67.3",
+  "zarr>=2.18,<3",
+  "numcodecs>=0.12,<0.16",
+  # User-writable location for LoGeR checkpoints (see deepreefmap.paths.loger_ckpts_dir):
+  # a frozen PyApp binary's install tree is read-only, so they can't live under third_party/.
+  "platformdirs>=4",
+  # Constant-time sampled video hashing (deepreefmap.io.video_hash) — dedup-grade
+  # identity for grouping runs of the same clip, not an integrity hash.
+  "imohash>=1.1.0",
 ]
 
 [project.optional-dependencies]
 # LoGeR upstream (https://github.com/Junyi42/LoGeR) is a research repo with no
-# pyproject.toml/setup.py, so we cannot pip-install it. Instead, the LoGeR
-# backend imports it directly from third_party/LoGeR via sys.path. This extra
-# pulls in LoGeR's *runtime* dependencies (omitting demo-only ones like
-# gradio/trimesh/matplotlib/evo). Initialize the submodule with:
+# pyproject.toml/setup.py, so we cannot pip-install it. Instead we vendor its
+# `loger` namespace package into our wheel (see [tool.setuptools.packages.find-namespace])
+# so it ships inside the frozen PyApp binary. This extra pulls in LoGeR's *runtime*
+# dependencies (omitting demo-only ones like gradio/trimesh/matplotlib/evo). The
+# loger.models.pi3 import path needs only einops beyond the base deps; xformers and
+# the cuRoPE2D CUDA kernel are guarded optional imports. Initialize the submodule
+# before building with:
 #   git submodule update --init --recursive
 loger = [
   "safetensors>=0.4.0",
@@ -60,7 +75,12 @@ gopro = [
   "py-gpmf-parser>=0.1.1,<0.2.0; sys_platform == 'linux' and platform_machine == 'x86_64'"
 ]
 train = ["wandb>=0.20.0", "tensorboard>=2.18.0"]
-dev = ["pytest>=8.4.0", "ruff>=0.12.0", "mypy>=2.0.0"]
+# Exact +local pins per backend. PyApp installs the wheel via `uv pip install`, which
+# ignores [tool.uv.sources], so only an exact local version pulls the right wheel.
+cu126 = ["torch==2.12.1+cu126", "torchvision==0.27.1+cu126"]
+cu130 = ["torch==2.12.1+cu130", "torchvision==0.27.1+cu130"]
+rocm = ["torch==2.9.1+rocm6.4", "torchvision==0.24.1+rocm6.4", "pytorch-triton-rocm>=3.0"]
+dev = ["pytest>=8.4.0", "ruff>=0.12.0", "mypy>=2.0.0", "types-PyYAML", "types-tqdm"]
 
 [project.urls]
 Repository = "https://github.com/EPFL-ECEO/deepreefmap"
@@ -73,15 +93,85 @@ deepreefmap = "deepreefmap.cli.main:app"
 requires = ["setuptools>=82.0.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
+# deepreefmap is a normal package; `loger` (the third_party/LoGeR submodule) is a
+# PEP-420 namespace package with no __init__.py at its top levels, so namespaces=true
+# is required to discover it, and it's vendored from its own root into the wheel.
 [tool.setuptools.packages.find]
-include = ["deepreefmap*"]
+where = [".", "third_party/LoGeR"]
+include = ["deepreefmap*", "loger*"]
+namespaces = true
 
 [tool.setuptools.package-data]
-"deepreefmap.resources" = ["configs/*.yaml", "camera_profiles/*.json"]
+"deepreefmap.resources" = ["configs/*.yaml", "camera_profiles/*.json", "*.png", "fonts/*.ttf", "fonts/*.txt"]
+
+[tool.uv]
+conflicts = [
+  [{ extra = "cu126" }, { extra = "cu130" }, { extra = "rocm" }],
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm6.4"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu126", extra = "cu126" },
+  { index = "pytorch-cu130", extra = "cu130" },
+  { index = "pytorch-rocm", extra = "rocm" },
+]
+torchvision = [
+  { index = "pytorch-cu126", extra = "cu126" },
+  { index = "pytorch-cu130", extra = "cu130" },
+  { index = "pytorch-rocm", extra = "rocm" },
+]
+pytorch-triton-rocm = [
+  { index = "pytorch-rocm", extra = "rocm" },
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# importlib mode: category subfolders under tests/ need no __init__.py and
+# test basenames need not be globally unique.
+addopts = "--import-mode=importlib"
 
 [tool.ruff]
 target-version = "py310"
-extend-exclude = ["third_party"]
+extend-exclude = ["third_party", "tests/e2e/_cache", "tests/e2e/_work"]
+
+[tool.mypy]
+python_version = "3.10"
+exclude = ["deepreefmap/mapping/scsfmlearner/training/"]
+
+[[tool.mypy.overrides]]
+module = [
+  "open3d.*",
+  "sklearn.*",
+  "numcodecs.*",
+  "zarr.*",
+  "torchvision.*",
+  "pyvistaqt.*",
+  "vtk.*",
+  "loger.*",
+  "py_gpmf_parser.*",
+  "psutil.*",
+  "imohash.*",
+]
+ignore_missing_imports = true
+
+# viser ships a loose py.typed; its GUI/scene handles surface as `object`. Treat it as
+# untyped like the other UI/native libs above so its stubs don't leak into our checks.
+[[tool.mypy.overrides]]
+module = ["viser.*"]
+follow_imports = "skip"
+ignore_missing_imports = true

@@ -11,6 +11,8 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+tests/e2e/_cache/
+tests/e2e/_work/
 
 # Runtime outputs
 out/
@@ -49,3 +51,5 @@ camera_profiles/*_diagnostics/
 *.tgz
 *.7z
 demo/
+
+*.tmp
