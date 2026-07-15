@@ -5,26 +5,38 @@ import logging
 
 import typer
 
-from deepreefmap.camera.colmap_calibration import calibrate_camera_profile, verify_camera_profile
-from deepreefmap.pipeline.orchestrator import run_reconstruction
-from deepreefmap.pipeline.run_loader import load_cached_run
-from deepreefmap.pointcloud.filters import PointFilterConfig
-from deepreefmap.postproc.reports import render_offline_video_placeholder
-from deepreefmap.segmentation.registry import list_segmentation_models
-from deepreefmap.mapping.registry import list_mapping_backends
-from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR, available_profile_names
-from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
-from deepreefmap.visualization.viser_app import ViserLiveApp
+app = typer.Typer(
+    help="DeepReefMap command line interface",
+    no_args_is_help=True,
+)
 
-app = typer.Typer(help="DeepReefMap command line interface")
+
+@app.command("launch")
+def launch_command(
+    run_dir: Optional[Path] = typer.Argument(
+        None,
+        exists=True,
+        file_okay=False,
+        help="Optional path to an existing run directory (contains run_manifest.json) to open on startup.",
+    ),
+) -> None:
+    """Start the native Qt desktop application, optionally pre-loading a run."""
+    from deepreefmap.gui.app import launch
+
+    launch(view_run_dir=run_dir)
 
 
 def _available_profiles() -> list[str]:
+    from deepreefmap.camera.intrinsics import available_profile_names
+
     return available_profile_names()
 
 
 @app.command("list-models")
 def list_models() -> None:
+    from deepreefmap.segmentation.registry import list_segmentation_models
+    from deepreefmap.mapping.registry import list_mapping_backends
+
     typer.echo("Segmentation models:")
     for name in list_segmentation_models():
         typer.echo(f"  - {name}")
@@ -43,6 +55,35 @@ def list_profiles() -> None:
         typer.echo(name)
 
 
+@app.command("probe")
+def probe(
+    json_out: bool = typer.Option(False, "--json", help="Emit the raw profile as JSON."),
+    out: Path = typer.Option(Path.cwd(), help="Volume to report free disk for (the run output dir in practice)."),
+) -> None:
+    """Report this machine's RAM, VRAM, CPU and free disk without loading a video."""
+    import json as _json
+
+    from deepreefmap.profiling.system_probe import format_bytes, probe_system
+
+    profile = probe_system(out)
+    if json_out:
+        typer.echo(_json.dumps(profile.to_dict(), indent=2))
+        return
+    gpu = profile.gpu
+    if gpu.has_distinct_vram:
+        vram = f"{gpu.name} ({format_bytes(gpu.free_vram_bytes)} free / {format_bytes(gpu.total_vram_bytes)})"
+    elif gpu.kind == "mps":
+        vram = f"{gpu.name} (shares system RAM)"
+    else:
+        vram = gpu.name
+    typer.echo(f"OS       : {profile.os_name} {profile.os_release}")
+    typer.echo(f"CPU      : {profile.cpu_logical} logical / {profile.cpu_physical or '?'} physical cores")
+    typer.echo(f"RAM      : {format_bytes(profile.available_ram_bytes)} free / {format_bytes(profile.total_ram_bytes)}")
+    typer.echo(f"Swap     : {format_bytes(profile.free_swap_bytes)} free / {format_bytes(profile.total_swap_bytes)}")
+    typer.echo(f"GPU      : {vram}")
+    typer.echo(f"Disk ({profile.disk_path}): {format_bytes(profile.disk_free_bytes)} free / {format_bytes(profile.disk_total_bytes)}")
+
+
 @app.command("reconstruct")
 def reconstruct(
     videos: str = typer.Option(..., help="Comma-separated video paths in processing order."),
@@ -58,9 +99,10 @@ def reconstruct(
     end: Optional[float] = typer.Option(None, help="End timestamp in the concatenated stream (seconds)."),
     transect_length: Optional[float] = typer.Option(None, help="Transect length in meters."),
     transect_crop_width: Optional[float] = typer.Option(None, help="Crop width around transect in meters."),
-    classes: Path = typer.Option(Path("configs/classes_coralscapes.yaml"), help="Classes YAML with class roles and colors."),
-    viser: bool = typer.Option(False, help="Enable viser visualization."),
-    viser_port: int = typer.Option(8080, help="Port for viser visualization server."),
+    classes: Path = typer.Option(
+        Path("configs/classes_coralscapes.yaml"),
+        help="Classes YAML with class roles and colors. Falls back to the bundled config when the path does not exist.",
+    ),
     tsdf: bool = typer.Option(False, help="Enable optional TSDF fusion output."),
     replacement_radius_factor: Optional[float] = typer.Option(
         None,
@@ -97,10 +139,6 @@ def reconstruct(
         help="SC-SfMLearner mapping height (independent of global processing height).",
     ),
     grid_bins: int = typer.Option(2000, help="Number of bins used to build the ortho grid."),
-    keep_viser_open: bool = typer.Option(
-        True,
-        help="Keep viser open after outputs are generated.",
-    ),
     require_gravity_telemetry: bool = typer.Option(
         False,
         help="Fail reconstruction if gravity telemetry cannot be loaded/aligned.",
@@ -110,19 +148,31 @@ def reconstruct(
         help="Number of rectified frames to segment together during frame preparation.",
     ),
     processing_width: Optional[int] = typer.Option(
-        1376,
-        help="Width to resize rectified frames to before segmentation/mapping.",
+        None,
+        help="Resize width before segmentation/mapping. Default: the segmentation model's "
+        "native resolution. Override by passing both --processing-width and --processing-height.",
     ),
     processing_height: Optional[int] = typer.Option(
-        768,
-        help="Height to resize rectified frames to before segmentation/mapping.",
+        None,
+        help="Resize height before segmentation/mapping. Default: the segmentation model's "
+        "native resolution. Set together with --processing-width.",
     ),
     skip_segmentation: bool = typer.Option(
         False,
         "--skip-segmentation",
-        help="Skip segmentation entirely. Produces only the 3D reconstruction (geometry cloud + poses + depths) and runs a minimal viser app.",
+        help="Skip segmentation entirely. Produces only the 3D reconstruction (geometry cloud + poses + depths).",
+    ),
+    viser: bool = typer.Option(False, help="Enable viser visualization."),
+    viser_port: int = typer.Option(8080, help="Port for viser visualization server."),
+    keep_viser_open: bool = typer.Option(
+        True,
+        help="Keep viser open after outputs are generated.",
     ),
 ) -> None:
+    from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR
+    from deepreefmap.config.classes import DEFAULT_CLASSES_PATH
+    from deepreefmap.pipeline.orchestrator import run_reconstruction
+
     if camera_profile not in _available_profiles():
         profile_path = CAMERA_PROFILE_DIR / f"{camera_profile}.json"
         available = _available_profiles()
@@ -165,22 +215,24 @@ def reconstruct(
         end_s=end,
         transect_length=transect_length,
         transect_crop_width=transect_crop_width,
-        enable_viser=viser,
-        viser_port=viser_port,
         enable_tsdf=tsdf,
         replacement_radius_factor=replacement_radius_factor,
         replacement_radius_estimation_frames=replacement_radius_estimation_frames,
         replacement_radius_override=replacement_radius_override,
         mapping_options=mapping_options,
-        classes_path=classes,
+        # The default is the path load_classes probes anyway. None keeps the manifest
+        # machine-independent: any other value is recorded there as an absolute path.
+        classes_path=None if classes == DEFAULT_CLASSES_PATH else classes,
         grid_bins=grid_bins,
-        keep_viser_open=keep_viser_open,
         require_gravity_telemetry=require_gravity_telemetry,
         preprocess_batch_size=preprocess_batch_size,
         processing_width=processing_width,
         processing_height=processing_height,
         skip_segmentation=skip_segmentation,
         refine_intrinsics_from_mapper=refine_intrinsics_from_mapper,
+        enable_viser=viser,
+        viser_port=viser_port,
+        keep_viser_open=keep_viser_open,
     )
 
 
@@ -193,6 +245,8 @@ def calibrate(
     begin: Optional[float] = typer.Option(None, help="Optional begin timestamp (seconds) for calibration window."),
     end: Optional[float] = typer.Option(None, help="Optional end timestamp (seconds) for calibration window."),
 ) -> None:
+    from deepreefmap.camera.colmap_calibration import calibrate_camera_profile
+
     profile_path = calibrate_camera_profile(
         video,
         name,
@@ -211,6 +265,8 @@ def verify_calibration(
         help="Camera profile name (bundled or `./camera_profiles/<name>.json` in CWD).",
     ),
 ) -> None:
+    from deepreefmap.camera.colmap_calibration import verify_camera_profile
+
     report = verify_camera_profile(name)
     typer.echo(json.dumps(report, indent=2))
 
@@ -221,7 +277,7 @@ def render_video(
     transect_length_m: Optional[float] = typer.Option(
         None,
         "--transect-length-m",
-        help="Transect length in meters; enables ortho crop (matches viser). Falls back to manifest.",
+        help="Transect length in meters; enables ortho crop. Falls back to manifest.",
     ),
     crop_width_m: Optional[float] = typer.Option(
         None,
@@ -234,7 +290,9 @@ def render_video(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    render_offline_video_placeholder(
+    from deepreefmap.postproc.reports import render_offline_video
+
+    render_offline_video(
         run_dir,
         transect_length_m=transect_length_m,
         crop_width_m=crop_width_m,
@@ -261,6 +319,11 @@ def view_run(
     ),
     ortho_bins: int = typer.Option(1000, help="Bins used for the interactive ortho preview."),
 ) -> None:
+    from deepreefmap.pipeline.run_loader import load_cached_run
+    from deepreefmap.pointcloud.filters import PointFilterConfig
+    from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
+    from deepreefmap.visualization.viser_app import ViserLiveApp
+
     try:
         loaded = load_cached_run(
             run_dir,
@@ -290,7 +353,7 @@ def view_run(
             geometry_viewer.set_stage("mapping", "completed", "Loaded mapping_outputs.npz")
             geometry_viewer.set_stage("outputs", "completed", f"Loaded {int(loaded.geometry_xyz.shape[0])} geometry points")
             geometry_viewer.set_data(
-                frame_batch=loaded.frame_batch,
+                frame_batch=loaded.frame_batch,  # type: ignore[arg-type]  # LazyFrameBatch is interface-compatible
                 mapping_result=loaded.mapping_result,
                 geometry_xyz=loaded.geometry_xyz,
                 geometry_rgb=loaded.geometry_rgb,
@@ -330,7 +393,7 @@ def view_run(
         viewer.set_stage("mapping", "completed", "Loaded mapping_outputs.npz")
         viewer.set_stage("outputs", "completed", f"Loaded {len(loaded.reference_cloud)} semantic points")
         viewer.set_data(
-            frame_batch=loaded.frame_batch,
+            frame_batch=loaded.frame_batch,  # type: ignore[arg-type]  # LazyFrameBatch is interface-compatible
             mapping_result=loaded.mapping_result,
             reference_cloud=loaded.reference_cloud,
             classes_config=loaded.classes_config,
@@ -353,3 +416,52 @@ def view_run(
         viewer.wait_forever()
     finally:
         viewer.close()
+
+
+@app.command("gen-scene")
+def gen_scene(
+    run_dir: Path = typer.Argument(..., exists=True, file_okay=False, help="Run output directory."),
+    force: bool = typer.Option(False, "--force", help="Regenerate even if the scene file already exists."),
+) -> None:
+    """Generate a quick-load scene file from an existing run directory."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    from deepreefmap.io.scene_file import find_scene_file, save_scene_file, scene_file_name
+    from deepreefmap.pipeline.run_loader import load_cached_run
+    from deepreefmap.pointcloud.final_cloud_index import build_final_cloud_index
+
+    existing = find_scene_file(run_dir)
+    if existing is not None and not force:
+        typer.echo(f"Scene file already exists: {existing}")
+        typer.echo("Use --force to regenerate.")
+        raise typer.Exit(code=0)
+
+    typer.echo(f"Loading run from {run_dir}…")
+    result = load_cached_run(run_dir)
+
+    if result.mode == "geometry_only":
+        typer.echo("Geometry-only runs do not produce scene files.")
+        raise typer.Exit(code=0)
+
+    typer.echo("Building cloud index…")
+    frame_order = [int(f.frame_index) for f in result.frame_batch.frames]
+    fci = build_final_cloud_index(
+        result.reference_cloud, frame_order, result.classes_config.id_to_color,
+    )
+
+    sfn = scene_file_name(result.manifest, run_dir)
+    scene_path = run_dir / sfn
+    typer.echo(f"Saving scene file as {sfn}…")
+    save_scene_file(
+        scene_path,
+        manifest=result.manifest,
+        classes_config=result.classes_config,
+        mapping_result=result.mapping_result,
+        frame_batch=result.frame_batch,  # type: ignore[arg-type]  # LazyFrameBatch is interface-compatible but not a FrameBatch subclass
+        final_cloud_index=fci,
+        run_dir=run_dir,
+    )
+    typer.echo(f"Done: {scene_path}")
