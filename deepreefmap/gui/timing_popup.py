@@ -77,21 +77,35 @@ class TimingPopup(QWidget):
     ) -> None:
         cells = []
         elapsed_total = 0.0
+        # Only the running row carries a remainder. Reserve its column when one
+        # exists so the ticking figure sits in fixed-width space, and drop the
+        # column entirely when no row has a remainder so it takes no width.
+        any_remaining = any(
+            row.state == "running" and row.remaining is not None for row in rows
+        )
         for row in rows:
             colour = _STATE_COLOUR.get(row.state, TEXT_MUTED)
-            note = row.state
+            remaining_text = ""
             if row.state in ("done", "running"):
                 elapsed_total += row.seconds
                 time_text = format_duration(row.seconds)
                 # The running stage's remainder is measured, so show it always.
                 if row.state == "running" and row.remaining is not None:
-                    note = f"running · ~{format_duration(row.remaining)} left"
+                    remaining_text = f"· ~{format_duration(row.remaining)} left"
             elif has_history:
                 time_text = f"~{format_duration(row.seconds)}" if row.seconds > 0 else "—"
             else:
                 # First run: the pending "estimates" are not yet trustworthy, so
                 # show the stages without inventing times for them.
                 time_text = ""
+            remaining_cell = (
+                # Fixed-width monospace so the remainder never reflows the popup
+                # as it ticks from ~59s to ~1m 03s to ~3m 16s left.
+                f"<td width='118' style='color:{colour};padding-left:8px;"
+                f"font-family:monospace'>{remaining_text}</td>"
+                if any_remaining
+                else ""
+            )
             cells.append(
                 f"<tr><td style='padding-right:12px'>{row.label}</td>"
                 f"<td style='padding-right:12px;font-family:monospace'>{_bar(row.frac, colour)}</td>"
@@ -99,7 +113,8 @@ class TimingPopup(QWidget):
                 # it ticks from 9s to 14s to 2m 03s and the popup stops jumping.
                 f"<td align='right' width='64' "
                 f"style='padding-right:14px;font-family:monospace'>{time_text}</td>"
-                f"<td style='color:{colour}'>{note}</td></tr>"
+                f"<td style='color:{colour}'>{row.state}</td>"
+                f"{remaining_cell}</tr>"
             )
         if has_history:
             tail = (
