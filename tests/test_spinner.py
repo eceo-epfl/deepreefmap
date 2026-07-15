@@ -63,7 +63,8 @@ def _make_window(qapp):
 def _plain(html: str) -> str:
     import re
 
-    return re.sub("<[^>]+>", "", html).strip()
+    # The status label is two lines joined by <br>; render that as a space.
+    return re.sub("<[^>]+>", "", re.sub(r"<br\s*/?>", " ", html)).strip()
 
 
 def test_status_ticker_appends_elapsed_and_keeps_base(qapp, monkeypatch):
@@ -76,12 +77,12 @@ def test_status_ticker_appends_elapsed_and_keeps_base(qapp, monkeypatch):
     monkeypatch.setattr(progress_mod.time, "monotonic", lambda: clock[0])
 
     window._apply_progress("mapping", "Mapping", current=3, total=10)
-    assert _plain(window._status_label.text()) == "Mapping · Mapping… 3/10 · 0s"
+    assert _plain(window._status_label.text()) == "Mapping · Mapping 3/10 · 0s"
 
     clock[0] += 74.0
     window._render_status()
     text = _plain(window._status_label.text())
-    assert "Mapping… 3/10" in text
+    assert "Mapping 3/10" in text
     assert text.endswith("1m 14s")
 
 
@@ -105,10 +106,23 @@ def test_status_ticker_resets_per_stage(qapp, monkeypatch):
 def test_update_progress_zero_total_is_indeterminate(qapp):
     window = _make_window(qapp)
     window._begin_progress(window._recon_model)
+    # Non-mapping stages keep the barber-pole for a zero (indeterminate) total.
+    window._on_viewer_status(
+        "update_progress", stage="outputs", current=0, total=0, message="Generating outputs"
+    )
+    assert window._progress_bar.maximum() == 0
+    assert "Generating outputs" in window._status_label.text()
+
+
+def test_mapping_zero_total_holds_the_continuous_bar(qapp):
+    window = _make_window(qapp)
+    window._begin_progress(window._recon_model)
+    # Mapping is one continuous 0-100 bar, so its indeterminate sub-steps (prep,
+    # GPU transfer, resume save) show a held determinate bar, not a reset.
     window._on_viewer_status(
         "update_progress", stage="mapping", current=0, total=0, message="LoGeR inference"
     )
-    assert window._progress_bar.maximum() == 0
+    assert window._progress_bar.maximum() == 100
     assert "LoGeR inference" in window._status_label.text()
 
 

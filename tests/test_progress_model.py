@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from deepreefmap.gui.progress import (
+    _MAPPING_SUBPHASE_SPANS,
     _RECON_PHASES,
     _STAGE_MESSAGE_TO_PHASE,
     ProgressModel,
@@ -38,3 +41,46 @@ def test_total_bar_keeps_moving_through_align_and_save():
     assert done_save >= after_align
     after_cloud = model.update("outputs", 1, 10)
     assert after_cloud >= done_save
+
+
+def test_mapping_subphase_spans_tile_zero_to_one_in_order():
+    spans = _MAPPING_SUBPHASE_SPANS
+    assert spans["mapping"][0] == 0.0
+    assert spans["mapping_save"][1] == pytest.approx(1.0)
+    # Contiguous and non-overlapping, inference first.
+    assert spans["mapping"][1] == spans["mapping_align"][0]
+    assert spans["mapping_align"][1] == spans["mapping_save"][0]
+    # Inference carries the largest slice (weight 15 vs 8 vs 2).
+    width = {k: hi - lo for k, (lo, hi) in spans.items()}
+    assert width["mapping"] > width["mapping_align"] > width["mapping_save"]
+
+
+def _combined_detail_pct(phase_key: str, current: int, total: int, prev: float) -> float:
+    # Mirror of the mixin's detail-bar formula: one monotonic 0-100 fill sliced by
+    # the span weights, held on indeterminate (total<=0) sub-steps.
+    lo, hi = _MAPPING_SUBPHASE_SPANS[phase_key]
+    within = min(1.0, current / total) if total > 0 else 0.0
+    return max(prev, 100.0 * (lo + (hi - lo) * within))
+
+
+def test_mapping_detail_bar_never_regresses_across_substeps():
+    # A real run's reported sequence: inference windows, the indeterminate GPU
+    # transfer, the re-anchor point-blocks, the indeterminate save, then complete.
+    reports = [
+        ("mapping", 0, 8),
+        ("mapping", 4, 8),
+        ("mapping", 8, 8),
+        ("mapping", 0, 0),          # GPU transfer, indeterminate
+        ("mapping_align", 80, 160),
+        ("mapping_align", 160, 160),
+        ("mapping_save", 0, 0),     # resume save, indeterminate
+        ("mapping_save", 8, 8),     # mapping complete
+    ]
+    prev = 0.0
+    values = []
+    for phase, cur, tot in reports:
+        prev = _combined_detail_pct(phase, cur, tot, prev)
+        values.append(prev)
+    assert values == sorted(values)      # never snaps back
+    assert values[3] == values[2]        # transfer holds at inference's end
+    assert round(values[-1]) == 100      # complete fills the whole mapping bar

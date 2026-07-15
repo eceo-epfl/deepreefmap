@@ -94,6 +94,28 @@ _RECON_PHASES: list[tuple[str, float]] = [
     ("scene_save", 8.0),
 ]
 
+# Mapping is reported as three phases (window inference, pose re-anchor, resume
+# save) but must read as one continuous 0-100 "Mapping" detail bar, not three
+# resets. Each sub-phase drives a slice of the bar sized by the same weights the
+# total bar uses, so the fill flows straight through inference -> align -> save.
+_MAPPING_PHASE_KEYS: tuple[str, ...] = ("mapping", "mapping_align", "mapping_save")
+
+
+def _mapping_subphase_spans() -> dict[str, tuple[float, float]]:
+    weights = dict(_RECON_PHASES)
+    total = sum(weights[k] for k in _MAPPING_PHASE_KEYS) or 1.0
+    spans: dict[str, tuple[float, float]] = {}
+    acc = 0.0
+    for key in _MAPPING_PHASE_KEYS:
+        share = weights[key] / total
+        spans[key] = (acc, acc + share)
+        acc += share
+    return spans
+
+
+_MAPPING_SUBPHASE_SPANS = _mapping_subphase_spans()
+
+
 # cloud_concat / cloud_replace / cloud_voxel are the silent post-frame steps
 # inside build_semantic_reference_cloud (concatenate, replacement-radius
 # lexsort, optional voxel reduce). On a 3.5GB dataset cloud_replace alone is
@@ -228,6 +250,7 @@ class ProgressBarsMixin(MixinBase):
         self._status_count_text = ""
         self._status_phase_key = None
         self._status_phase_started = time.monotonic()
+        self._mapping_progress = 0.0
         # ETA only applies to a reconstruction; a cached-run load has its own model.
         self._eta = self._new_run_estimator() if model is self._recon_model else None
         self._ensure_status_tick_timer().start()
@@ -272,6 +295,7 @@ class ProgressBarsMixin(MixinBase):
         self._status_base_text = ""
         self._status_count_text = ""
         self._status_phase_key = None
+        self._mapping_progress = 0.0
 
     def _render_status(self) -> None:
         """Recompose the status label: coloured stage + label, then a metrics line.
@@ -372,7 +396,23 @@ class ProgressBarsMixin(MixinBase):
         # The bars carry no text (the stage name is coloured in the status line);
         # they only show fill. Indeterminate for total <= 0. The frame count is
         # kept out of the base text so it can sit on the metrics line.
-        if total > 1:
+        span = _MAPPING_SUBPHASE_SPANS.get(phase_key)
+        if span is not None:
+            # One monotonic 0-100 fill across all of mapping. Indeterminate
+            # sub-steps (prep, GPU transfer, the resume save) report total<=0 and
+            # hold the bar at their slice start rather than snapping it to zero.
+            lo, hi = span
+            within = min(1.0, current / total) if total > 0 else 0.0
+            combined = 100.0 * (lo + (hi - lo) * within)
+            self._mapping_progress = max(getattr(self, "_mapping_progress", 0.0), combined)
+            if self._progress_bar.minimum() != 0 or self._progress_bar.maximum() != 100:
+                self._progress_bar.setRange(0, 100)
+            self._progress_bar.setValue(int(round(self._mapping_progress)))
+            self._status_base_text = label
+            # Only the inference windows count meaningfully; align/save report raw
+            # point totals that would read as noise.
+            self._status_count_text = f"{current}/{total}" if phase_key == "mapping" and total > 1 else ""
+        elif total > 1:
             if self._progress_bar.minimum() != 0 or self._progress_bar.maximum() != total:
                 self._progress_bar.setRange(0, total)
             self._progress_bar.setValue(current)
