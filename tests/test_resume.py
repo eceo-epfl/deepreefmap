@@ -219,3 +219,50 @@ def test_resumed_cloud_is_byte_identical_to_fresh(tmp_path: Path) -> None:
     assert np.array_equal(a.rgb, b.rgb)
     assert np.array_equal(a.labels, b.labels)
     assert np.array_equal(a.confidence, b.confidence)
+
+
+def test_freeing_local_points_after_refinement_is_cloud_neutral(tmp_path: Path) -> None:
+    """The orchestrator frees local_points once refinement has read it.
+
+    This is the exact in-memory drop the orchestrator performs (dataclasses.replace
+    on a frozen result); it must leave the semantic cloud byte-identical, since the
+    cloud builder only ever reads world_points.
+    """
+    import dataclasses
+
+    from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
+    from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_reference_cloud
+
+    rng = np.random.default_rng(11)
+    h, w, n = 4, 6, 3
+    frames = tuple(
+        PreparedFrame(
+            frame_index=i,
+            image_rgb=rng.integers(0, 256, size=(h, w, 3), dtype=np.uint8),
+            labels=np.ones((h, w), dtype=np.int32),
+            keep_mask=np.full((h, w), 255, dtype=np.uint8),
+        )
+        for i in range(n)
+    )
+    batch = FrameBatch(frames=frames, intrinsics=np.eye(3, dtype=np.float32), image_size=(w, h), clip_counts=(n,))
+    with_local = MappingSequenceResult(
+        frame_indices=np.arange(n, dtype=np.int32),
+        depth_maps=rng.random((n, h, w), dtype=np.float64).astype(np.float32) + 0.5,
+        poses_w_c=np.tile(np.eye(4, dtype=np.float32), (n, 1, 1)),
+        intrinsics=np.eye(3, dtype=np.float32),
+        world_points=(rng.random((n, h, w, 3), dtype=np.float64).astype(np.float32) * 0.05),
+        local_points=rng.random((n, h, w, 3), dtype=np.float64).astype(np.float32),
+        confidence=np.ones((n, h, w), dtype=np.float32),
+        scale_type="relative",
+    )
+    freed = dataclasses.replace(with_local, local_points=None)
+    assert freed.local_points is None
+
+    cfg = PointFilterConfig(
+        voxel_size=None, replacement_radius_factor=1.0, confidence_percentile=None, min_confidence=0.0
+    )
+    a = build_semantic_reference_cloud(batch, with_local, _reef_classes(), cfg)
+    b = build_semantic_reference_cloud(batch, freed, _reef_classes(), cfg)
+    assert np.array_equal(a.xyz, b.xyz)
+    assert np.array_equal(a.rgb, b.rgb)
+    assert np.array_equal(a.labels, b.labels)

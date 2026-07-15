@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import gc
 import logging
 import shutil
@@ -20,6 +21,7 @@ from deepreefmap.config.classes import ClassConfig, load_classes
 from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_semantic_cloud
 from deepreefmap.io.video import _first_sample_time, iter_video_frames, selected_local_indices_for_clip
 from deepreefmap.mapping.registry import create_mapping_backend
+from deepreefmap.perf_sampler import ResourceSampler, peaks_from_marks
 from deepreefmap.pipeline import resume as resume_mod
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, PreparedFrame
 from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_reference_cloud
@@ -132,6 +134,15 @@ def run_reconstruction(
     # Wall-clock marks at each coarse stage boundary, turned into per-stage
     # durations for the manifest (and thence the machine's timing profile).
     stage_marks: dict[str, float] = {"start": time.monotonic()}
+
+    # Snapshot the machine once and sample memory throughout, so the recorded
+    # profile carries this run's real per-stage peak RAM/VRAM (fed back into the
+    # pre-run memory check) alongside its timings.
+    from deepreefmap.system_probe import probe_system
+
+    system_profile = probe_system(output_dir).to_dict()
+    resource_sampler = ResourceSampler()
+    resource_sampler.start()
 
     from deepreefmap.device import resolve_device
 
@@ -376,6 +387,14 @@ def run_reconstruction(
                 processing_image_size=processing_image_size,
                 refine_intrinsics_from_mapper=refine_intrinsics_from_mapper,
             )
+            # Intrinsics refinement above is the only reader of local_points, so
+            # free it now (a per-pixel HxWx3 float32, ~12.7 MB/frame: ~14 GB at
+            # 3fps, ~24 GB at 5fps) before the cloud and save stages pile on. This
+            # is the difference between 5fps fitting or hitting the OOM killer.
+            from deepreefmap.device import release_device_memory
+
+            mapping_result = dataclasses.replace(mapping_result, local_points=None)
+            release_device_memory(device)
             # This save sits on the interactive critical path before the viewer
             # shows results, so it is uncompressed: zlib on the multi-GB point
             # arrays cost minutes, while a raw write is seconds. local_points is
@@ -490,6 +509,8 @@ def run_reconstruction(
                     },
                 },
                 stage_durations=_durations_from_marks(stage_marks),
+                stage_peaks=peaks_from_marks(resource_sampler.samples, _STAGE_SPANS, stage_marks),
+                system_profile=system_profile,
             ))
             if viewer is not None:
                 viewer.set_data(
@@ -650,6 +671,8 @@ def run_reconstruction(
                 },
             },
             stage_durations=_durations_from_marks(stage_marks),
+            stage_peaks=peaks_from_marks(resource_sampler.samples, _STAGE_SPANS, stage_marks),
+            system_profile=system_profile,
         )
         save_run_manifest(output_dir / "run_manifest.json", manifest_dict)
 
@@ -685,6 +708,7 @@ def run_reconstruction(
         stage_marks["scene_end"] = time.monotonic()
         manifest_dict["output_files"] = list(output_files)
         manifest_dict["stage_durations"] = _durations_from_marks(stage_marks)
+        manifest_dict["stage_peaks"] = peaks_from_marks(resource_sampler.samples, _STAGE_SPANS, stage_marks)
         save_run_manifest(output_dir / "run_manifest.json", manifest_dict)
 
         if viewer is not None:
@@ -698,6 +722,8 @@ def run_reconstruction(
         if viewer is not None:
             viewer.fail_run(active_stage, str(exc))
         raise
+    finally:
+        resource_sampler.stop()
 
 
 def _prepare_frames(
@@ -1167,6 +1193,8 @@ def _build_manifest(
     input_videos: list[str] | None = None,
     run_params: dict[str, object] | None = None,
     stage_durations: dict[str, float] | None = None,
+    stage_peaks: dict[str, dict[str, int | None]] | None = None,
+    system_profile: dict[str, object] | None = None,
 ) -> dict[str, object]:
     manifest: dict[str, object] = {
         "schema_version": 3,
@@ -1191,6 +1219,8 @@ def _build_manifest(
         "depth_maps": "mapping_outputs.npz",
         "mapping_frame_indices": mapping_result.frame_indices.tolist(),
         "stage_durations": stage_durations or {},
+        "stage_peaks": stage_peaks or {},
+        "system_profile": system_profile or {},
     }
     if run_params:
         manifest.update(run_params)
