@@ -31,9 +31,11 @@ logger = logging.getLogger(__name__)
 _POSE_IDENTITY_TOLERANCE = 1e-3
 
 # Re-anchoring transforms every pixel of every frame (~160M points at 1000+
-# frames). Doing it in one shot allocates a ~10GB float64 homogeneous buffer;
-# processing in row blocks keeps peak memory to a few hundred MB. The matmul is
-# row-independent, so the block size never changes the result.
+# frames). Every float64 buffer (input cast, homogeneous rows, matmul result)
+# lives only per block, so peak transient memory stays a few hundred MB instead
+# of two full-size float64 copies (~8GB). The matmul is row-independent and each
+# element takes the same float64 path and final downcast, so the block size
+# never changes the result bitwise.
 _REANCHOR_POINT_BLOCK = 8_000_000
 
 
@@ -214,6 +216,7 @@ class LoGeRBackend(MappingBackend):
                 time.monotonic() - t_resize,
             )
             batch = np.stack(resized, axis=0).astype(np.float16) / np.float16(255.0)
+            del resized  # only needed to build the batch; frees ~3 B/px/frame during inference
             batch_t = torch.from_numpy(batch).permute(0, 3, 1, 2).unsqueeze(0)
             batch_t = batch_t.to(dtype=torch.float32, device=self._device)
             del batch
@@ -369,17 +372,21 @@ def _reanchor_to_first_camera(
     if world_points is None:
         return rebased_poses, None
 
-    flat = world_points.astype(np.float64).reshape(-1, 3)
+    # The output is allocated at the input dtype and each block is cast to
+    # float64 only for its own matmul, then downcast on assignment. Identical
+    # values to a whole-array float64 pass with one final cast, without ever
+    # holding two full-size float64 copies.
+    flat = world_points.reshape(-1, 3)
     transform = reference_inv.T
     total = flat.shape[0]
-    out = np.empty((total, 3), dtype=np.float64)
+    out = np.empty((total, 3), dtype=world_points.dtype)
     for start in range(0, total, _REANCHOR_POINT_BLOCK):
-        block = flat[start : start + _REANCHOR_POINT_BLOCK]
+        block = flat[start : start + _REANCHOR_POINT_BLOCK].astype(np.float64)
         homog = np.concatenate([block, np.ones((block.shape[0], 1), dtype=np.float64)], axis=1)
-        out[start : start + _REANCHOR_POINT_BLOCK] = (homog @ transform)[:, :3]
+        out[start : start + _REANCHOR_POINT_BLOCK] = ((homog @ transform)[:, :3]).astype(world_points.dtype)
         if progress_callback is not None:
             progress_callback(min(start + _REANCHOR_POINT_BLOCK, total), total, "Aligning poses to world frame")
-    rebased_world = out.reshape(world_points.shape).astype(world_points.dtype)
+    rebased_world = out.reshape(world_points.shape)
     return rebased_poses, rebased_world
 
 
