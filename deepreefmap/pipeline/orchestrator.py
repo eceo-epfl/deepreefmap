@@ -376,9 +376,13 @@ def run_reconstruction(
                 processing_image_size=processing_image_size,
                 refine_intrinsics_from_mapper=refine_intrinsics_from_mapper,
             )
+            # Compressing the depth maps and per-pixel 3D point arrays (~1GB for a
+            # few hundred frames) to mapping_outputs.npz for resume takes tens of
+            # seconds. Report it as its own indeterminate step so the bar is not
+            # pinned at "Mapping complete" with nothing explaining the wait.
             if viewer is not None:
-                viewer.update_progress("mapping", current=frame_count, total=frame_count, message="Mapping complete")
-                viewer.set_stage("mapping", "completed", "3D mapping complete")
+                viewer.update_progress("mapping", current=0, total=0, message="Saving depth + points for resume")
+            t_save = time.monotonic()
             np.savez_compressed(
                 output_dir / "mapping_outputs.npz",
                 frame_indices=mapping_result.frame_indices,
@@ -391,7 +395,11 @@ def run_reconstruction(
                 local_points=np.asarray([]) if mapping_result.local_points is None else mapping_result.local_points,
                 scale_type=np.asarray(mapping_result.scale_type),
             )
+            logger.info("Saved mapping_outputs.npz in %.1fs", time.monotonic() - t_save)
             resume_mod.write_sidecar(output_dir, resume_mod.STAGE_MAPPING, map_key)
+            if viewer is not None:
+                viewer.update_progress("mapping", current=frame_count, total=frame_count, message="Mapping complete")
+                viewer.set_stage("mapping", "completed", "3D mapping complete")
         elif refine_intrinsics_from_mapper:
             logger.info(
                 "Intrinsics refinement flag is enabled with cached mapping output."

@@ -257,9 +257,10 @@ class LoGeRBackend(MappingBackend):
                 restore_decode()
             logger.info("LoGeR inference finished in %.1fs", time.monotonic() - t_infer)
             if progress_callback is not None:
-                # Windows merge and pose alignment still follow, so report an
-                # indeterminate tail rather than claiming the stage is complete.
-                progress_callback(0, 0, "Merging windows")
+                # The per-pixel point and pose tensors still have to come back
+                # from the GPU (hundreds of MB), so report the transfer rather
+                # than claiming the stage is complete at the last window.
+                progress_callback(0, 0, "Transferring depth + points from GPU")
             if cancel_event is not None and cancel_event.is_set():
                 from deepreefmap.pipeline.orchestrator import ReconstructionCancelled
                 raise ReconstructionCancelled("Cancelled after LoGeR inference")
@@ -287,6 +288,10 @@ class LoGeRBackend(MappingBackend):
                 )
             logger.info("LoGeR outputs validated: %d/%d frames have depth and poses", n_out, n_in)
 
+            # Re-anchoring left-multiplies every point by inv(pose[0]) in float64,
+            # a pass over every pixel of every frame, so flag it as its own step.
+            if progress_callback is not None:
+                progress_callback(0, 0, "Aligning poses to world frame")
             poses, world_points = _reanchor_to_first_camera(poses, world_points)
             _assert_pose_convention(poses)
 

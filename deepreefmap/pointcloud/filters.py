@@ -37,6 +37,29 @@ def _pack_voxel_key(ix: np.ndarray, iy: np.ndarray, iz: np.ndarray) -> np.ndarra
     return out
 
 
+def _pack_voxel_keys_int64(keys: np.ndarray) -> np.ndarray | None:
+    """Pack an ``(N, 3)`` int voxel-index array into one int64 per row.
+
+    Returns ``None`` if any axis falls outside the 21-bit-per-axis range, so
+    callers fall back to a per-axis lexsort. With a typical replacement radius
+    (a few mm) the range spans thousands of metres, so overflow never happens on
+    real reef scans — the guard just keeps the fast path safe.
+    """
+    xa = keys[:, 0].astype(np.int64, copy=False) + _BIAS
+    ya = keys[:, 1].astype(np.int64, copy=False) + _BIAS
+    za = keys[:, 2].astype(np.int64, copy=False) + _BIAS
+    in_range = (
+        (xa >= 0) & (xa <= _MASK) & (ya >= 0) & (ya <= _MASK) & (za >= 0) & (za <= _MASK)
+    )
+    if not bool(np.all(in_range)):
+        return None
+    return (
+        xa.astype(np.uint64)
+        | (ya.astype(np.uint64) << np.uint64(21))
+        | (za.astype(np.uint64) << np.uint64(42))
+    ).astype(np.int64)
+
+
 class _GrowableArray2D:
     def __init__(self, cols: int, dtype: np.typing.DTypeLike) -> None:
         self.cols = int(cols)
@@ -394,10 +417,22 @@ def nearest_camera_replace_semantic_cloud(
     keys = np.floor(cloud.xyz / float(radius)).astype(np.int64)
     distance = np.asarray(cloud.distance_to_camera, dtype=np.float32).reshape(-1)
     _emit("sort")
-    order = np.lexsort((np.arange(len(cloud), dtype=np.int64), distance, keys[:, 2], keys[:, 1], keys[:, 0]))
+    # Grouping by voxel only needs a collision-free key, not the canonical
+    # per-axis order. Packing the three axes into one int64 turns the 5-key
+    # lexsort (arange + distance + 3 axes) into a 2-key sort, roughly halving
+    # both time and peak memory on multi-million-point clouds. lexsort is
+    # already stable, so equal (voxel, distance) pairs keep original order —
+    # the explicit arange tie-break key the old path carried was redundant.
+    packed = _pack_voxel_keys_int64(keys)
+    if packed is not None:
+        order = np.lexsort((distance, packed))
+        packed_sorted = packed[order]
+        selected = order[np.concatenate([[True], packed_sorted[1:] != packed_sorted[:-1]])]
+    else:
+        order = np.lexsort((distance, keys[:, 2], keys[:, 1], keys[:, 0]))
+        keys_sorted = keys[order]
+        selected = order[np.concatenate([[True], np.any(np.diff(keys_sorted, axis=0) != 0, axis=1)])]
     _emit("select")
-    keys_sorted = keys[order]
-    selected = order[np.concatenate([[True], np.any(np.diff(keys_sorted, axis=0) != 0, axis=1)])]
     return SemanticPointCloud(
         xyz=cloud.xyz[selected],
         rgb=cloud.rgb[selected],
