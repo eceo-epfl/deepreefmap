@@ -8,6 +8,7 @@ the numbers the user sees match the numbers the guard decides on.
 from __future__ import annotations
 
 from deepreefmap.gui._window_protocol import MixinBase
+from deepreefmap.gui.theme import TEXT_MUTED
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -19,6 +20,15 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+_BAR_CELLS = 12  # width of the crash-risk fill bar, in block glyphs
+
+
+def _risk_bar(percent: float) -> str:
+    """A compact filled bar for a peak-RAM percentage, capped at full."""
+    filled = max(0, min(_BAR_CELLS, round(_BAR_CELLS * percent / 100.0)))
+    return "&#9608;" * filled + "&#9617;" * (_BAR_CELLS - filled)
 
 
 class SystemPanelMixin(MixinBase):
@@ -59,6 +69,15 @@ class SystemPanelMixin(MixinBase):
         self._benchmark_output.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self._benchmark_output)
 
+        # Recorded-run summary: what past runs actually cost and how close to a
+        # crash each came. Populated from run_timings.json on entering the tab.
+        self._recorded_runs_label = QLabel("")
+        self._recorded_runs_label.setWordWrap(True)
+        self._recorded_runs_label.setTextFormat(Qt.TextFormat.RichText)
+        self._recorded_runs_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self._recorded_runs_label)
+        self._refresh_recorded_runs()
+
         # The updates section (version, install, desktop entry) is appended to
         # this same layout by _build_form_panel; give it a labelled break. No
         # trailing stretch here — the updates block ends with one.
@@ -79,9 +98,73 @@ class SystemPanelMixin(MixinBase):
     def _on_sidebar_tab_changed(self, index: int) -> None:
         if index == self._TAB_SYSTEM:
             self._refresh_system_gauges()
+            self._refresh_recorded_runs()
             self._sys_timer.start()
         else:
             self._sys_timer.stop()
+
+    def _refresh_recorded_runs(self) -> None:
+        """Render the per-run peak-memory and crash-risk summary from history."""
+        from deepreefmap.gui.run_history import summarise_recorded_runs
+        from deepreefmap.memory_estimate import memory_risk
+        from deepreefmap.system_probe import format_bytes
+
+        try:
+            runs = summarise_recorded_runs()
+        except Exception:
+            runs = []
+        if not runs:
+            self._recorded_runs_label.setText(
+                "<b>Recorded runs on this machine</b><br>"
+                f"<span style='color:{TEXT_MUTED}'>None yet. After a run completes, its measured "
+                "peak memory and crash-risk appear here and feed the pre-run check.</span>"
+            )
+            return
+
+        blocks = []
+        for run in runs:
+            params = run["params"]
+            meta = [
+                f"{params.get('fps', '?')} fps",
+                f"{params.get('processing_width', '?')}&times;{params.get('processing_height', '?')}",
+                str(params.get("mapping_backend", "?")),
+            ]
+            if run["frames"]:
+                meta.append(f"{run['frames']} frames")
+            if run["points"]:
+                meta.append(f"{run['points'] / 1e6:.1f}M pts")
+            header = f"<b>{' &middot; '.join(meta)}</b>"
+
+            ram, total = run["peak_ram_bytes"], run["total_ram_bytes"]
+            if ram and total:
+                risk = memory_risk(ram, total, run["total_swap_bytes"])
+                ram_line = (
+                    f"<span style='color:{risk.colour}'>"
+                    f"<span style='font-family:monospace'>{_risk_bar(risk.percent)}</span> "
+                    f"{risk.percent:.0f}% &middot; RAM {format_bytes(ram)} / {format_bytes(total)} "
+                    f"&middot; {risk.label}</span>"
+                )
+            elif ram:
+                ram_line = f"RAM {format_bytes(ram)}"
+            else:
+                ram_line = ""
+            vram, gpu_vram = run["peak_vram_bytes"], run["gpu_total_vram_bytes"]
+            vram_line = (
+                f"<span style='color:{TEXT_MUTED}'>VRAM {format_bytes(vram)}"
+                f"{f' / {format_bytes(gpu_vram)}' if gpu_vram else ''}</span>"
+                if vram
+                else ""
+            )
+            body = "<br>".join(line for line in (ram_line, vram_line) if line)
+            blocks.append(
+                f"<div style='margin-top:8px'>{header}<br>{body}</div>"
+            )
+        self._recorded_runs_label.setText(
+            "<b>Recorded runs on this machine</b><br>"
+            f"<span style='color:{TEXT_MUTED}'>Peak RAM as a share of total memory is the crash-risk "
+            "signal: past ~90% a run rides the edge, at 100% it spills into swap.</span>"
+            f"{''.join(blocks)}"
+        )
 
     def _refresh_system_gauges(self) -> None:
         from deepreefmap.system_probe import format_bytes, sample_utilisation

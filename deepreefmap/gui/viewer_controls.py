@@ -1093,6 +1093,10 @@ class ViewerControlsMixin(MixinBase):
                         self._active_run_manifest = None
                 self._settings.setValue("last_run_dir", str(self._active_run_dir))
                 self._refresh_past_runs_combo()
+                # The run just recorded its measured peaks; re-grade the current
+                # form so the next run's warning uses them instead of the analytic
+                # estimate, without waiting for the user to touch a control.
+                self._update_memory_profile_warning()
             close_run_log_file(self._run_log_file_handler)
             self._run_log_file_handler = None
         elif event == "fail_run":

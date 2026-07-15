@@ -20,8 +20,13 @@ from dataclasses import dataclass
 from deepreefmap.system_probe import GPU_CUDA, GPU_MPS, SystemProfile, format_bytes
 
 # Analytic per-frame model, derived from the arrays the pipeline actually holds
-# (traced through orchestrator/loger_backend/filters, validated against real
-# runs: 1134 frames peaked ~17 GB and fit a 31 GB box, 1890 frames did not).
+# (traced through orchestrator/loger_backend/filters). It estimates the run's own
+# RAM FOOTPRINT (allocations on top of whatever is already resident), which is why
+# preflight_check grades it against FREE RAM. A measured peak from perf_sampler is
+# different in kind: an absolute system-wide high-water mark graded against TOTAL
+# RAM. On the 31 GB reference box a 1134-frame 3fps run footprints ~19 GB and rode
+# to a 30 GB / 97% system peak; the analytic footprint matches, and once measured
+# the absolute peak supersedes it.
 #
 # Two independent per-frame terms:
 # - Prepared frames stay in RAM for the whole run at the PROCESSING resolution:
@@ -120,47 +125,59 @@ def max_frames_for_ram(available_bytes: int, width: int, height: int, *, margin_
 def preflight_check(profile: SystemProfile, est: MemoryEstimate) -> Verdict:
     """Grade a run against the machine: ok (silent), warn, block (likely crash).
 
-    Swap is part of the budget: a run that exceeds free RAM but fits in RAM plus
-    free swap will not be OOM-killed, it will thrash into swap and run slowly, so
-    that is a warn, not a block. Only exceeding RAM plus swap is a block. On
-    Apple's unified memory the GPU draws from RAM, so the VRAM need is added to
+    A **measured** peak is an absolute system-wide high-water mark (it already
+    includes the OS, other apps and this app's own baseline), so it is graded
+    against total RAM. An **analytic** estimate is only the run's own footprint on
+    top of whatever is already resident, so it is graded against free RAM. Grading
+    a measured peak against free RAM would double-count the baseline and cry wolf.
+
+    Swap is part of the budget: a run that exceeds the RAM budget but fits in that
+    budget plus free swap will not be OOM-killed, it will thrash into swap and run
+    slowly, so that is a warn, not a block. Only exceeding budget plus swap blocks.
+    On Apple's unified memory the GPU draws from RAM, so the VRAM need is added to
     the RAM need. On a discrete CUDA GPU, VRAM is checked separately and can only
     escalate to a warning, since a VRAM OOM is recoverable.
     """
     ram_need = est.ram_bytes
     if profile.gpu.kind == GPU_MPS and est.vram_bytes:
         ram_need += est.vram_bytes
-    available = profile.available_ram_bytes
+    if est.source == "measured":
+        budget = profile.total_ram_bytes
+        budget_word = "total RAM"
+    else:
+        budget = profile.available_ram_bytes
+        budget_word = "free"
     swap = profile.free_swap_bytes
-    headroom = available - ram_need
+    headroom = budget - ram_need
 
     qualifier = " (estimated, no history yet)" if est.source == "analytic" else ""
-    if ram_need > available + swap - _BLOCK_HEADROOM:
+    if ram_need > budget + swap - _BLOCK_HEADROOM:
         level = "block"
         swap_note = f" plus {format_bytes(swap)} swap" if swap else ""
         message = (
-            f"This run needs about {format_bytes(ram_need)} of RAM but only "
-            f"{format_bytes(available)}{swap_note} is free{qualifier}. It will very likely run "
-            f"out of memory and crash. Reduce the fps or the processing resolution before running."
+            f"This run is expected to reach about {format_bytes(ram_need)} of RAM, but the "
+            f"machine has {format_bytes(budget)} {budget_word}{swap_note}{qualifier}. It will "
+            f"very likely run out of memory and crash. Reduce the fps or the processing "
+            f"resolution before running."
         )
     elif headroom < 0:
         # Fits only by spilling into swap: it will complete, but slowly.
         level = "warn"
         message = (
-            f"This run needs about {format_bytes(ram_need)} of RAM, more than the "
-            f"{format_bytes(available)} free{qualifier}. It will spill into swap and run "
+            f"This run is expected to reach about {format_bytes(ram_need)} of RAM, more than the "
+            f"{format_bytes(budget)} {budget_word}{qualifier}. It will spill into swap and run "
             f"very slowly. A lower fps or resolution avoids the slowdown."
         )
     elif headroom < _WARN_HEADROOM:
         level = "warn"
         message = (
-            f"This run needs about {format_bytes(ram_need)} of RAM, leaving only "
+            f"This run is expected to reach about {format_bytes(ram_need)} of RAM, leaving only "
             f"{format_bytes(headroom)} spare{qualifier}. It may run out of memory. "
             f"Consider a lower fps or resolution."
         )
     else:
         level = "ok"
-        message = f"Estimated peak RAM about {format_bytes(ram_need)}, comfortably within free memory."
+        message = f"Estimated peak RAM about {format_bytes(ram_need)}, comfortably within memory."
 
     # Discrete-GPU VRAM: a shortfall is recoverable, so at most warn.
     if profile.gpu.kind == GPU_CUDA and est.vram_bytes and profile.gpu.free_vram_bytes is not None:
@@ -172,4 +189,34 @@ def preflight_check(profile: SystemProfile, est: MemoryEstimate) -> Verdict:
                 f"with an out-of-memory error; a lower resolution or window size helps."
             )
 
-    return Verdict(level, ram_need, available, headroom, message)
+    return Verdict(level, ram_need, budget, headroom, message)
+
+
+@dataclass(frozen=True)
+class Risk:
+    """Crash-risk banding of a run's peak RAM against a machine's total RAM."""
+
+    band: str  # "safe" | "moderate" | "high" | "severe"
+    label: str  # short human phrase
+    percent: float  # peak as a percent of total RAM
+    colour: str  # hex for the UI
+
+
+# Crash-risk bands on peak-RAM-as-a-share-of-total. The metric is the memory
+# high-water mark relative to physical RAM: standard practice for OOM risk, since
+# the kernel starts reclaiming and (on Linux) OOM-killing as usage nears 100%.
+# Below ~75% there is comfortable headroom; 75-90% is a working margin; past ~90%
+# a run is riding the edge (a small overshoot tips it over); at/over 100% it can
+# only proceed by paging into swap, which thrashes, and over RAM+swap it crashes.
+def memory_risk(peak_used_bytes: int, total_ram_bytes: int, total_swap_bytes: int = 0) -> Risk:
+    """Band a measured peak against total RAM, folding swap into the worst case."""
+    pct = 100.0 * peak_used_bytes / total_ram_bytes if total_ram_bytes else 0.0
+    if total_ram_bytes and peak_used_bytes > total_ram_bytes + total_swap_bytes:
+        return Risk("severe", "Exceeds RAM and swap — would crash", pct, "#e05050")
+    if pct >= 100.0:
+        return Risk("severe", "Over RAM — spills into swap", pct, "#e05050")
+    if pct >= 90.0:
+        return Risk("high", "High — ran on the edge of RAM", pct, "#e07030")
+    if pct >= 75.0:
+        return Risk("moderate", "Moderate headroom", pct, "#e0a030")
+    return Risk("safe", "Comfortable headroom", pct, "#4caf7d")

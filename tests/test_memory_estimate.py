@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from deepreefmap.memory_estimate import estimate_peak_bytes, preflight_check
+from deepreefmap.memory_estimate import estimate_peak_bytes, memory_risk, preflight_check
 from deepreefmap.system_probe import GPU_CUDA, GPU_MPS, GPU_NONE, GpuInfo, SystemProfile
 
 _GB = 1024**3
@@ -82,3 +82,28 @@ def test_exceeding_ram_and_swap_blocks():
     est = estimate_peak_bytes(1000, 1376, 768, "loger_star", "seg", recorded=recorded)
     verdict = preflight_check(_profile(avail_gb=30, total_gb=32, swap_gb=4), est)
     assert verdict.level == "block"
+
+
+def test_measured_peak_is_graded_against_total_not_free():
+    # A measured peak is an absolute system-wide high-water mark: it already
+    # includes the resident baseline, so it must be judged against total RAM. The
+    # 20 GB peak fits the 32 GB machine even though only 10 GB is momentarily free.
+    recorded = {"ram_bytes": 20 * _GB, "vram_bytes": None, "frames": 1000}
+    est = estimate_peak_bytes(1000, 1376, 768, "loger_star", "seg", recorded=recorded)
+    assert est.source == "measured"
+    verdict = preflight_check(_profile(avail_gb=10, total_gb=32), est)
+    assert verdict.level == "ok"
+    assert verdict.ram_available_bytes == 32 * _GB  # graded against total, not free
+
+
+def test_memory_risk_bands():
+    total = 32 * _GB
+    assert memory_risk(16 * _GB, total).band == "safe"        # 50%
+    assert memory_risk(25 * _GB, total).band == "moderate"    # 78%
+    assert memory_risk(30 * _GB, total).band == "high"        # 94%, on the edge
+    assert memory_risk(33 * _GB, total).band == "severe"      # over RAM, swaps
+    # Over RAM and swap combined is the crash case.
+    assert memory_risk(40 * _GB, total, total_swap_bytes=4 * _GB).band == "severe"
+    # Fits into RAM plus swap: severe (it thrashes) but a distinct label.
+    over = memory_risk(36 * _GB, total, total_swap_bytes=16 * _GB)
+    assert over.band == "severe" and "swap" in over.label.lower()

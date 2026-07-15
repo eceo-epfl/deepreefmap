@@ -64,14 +64,32 @@ def load_expected_points(key: str, path: Path | None = None) -> int | None:
     return int(statistics.median(points)) if points else None
 
 
+def _strip_fps(key: str) -> str:
+    """Drop the trailing `|Nfps` segment so keys group by resolution, not fps."""
+    return key.rsplit("|", 1)[0] if key.endswith("fps") else key
+
+
 def load_expected_peaks(key: str, path: Path | None = None) -> dict | None:
     """Median measured peak RAM/VRAM (over all stages) and frame count for `key`.
 
     Returned as `{ram_bytes, vram_bytes|None, frames}` so the pre-run memory check
-    can scale a real peak by this run's frame count. None when no run for the key
+    can scale a real peak by this run's frame count. None when no comparable run
     has recorded peaks yet, so the caller falls back to the analytic estimate.
+
+    Peaks are pooled across every recorded fps at this backend/model/resolution,
+    not just the exact key: peak memory tracks the frame count, which the estimate
+    already scales, so a 3fps measurement legitimately informs a 5fps run. (The ETA
+    profile, by contrast, stays keyed per fps because wall-clock time per frame
+    changes once a run starts thrashing swap.)
     """
-    runs = [r for r in _load_all(path or timings_path()).get(key, []) if r.get("stage_peaks") and r.get("frames")]
+    prefix = _strip_fps(key)
+    runs = [
+        r
+        for k, entries in _load_all(path or timings_path()).items()
+        if _strip_fps(k) == prefix
+        for r in entries
+        if r.get("stage_peaks") and r.get("frames")
+    ]
     if not runs:
         return None
     rams: list[int] = []
@@ -94,6 +112,42 @@ def load_expected_peaks(key: str, path: Path | None = None) -> dict | None:
         "vram_bytes": int(statistics.median(vrams)) if vrams else None,
         "frames": int(statistics.median(frames)),
     }
+
+
+def summarise_recorded_runs(path: Path | None = None) -> list[dict]:
+    """One row per recorded run that captured peaks, newest first.
+
+    Each row carries the run's config, frame/point counts, its absolute peak RAM
+    and VRAM, and the machine totals it ran on, so the System tab can show what the
+    run actually cost and how close to a crash it came. Runs without peaks (old
+    entries) are skipped: there is nothing memory-wise to report for them.
+    """
+    rows: list[dict] = []
+    for key, entries in _load_all(path or timings_path()).items():
+        for entry in entries:
+            peaks = entry.get("stage_peaks")
+            if not peaks:
+                continue
+            rams = [s["ram_bytes"] for s in peaks.values() if s.get("ram_bytes")]
+            vrams = [s["vram_bytes"] for s in peaks.values() if s.get("vram_bytes")]
+            profile = entry.get("system_profile") or {}
+            gpu = profile.get("gpu") or {}
+            rows.append(
+                {
+                    "key": key,
+                    "params": entry.get("params") or {},
+                    "frames": entry.get("frames"),
+                    "points": entry.get("points"),
+                    "peak_ram_bytes": max(rams) if rams else None,
+                    "peak_vram_bytes": max(vrams) if vrams else None,
+                    "total_ram_bytes": profile.get("total_ram_bytes"),
+                    "total_swap_bytes": profile.get("total_swap_bytes") or 0,
+                    "gpu_name": gpu.get("name"),
+                    "gpu_total_vram_bytes": gpu.get("total_vram_bytes"),
+                }
+            )
+    rows.reverse()  # newest run first
+    return rows
 
 
 def _load_all(path: Path) -> dict[str, list[dict]]:

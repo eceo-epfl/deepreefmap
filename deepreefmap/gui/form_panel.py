@@ -1363,8 +1363,8 @@ class FormPanelMixin(MixinBase):
         # Inline notice: concise, always-visible indicator in the form.
         notice.setStyleSheet(f"color: {colour}; font-size: 11px; margin: 2px 0 4px 0;")
         notice.setText(
-            f"{headline}: needs ~{format_bytes(verdict.ram_need_bytes)} RAM vs "
-            f"{format_bytes(verdict.ram_available_bytes)} free{swap_txt}. "
+            f"{headline}: peaks ~{format_bytes(verdict.ram_need_bytes)} RAM vs "
+            f"{format_bytes(verdict.ram_available_bytes)} available{swap_txt}. "
             f'<a href="#system" style="color:{colour};">System tab</a>'
         )
         notice.setVisible(True)

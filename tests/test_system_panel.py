@@ -148,3 +148,36 @@ def test_memory_icon_click_opens_system_tab(qapp):
     window._sidebar_tabs.setCurrentIndex(window._TAB_RUN)
     window._memory_warn_icon.clicked.emit()
     assert window._sidebar_tabs.currentIndex() == window._TAB_SYSTEM
+
+
+def test_recorded_runs_summary_shows_peak_and_risk(qapp, monkeypatch):
+    import deepreefmap.gui.run_history as history
+
+    window = _make_window(qapp)
+    monkeypatch.setattr(
+        history, "summarise_recorded_runs",
+        lambda *a, **k: [{
+            "key": "loger_star|seg|1376x768|3fps",
+            "params": {"fps": 3, "processing_width": 1376, "processing_height": 768,
+                       "mapping_backend": "loger_star"},
+            "frames": 1134, "points": 14_000_000,
+            "peak_ram_bytes": 30 * 1024**3, "peak_vram_bytes": 17 * 1024**3,
+            "total_ram_bytes": 32 * 1024**3, "total_swap_bytes": 0,
+            "gpu_name": "RTX 4090", "gpu_total_vram_bytes": 24 * 1024**3,
+        }],
+    )
+    window._refresh_recorded_runs()
+    text = window._recorded_runs_label.text()
+    assert "1134 frames" in text
+    assert "loger_star" in text
+    # 30/32 GB = ~94% -> the high-risk colour, not a bare number.
+    assert "#e07030" in text
+
+
+def test_recorded_runs_summary_empty_state(qapp, monkeypatch):
+    import deepreefmap.gui.run_history as history
+
+    window = _make_window(qapp)
+    monkeypatch.setattr(history, "summarise_recorded_runs", lambda *a, **k: [])
+    window._refresh_recorded_runs()
+    assert "None yet" in window._recorded_runs_label.text()

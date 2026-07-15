@@ -5,9 +5,11 @@ from __future__ import annotations
 from deepreefmap.gui.run_history import (
     _MAX_RUNS_PER_KEY,
     history_key,
+    load_expected_peaks,
     load_expected_points,
     load_priors,
     record_run,
+    summarise_recorded_runs,
 )
 
 
@@ -63,6 +65,50 @@ def test_stage_peaks_and_system_profile_round_trip(tmp_path):
     assert stored["version"] == 1
     assert stored["stage_peaks"] == peaks
     assert stored["system_profile"]["total_ram_bytes"] == 33_000_000_000
+
+
+def test_peaks_pool_across_fps_for_the_same_resolution(tmp_path):
+    # Memory tracks frame count, not fps, so a 3fps measurement must inform a 5fps
+    # lookup at the same backend/model/resolution.
+    path = tmp_path / "run_timings.json"
+    peaks = {"mapping": {"ram_bytes": 30_000_000_000, "vram_bytes": 8_000_000_000}}
+    record_run(
+        history_key("loger_star", "seg", 1376, 768, 3),
+        {"mapping": 1.0}, frames=1134, points=1, stage_peaks=peaks, path=path,
+    )
+    got = load_expected_peaks(history_key("loger_star", "seg", 1376, 768, 5), path=path)
+    assert got is not None
+    assert got["ram_bytes"] == 30_000_000_000
+    assert got["frames"] == 1134
+
+
+def test_summarise_recorded_runs_reports_peaks_and_machine(tmp_path):
+    path = tmp_path / "run_timings.json"
+    peaks = {
+        "mapping": {"ram_bytes": 32_000_000_000, "vram_bytes": 17_000_000_000},
+        "cloud": {"ram_bytes": 30_000_000_000, "vram_bytes": 6_000_000_000},
+    }
+    profile = {"total_ram_bytes": 33_000_000_000, "total_swap_bytes": 34_000_000_000,
+               "gpu": {"name": "RTX 4090", "total_vram_bytes": 25_000_000_000}}
+    record_run(
+        history_key("loger_star", "seg", 1376, 768, 3),
+        {"mapping": 1.0}, frames=1134, points=14_000_000,
+        params={"fps": 3, "mapping_backend": "loger_star"},
+        stage_peaks=peaks, system_profile=profile, path=path,
+    )
+    rows = summarise_recorded_runs(path=path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["peak_ram_bytes"] == 32_000_000_000  # max over stages
+    assert row["peak_vram_bytes"] == 17_000_000_000
+    assert row["total_ram_bytes"] == 33_000_000_000
+    assert row["frames"] == 1134
+
+
+def test_summarise_skips_peakless_runs(tmp_path):
+    path = tmp_path / "run_timings.json"
+    record_run(history_key("loger", "seg", 1280, 720, 5), {"mapping": 1.0}, frames=100, points=1, path=path)
+    assert summarise_recorded_runs(path=path) == []
 
 
 def test_rolling_cap(tmp_path):
