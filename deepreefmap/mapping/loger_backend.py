@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 # producing mirrored geometry.
 _POSE_IDENTITY_TOLERANCE = 1e-3
 
+# Re-anchoring transforms every pixel of every frame (~160M points at 1000+
+# frames). Doing it in one shot allocates a ~10GB float64 homogeneous buffer;
+# processing in row blocks keeps peak memory to a few hundred MB. The matmul is
+# row-independent, so the block size never changes the result.
+_REANCHOR_POINT_BLOCK = 8_000_000
+
 
 # The wheel vendors LoGeR's `loger` package (see pyproject [tool.setuptools.packages.find]
 # namespaces=true), so a deployed binary imports it directly. In a source checkout that
@@ -361,11 +367,14 @@ def _reanchor_to_first_camera(
     if world_points is None:
         return rebased_poses, None
 
-    wp_f64 = world_points.astype(np.float64)
-    flat = wp_f64.reshape(-1, 3)
-    homog = np.concatenate([flat, np.ones((flat.shape[0], 1), dtype=np.float64)], axis=1)
-    transformed = homog @ reference_inv.T
-    rebased_world = transformed[:, :3].reshape(world_points.shape).astype(world_points.dtype)
+    flat = world_points.astype(np.float64).reshape(-1, 3)
+    transform = reference_inv.T
+    out = np.empty((flat.shape[0], 3), dtype=np.float64)
+    for start in range(0, flat.shape[0], _REANCHOR_POINT_BLOCK):
+        block = flat[start : start + _REANCHOR_POINT_BLOCK]
+        homog = np.concatenate([block, np.ones((block.shape[0], 1), dtype=np.float64)], axis=1)
+        out[start : start + _REANCHOR_POINT_BLOCK] = (homog @ transform)[:, :3]
+    rebased_world = out.reshape(world_points.shape).astype(world_points.dtype)
     return rebased_poses, rebased_world
 
 
