@@ -16,8 +16,11 @@ from deepreefmap.gui.theme import BORDER, DISABLED_FG, ERROR, PRIMARY
 
 _SIZE = 26
 _ARC_SPAN_DEG = 100
-_STEP_DEG = 10
-_TICK_MS = 75
+# ~60 fps with a sub-degree step per tick: smooth to the eye, yet a 26px repaint
+# costs microseconds so idle-CPU stays flat. Speed matches the old 10deg/75ms.
+_TICK_MS = 16
+_DEG_PER_SEC = 133.0
+_STEP_DEG = _DEG_PER_SEC * _TICK_MS / 1000.0
 
 
 class SpinnerStopButton(QAbstractButton):
@@ -33,7 +36,7 @@ class SpinnerStopButton(QAbstractButton):
         self.setFixedSize(_SIZE, _SIZE)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("Stop the running job")
-        self._angle = 0
+        self._angle = 0.0
         self._hovered = False
         self._stopping = False
         self._timer = QTimer(self)
@@ -47,7 +50,7 @@ class SpinnerStopButton(QAbstractButton):
         self.update()
 
     def _advance(self) -> None:
-        self._angle = (self._angle + _STEP_DEG) % 360
+        self._angle = (self._angle + _STEP_DEG) % 360.0
         self.update()
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
@@ -90,7 +93,7 @@ class SpinnerStopButton(QAbstractButton):
         arc.setCapStyle(Qt.PenCapStyle.RoundCap)
         p.setPen(arc)
         # Qt angles are 1/16 degree, measured counter-clockwise from 3 o'clock.
-        p.drawArc(ring, -self._angle * 16, -_ARC_SPAN_DEG * 16)
+        p.drawArc(ring, int(-self._angle * 16), -_ARC_SPAN_DEG * 16)
 
         if self._stopping:
             square_colour = QColor(DISABLED_FG)
