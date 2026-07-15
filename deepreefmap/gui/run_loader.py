@@ -117,12 +117,12 @@ class RunLoadingMixin(MixinBase):
         self._cancel_event = threading.Event()
         self._pause_event = threading.Event()
         self._pause_event.set()
+        self._start_btn.setVisible(False)
         self._spinner_stop.set_stopping(False)
         self._spinner_stop.setVisible(True)
         self._pause_btn.setVisible(True)
         self._pause_btn.setEnabled(True)
         self._pause_btn.setChecked(False)
-        self._pause_btn.setText("Pause")
 
         self._pipeline_thread = threading.Thread(
             target=self._run_pipeline,
@@ -159,8 +159,7 @@ class RunLoadingMixin(MixinBase):
         self._status_label.setText(f"Failed: {msg}")
         self._reset_progress_bars()
         self._set_form_enabled(True)
-        self._spinner_stop.setVisible(False)
-        self._pause_btn.setVisible(False)
+        self._end_run_controls()
         close_run_log_file(self._run_log_file_handler)
         self._run_log_file_handler = None
         self._set_app_mode("SETUP")
@@ -169,11 +168,16 @@ class RunLoadingMixin(MixinBase):
         self._status_label.setText("Reconstruction stopped by user.")
         self._reset_progress_bars()
         self._set_form_enabled(True)
-        self._spinner_stop.setVisible(False)
-        self._pause_btn.setVisible(False)
+        self._end_run_controls()
         close_run_log_file(self._run_log_file_handler)
         self._run_log_file_handler = None
         self._set_app_mode("SETUP")
+
+    def _end_run_controls(self) -> None:
+        """Return the top-bar cluster to its idle state (play shown, run controls hidden)."""
+        self._spinner_stop.setVisible(False)
+        self._pause_btn.setVisible(False)
+        self._start_btn.setVisible(True)
 
     def _on_stop_clicked(self) -> None:
         # The spinner is shared between a live pipeline run and a cached-run
@@ -201,13 +205,17 @@ class RunLoadingMixin(MixinBase):
     def _on_pause_toggled(self, paused: bool) -> None:
         if not hasattr(self, "_pause_event") or self._pause_event is None:
             return
+        from deepreefmap.gui.icons import pause_icon, play_icon
+
         if paused:
             self._pause_event.clear()
-            self._pause_btn.setText("Resume")
+            self._pause_btn.setIcon(play_icon())
+            self._pause_btn.setToolTip("Resume the reconstruction")
             self._status_label.setText("Reconstruction paused.")
         else:
             self._pause_event.set()
-            self._pause_btn.setText("Pause")
+            self._pause_btn.setIcon(pause_icon())
+            self._pause_btn.setToolTip("Pause the reconstruction at the next safe checkpoint.")
             self._status_label.setText("Reconstruction resumed.")
 
     def _set_form_enabled(self, enabled: bool) -> None:
@@ -216,7 +224,7 @@ class RunLoadingMixin(MixinBase):
             self._map_combo, self._out_root_input, self._run_name_input,
             self._fps_spin, self._begin_spin, self._end_spin,
             self._transect_length, self._crop_width,
-            self._tsdf_check, self._skip_seg_check, self._submit_btn,
+            self._tsdf_check, self._skip_seg_check,
             self._batch_btn,
         ):
             w.setEnabled(enabled)

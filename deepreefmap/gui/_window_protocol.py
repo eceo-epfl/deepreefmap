@@ -49,7 +49,9 @@ if TYPE_CHECKING:
     from deepreefmap.gui.log_view import LogView
     from deepreefmap.gui.progress import ProgressModel
     from deepreefmap.gui.pick_tooltip import PickCard
+    from deepreefmap.gui.eta import RunEtaEstimator
     from deepreefmap.gui.spinner import SpinnerStopButton
+    from deepreefmap.gui.timing_popup import HoverColumn, TimingPopup
     from deepreefmap.pipeline.artifacts import SemanticPointCloud
     from deepreefmap.pointcloud.grid_ortho import OrthoGrid
     from deepreefmap.gui.viewer import QtPointCloudViewer
@@ -131,7 +133,7 @@ if TYPE_CHECKING:
         _rename_cancel_btn: QPushButton
         _rename_ok_btn: QPushButton
         _spinner_stop: SpinnerStopButton
-        _submit_btn: QPushButton
+        _start_btn: QPushButton
         _update_btn: QPushButton
 
         # --- spin boxes --------------------------------------------------
@@ -195,6 +197,10 @@ if TYPE_CHECKING:
         _sidebar_tabs: QTabWidget
         _progress_bar: QProgressBar
         _total_progress_bar: QProgressBar
+        _progress_stack: HoverColumn
+        _eta_total_label: QLabel
+        _eta: RunEtaEstimator | None
+        _timing_popup: TimingPopup
 
         # --- signals (defined as class attrs on DeepReefMapWindow) --------
         _sig_update_check_done = Signal(str, object, object)
@@ -241,6 +247,9 @@ if TYPE_CHECKING:
         def _required_model_names(self) -> set[str]: ...
         def _reset_progress_bars(self) -> None: ...
         def _render_status(self) -> None: ...
+        def _render_eta(self) -> None: ...
+        def _end_run_controls(self) -> None: ...
+        def _new_run_estimator(self) -> RunEtaEstimator: ...
         def _reveal_legend_overlay(self) -> None: ...
         def _set_app_mode(self, mode: str) -> None: ...
         def _set_form_enabled(self, enabled: bool) -> None: ...

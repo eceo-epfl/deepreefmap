@@ -60,6 +60,12 @@ def _make_window(qapp):
     return DeepReefMapWindow(load_classes(), None)
 
 
+def _plain(html: str) -> str:
+    import re
+
+    return re.sub("<[^>]+>", "", html).strip()
+
+
 def test_status_ticker_appends_elapsed_and_keeps_base(qapp, monkeypatch):
     import deepreefmap.gui.progress as progress_mod
 
@@ -70,12 +76,12 @@ def test_status_ticker_appends_elapsed_and_keeps_base(qapp, monkeypatch):
     monkeypatch.setattr(progress_mod.time, "monotonic", lambda: clock[0])
 
     window._apply_progress("mapping", "Mapping", current=3, total=10)
-    assert window._status_label.text() == "Mapping… 3/10 · 0s"
+    assert _plain(window._status_label.text()) == "Mapping · Mapping… 3/10 · 0s"
 
     clock[0] += 74.0
     window._render_status()
-    text = window._status_label.text()
-    assert text.startswith("Mapping… 3/10")
+    text = _plain(window._status_label.text())
+    assert "Mapping… 3/10" in text
     assert text.endswith("1m 14s")
 
 
@@ -93,7 +99,7 @@ def test_status_ticker_resets_per_stage(qapp, monkeypatch):
     window._apply_progress("mapping", "Mapping", current=1, total=5)
     # A new phase restarts the stopwatch, so elapsed is near zero, not 40s.
     window._render_status()
-    assert window._status_label.text().endswith("0s")
+    assert _plain(window._status_label.text()).endswith("0s")
 
 
 def test_update_progress_zero_total_is_indeterminate(qapp):
@@ -104,3 +110,83 @@ def test_update_progress_zero_total_is_indeterminate(qapp):
     )
     assert window._progress_bar.maximum() == 0
     assert "LoGeR inference" in window._status_label.text()
+
+
+def test_start_button_disabled_when_form_invalid(qapp):
+    window = _make_window(qapp)
+    window._video_input.setText("")
+    window._recompute_submit_state()
+    assert not window._start_btn.isEnabled()
+    assert "Cannot start" in window._start_btn.toolTip()
+
+
+def test_run_controls_morph_setup_to_running(qapp):
+    window = _make_window(qapp)
+    # isHidden, not isVisible: the offscreen test window is never shown on screen.
+    window._start_btn.setVisible(False)
+    window._pause_btn.setVisible(True)
+    window._spinner_stop.setVisible(True)
+    window._end_run_controls()
+    assert not window._start_btn.isHidden()
+    assert window._pause_btn.isHidden()
+    assert window._spinner_stop.isHidden()
+
+
+def test_bars_carry_no_text_and_overall_estimate_is_visible(qapp, monkeypatch, tmp_path):
+    import deepreefmap.gui.progress as progress_mod
+
+    # Isolate the profile so the total slot's first-run state is deterministic.
+    monkeypatch.setenv("DEEPREEFMAP_RUN_TIMINGS", str(tmp_path / "none.json"))
+    window = _make_window(qapp)
+    # The bars are graphical only; the numbers live in the status text and label.
+    assert not window._progress_bar.isTextVisible()
+    assert not window._total_progress_bar.isTextVisible()
+
+    clock = [0.0]
+    monkeypatch.setattr(progress_mod.time, "monotonic", lambda: clock[0])
+    window._begin_progress(window._recon_model)
+    window._render_eta()
+    assert window._eta_total_label.text() == "estimating…"
+    # Give the estimator history so the whole-run total is shown, not withheld.
+    window._eta.priors = {"mapping": 0.5}
+    window._apply_progress("mapping", "Mapping", current=1, total=100)
+    clock[0] = 20.0
+    window._apply_progress("mapping", "Mapping", current=25, total=100)
+    assert "left" in window._eta_total_label.text()
+
+
+def test_first_run_popup_hides_future_estimates_but_shows_measured(qapp, monkeypatch, tmp_path):
+    import deepreefmap.gui.progress as progress_mod
+    from PySide6.QtCore import QPointF
+
+    # Isolate the timing profile so the host machine's real history can't leak in.
+    monkeypatch.setenv("DEEPREEFMAP_RUN_TIMINGS", str(tmp_path / "none.json"))
+    clock = [0.0]
+    monkeypatch.setattr(progress_mod.time, "monotonic", lambda: clock[0])
+    window = _make_window(qapp)
+    window._begin_progress(window._recon_model)
+    assert not window._eta.has_history
+    window._apply_progress("mapping", "Mapping", current=1, total=100)
+    clock[0] = 20.0
+    window._apply_progress("mapping", "Mapping", current=25, total=100)
+    window._on_total_bar_hover(QPointF(50.0, 50.0))
+    text = window._timing_popup._label.text()
+    assert "learning timings" in text
+    assert "running" in text and "left" in text
+
+
+def test_hover_popup_builds_rows_from_estimator(qapp, monkeypatch):
+    import deepreefmap.gui.progress as progress_mod
+    from PySide6.QtCore import QPointF
+
+    window = _make_window(qapp)
+    window._begin_progress(window._recon_model)
+    clock = [100.0]
+    monkeypatch.setattr(progress_mod.time, "monotonic", lambda: clock[0])
+    window._apply_progress("preprocess", "Preprocess", current=1, total=10)
+    clock[0] += 30.0
+    window._apply_progress("mapping", "Mapping", current=2, total=10)
+    window._on_total_bar_hover(QPointF(50.0, 50.0))
+    assert window._timing_popup.isVisible()
+    window._on_total_bar_hover(None)
+    assert not window._timing_popup.isVisible()

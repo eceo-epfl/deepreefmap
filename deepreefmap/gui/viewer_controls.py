@@ -63,6 +63,29 @@ class ViewerControlsMixin(MixinBase):
         self._reset_progress_bars()
         self._status_label.setText("Load cancelled.")
 
+    def _harvest_run_timings(self, manifest: dict) -> None:
+        """Fold a finished run's stage durations into the local timing profile."""
+        durations = manifest.get("stage_durations") or {}
+        if not durations:
+            return
+        from deepreefmap.gui.run_history import history_key, record_run
+
+        try:
+            key = history_key(
+                str(manifest.get("mapping_backend", "")),
+                str(manifest.get("segmentation_model", "")),
+                int(manifest.get("processing_width", 0)),
+                int(manifest.get("processing_height", 0)),
+            )
+            record_run(
+                key,
+                {k: float(v) for k, v in durations.items()},
+                frames=int(manifest.get("frames_processed", 0)),
+                points=manifest.get("metric_points"),
+            )
+        except Exception:
+            logger.warning("Could not record run timings", exc_info=True)
+
     def _on_viewer_control_changed(self) -> None:
         if not self._viewer.has_scene_data:
             return
@@ -984,12 +1007,11 @@ class ViewerControlsMixin(MixinBase):
             total = int(cast(SupportsInt, kwargs.get("total", 0) or 0))
             stage = str(kwargs.get("stage", ""))
             message = str(kwargs.get("message", "") or "")
-            stage_label = _STAGE_LABELS.get(stage, stage) or "Working"
-            # Sub-step messages (e.g. "Preparing frames for LoGeR") name what's
-            # happening inside the stage; keep the stage prefix for context.
-            label = f"{stage_label}: {message}" if message else stage_label
+            # The coarse stage is now coloured into the status line, so the label
+            # is just the sub-step message (e.g. "Preparing frames for LoGeR").
+            label = message or (_STAGE_LABELS.get(stage, stage) or "Working")
             # total == 0 is a deliberate "indeterminate" signal (e.g. the LoGeR
-            # forward pass), so drive the bar rather than dropping the update.
+            # resize/upload prep), so drive the bar rather than dropping the update.
             self._apply_progress(stage, label, current, total)
         elif event == "data_ready":
             if self._viewer.has_scene_data:
@@ -1002,6 +1024,11 @@ class ViewerControlsMixin(MixinBase):
             self._apply_progress("viewer_finalise", "Reconstruction complete", 1, 1)
             ortho_cloud = cast("SemanticPointCloud | None", kwargs.get("ortho_cloud"))
             ortho_grid = cast("OrthoGrid | None", kwargs.get("ortho_grid"))
+            # The true point count only exists once the cloud is built; feed it in
+            # so the remaining save/view stages estimate from a known size.
+            est = getattr(self, "_eta", None)
+            if est is not None and ortho_cloud is not None:
+                est.set_points(len(ortho_cloud))
             cc = cast("ClassConfig", kwargs.get("classes_config") or self._classes_config)
             if ortho_cloud is not None and len(ortho_cloud) > 1:
                 try:
@@ -1037,8 +1064,7 @@ class ViewerControlsMixin(MixinBase):
             self._status_label.setText(f"Outputs saved to {output_dir}")
             self._reset_progress_bars()
             self._set_form_enabled(True)
-            self._spinner_stop.setVisible(False)
-            self._pause_btn.setVisible(False)
+            self._end_run_controls()
             if output_dir:
                 self._show_results(str(output_dir))
                 self._active_run_dir = Path(str(output_dir))
@@ -1046,6 +1072,7 @@ class ViewerControlsMixin(MixinBase):
                 if manifest_path.exists():
                     try:
                         self._active_run_manifest = json.loads(manifest_path.read_text())
+                        self._harvest_run_timings(self._active_run_manifest)
                     except Exception:
                         self._active_run_manifest = None
                 self._settings.setValue("last_run_dir", str(self._active_run_dir))
@@ -1057,8 +1084,7 @@ class ViewerControlsMixin(MixinBase):
             self._status_label.setText(f"Failed: {error}")
             self._reset_progress_bars()
             self._set_form_enabled(True)
-            self._spinner_stop.setVisible(False)
-            self._pause_btn.setVisible(False)
+            self._end_run_controls()
             close_run_log_file(self._run_log_file_handler)
             self._run_log_file_handler = None
             self._set_app_mode("SETUP")

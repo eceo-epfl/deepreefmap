@@ -41,9 +41,10 @@ from deepreefmap.gui.progress import (
     ProgressModel,
 )
 from deepreefmap.gui.version import _current_version, _pyapp_binary_path
-from deepreefmap.gui.theme import WARN_BG, WARN_BORDER, WARN_TEXT
+from deepreefmap.gui.theme import GROOVE, TEXT_MUTED, WARN_BG, WARN_BORDER, WARN_TEXT
 from deepreefmap.gui.spinner import SpinnerStopButton
 from deepreefmap.gui.sunburst_widget import SunburstWidget
+from deepreefmap.gui.timing_popup import HoverColumn
 
 logger = logging.getLogger(__name__)
 
@@ -577,10 +578,8 @@ class FormPanelMixin(MixinBase):
         self._gated_warning.setVisible(False)
         setup_layout.addWidget(self._gated_warning)
 
-        self._submit_btn = QPushButton("Start reconstruction")
-        self._submit_btn.clicked.connect(self._on_submit)
-        setup_layout.addWidget(self._submit_btn)
-
+        # Start moved to the top-bar run cluster (self._start_btn); the form keeps
+        # only the hint explaining why start is unavailable.
         self._batch_btn = QPushButton("Batch reconstruction…")
         self._batch_btn.setToolTip(
             "Run a CSV of reconstructions sequentially. "
@@ -628,36 +627,72 @@ class FormPanelMixin(MixinBase):
         self._status_label = QLabel("Ready. Fill the form above and click Start.")
         self._status_label.setWordWrap(True)
 
+        # Stage bar (top) + total bar (bottom) stacked in one compact hover column
+        # so the two percentages read as a unit at half the width. Bar text is
+        # hidden to avoid cramped labels: the numbers live in the status text, the
+        # overall-estimate label, and the hover breakdown. Empty when idle.
+        _STAGE_CHUNK = "#4aa3ff"
+        _TOTAL_CHUNK = "#3574b0"
         self._progress_bar = QProgressBar()
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
-        self._progress_bar.setVisible(False)
-        self._progress_bar.setToolTip("Current step progress")
+        self._progress_bar.setTextVisible(False)
+        self._progress_bar.setFixedHeight(8)
+        self._progress_bar.setStyleSheet(
+            f"QProgressBar {{ background:{GROOVE}; border:none; border-radius:3px; }}"
+            f" QProgressBar::chunk {{ background:{_STAGE_CHUNK}; border-radius:3px; }}"
+        )
 
-        # Second bar showing total weighted progress across all phases of
-        # a reconstruction or cached-run load. Driven by the active
-        # ProgressModel.
         self._total_progress_bar = QProgressBar()
         self._total_progress_bar.setRange(0, 100)
         self._total_progress_bar.setValue(0)
-        self._total_progress_bar.setVisible(False)
-        self._total_progress_bar.setFormat("Total %p%")
-        self._total_progress_bar.setToolTip("Total progress across all phases")
+        self._total_progress_bar.setTextVisible(False)
+        self._total_progress_bar.setFixedHeight(8)
+        self._total_progress_bar.setStyleSheet(
+            f"QProgressBar {{ background:{GROOVE}; border:none; border-radius:3px; }}"
+            f" QProgressBar::chunk {{ background:{_TOTAL_CHUNK}; border-radius:3px; }}"
+        )
+
+        self._progress_stack = HoverColumn()
+        self._progress_stack.setFixedWidth(150)
+        _stack_layout = QVBoxLayout(self._progress_stack)
+        _stack_layout.setContentsMargins(0, 0, 0, 0)
+        _stack_layout.setSpacing(2)
+        _stack_layout.addWidget(self._progress_bar)
+        _stack_layout.addWidget(self._total_progress_bar)
+        # Bars pass hover through to the column so the breakdown follows the mouse.
+        self._progress_bar.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._total_progress_bar.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        # Overall (all-stages) remaining estimate, kept visible rather than buried
+        # in the hover breakdown.
+        self._eta_total_label = QLabel("")
+        self._eta_total_label.setStyleSheet(f"color: {TEXT_MUTED};")
+        self._eta_total_label.setMinimumWidth(78)
 
         self._recon_model = ProgressModel(_RECON_PHASES)
         self._load_model = ProgressModel(_LOAD_PHASES)
         self._active_progress_model: ProgressModel | None = None
 
-        # Run controls live in the top bar so they sit alongside the status and
-        # progress bars. Pause holds at the next safe checkpoint; the spinner is
-        # the animated "busy" indicator and the abort button in one.
-        self._pause_btn = QPushButton("Pause")
+        # All run operations live in one top-bar cluster: play to start (greyed
+        # until the form is valid), then pause and the animated stop-spinner while
+        # a run is in flight. Play is shown in SETUP, pause + spinner in RUNNING.
+        from deepreefmap.gui.icons import pause_icon, play_icon
+
+        self._start_btn = QPushButton()
+        self._start_btn.setIcon(play_icon())
+        self._start_btn.setToolTip("Start reconstruction")
+        self._start_btn.setMaximumWidth(40)
+        self._start_btn.clicked.connect(self._on_submit)
+
+        self._pause_btn = QPushButton()
+        self._pause_btn.setIcon(pause_icon())
         self._pause_btn.setToolTip(
             "Pause the reconstruction at the next safe checkpoint. "
             "Long mapping passes may take time to respond."
         )
         self._pause_btn.setCheckable(True)
-        self._pause_btn.setMaximumWidth(80)
+        self._pause_btn.setMaximumWidth(40)
         self._pause_btn.setVisible(False)
         self._pause_btn.toggled.connect(self._on_pause_toggled)
 
@@ -1066,10 +1101,9 @@ class FormPanelMixin(MixinBase):
 
         self._status_label.setStyleSheet("color: #ccc;")
         h.addWidget(self._status_label, 3)
-        self._progress_bar.setMaximumWidth(160)
-        h.addWidget(self._progress_bar)
-        self._total_progress_bar.setMaximumWidth(160)
-        h.addWidget(self._total_progress_bar)
+        h.addWidget(self._progress_stack)
+        h.addWidget(self._eta_total_label)
+        h.addWidget(self._start_btn)
         h.addWidget(self._pause_btn)
         h.addWidget(self._spinner_stop)
 
@@ -1310,11 +1344,12 @@ class FormPanelMixin(MixinBase):
             reasons.append("LoGeR needs a GPU (none detected)")
 
         ok = not reasons
-        self._submit_btn.setEnabled(ok)
-        if ok:
-            self._submit_hint.setText("")
-        else:
-            self._submit_hint.setText("Cannot start: " + "; ".join(reasons) + ".")
+        self._start_btn.setEnabled(ok)
+        reason_text = "Cannot start: " + "; ".join(reasons) + "." if reasons else ""
+        # The play button greys out and its tooltip carries the reason; the form
+        # keeps the full-text hint for discoverability.
+        self._start_btn.setToolTip(reason_text or "Start reconstruction")
+        self._submit_hint.setText(reason_text)
 
         self._update_gated_warning()
     def _open_output_dir(self) -> None:

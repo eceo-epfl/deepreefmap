@@ -50,6 +50,39 @@ def refresh_icon(size: int = 24, color: QColor | None = None) -> QIcon:
     return QIcon(pm)
 
 
+def play_icon(size: int = 24, color: QColor | None = None) -> QIcon:
+    c = color or QColor(230, 230, 230)
+    pm, p = _px(size)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(c)
+    m = size * 0.3
+    tri = [
+        QPointF(m, m),
+        QPointF(size - m, size / 2),
+        QPointF(m, size - m),
+    ]
+    from PySide6.QtGui import QPolygonF
+
+    p.drawPolygon(QPolygonF(tri))
+    p.end()
+    return QIcon(pm)
+
+
+def pause_icon(size: int = 24, color: QColor | None = None) -> QIcon:
+    c = color or QColor(230, 230, 230)
+    pm, p = _px(size)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(c)
+    bar_w = size * 0.16
+    gap = size * 0.14
+    top, bot = size * 0.28, size * 0.72
+    cx = size / 2
+    p.drawRoundedRect(QRectF(cx - gap / 2 - bar_w, top, bar_w, bot - top), 1.5, 1.5)
+    p.drawRoundedRect(QRectF(cx + gap / 2, top, bar_w, bot - top), 1.5, 1.5)
+    p.end()
+    return QIcon(pm)
+
+
 def plus_icon(size: int = 24, color: QColor | None = None) -> QIcon:
     c = color or QColor(230, 230, 230)
     pm, p = _px(size)

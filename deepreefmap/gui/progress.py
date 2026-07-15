@@ -3,19 +3,16 @@ from __future__ import annotations
 import time
 
 from deepreefmap.gui._window_protocol import MixinBase
+from deepreefmap.gui.eta import (
+    RunEtaEstimator,
+    format_duration,
+    stage_for_phase,
+    stage_label_for_phase,
+)
+from deepreefmap.gui.theme import PRIMARY
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
-
-
-def _fmt_elapsed(seconds: float) -> str:
-    """Render a stage duration as `37s`, `2m 14s`, or `1h 03m`."""
-    secs = int(seconds)
-    if secs < 60:
-        return f"{secs}s"
-    if secs < 3600:
-        return f"{secs // 60}m {secs % 60:02d}s"
-    return f"{secs // 3600}h {(secs % 3600) // 60:02d}m"
 
 
 class ProgressModel:
@@ -186,29 +183,71 @@ class ProgressBarsMixin(MixinBase):
             self._status_tick_timer = timer
         return timer
 
+    def _ensure_timing_popup(self):
+        popup = getattr(self, "_timing_popup", None)
+        if popup is None:
+            from deepreefmap.gui.timing_popup import TimingPopup
+
+            popup = TimingPopup(self)
+            self._timing_popup = popup
+        return popup
+
+    def _connect_bar_hover(self) -> None:
+        # The bar column reports hover so the breakdown can follow the cursor.
+        # Connected once, before any hover can fire.
+        if not getattr(self, "_hover_connected", False):
+            self._progress_stack.hovered.connect(self._on_total_bar_hover)
+            self._hover_connected = True
+
     def _begin_progress(self, model: ProgressModel) -> None:
-        """Switch the active progress model and show both bars from zero."""
+        """Switch the active progress model and light up both bars from zero."""
+        self._connect_bar_hover()
         model.reset()
         self._active_progress_model = model
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
-        self._progress_bar.setVisible(True)
+        self._progress_bar.setEnabled(True)
         self._total_progress_bar.setRange(0, 100)
         self._total_progress_bar.setValue(0)
-        self._total_progress_bar.setVisible(True)
+        self._total_progress_bar.setEnabled(True)
         self._status_base_text = ""
         self._status_phase_key = None
         self._status_phase_started = time.monotonic()
+        # ETA only applies to a reconstruction; a cached-run load has its own model.
+        self._eta = self._new_run_estimator() if model is self._recon_model else None
         self._ensure_status_tick_timer().start()
 
+    def _new_run_estimator(self) -> RunEtaEstimator:
+        """Estimator seeded from this machine's history for the selected backends."""
+        from deepreefmap.gui.run_history import history_key, load_priors
+
+        try:
+            key = history_key(
+                self._map_combo.currentText(),
+                self._seg_combo.currentText(),
+                self._proc_width_spin.value(),
+                self._proc_height_spin.value(),
+            )
+            priors = load_priors(key)
+        except Exception:
+            priors = {}
+        return RunEtaEstimator(frames=0, priors=priors)
+
     def _reset_progress_bars(self) -> None:
+        # Bars stay visible but empty when idle so the top-right cluster always
+        # reads as the run status area next to the play button.
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
-        self._progress_bar.setVisible(False)
+        self._progress_bar.setEnabled(False)
         self._total_progress_bar.setRange(0, 100)
         self._total_progress_bar.setValue(0)
-        self._total_progress_bar.setVisible(False)
+        self._total_progress_bar.setEnabled(False)
+        self._eta_total_label.setText("")
         self._active_progress_model = None
+        self._eta = None
+        popup = getattr(self, "_timing_popup", None)
+        if popup is not None:
+            popup.hide()
         timer = getattr(self, "_status_tick_timer", None)
         if timer is not None:
             timer.stop()
@@ -216,15 +255,59 @@ class ProgressBarsMixin(MixinBase):
         self._status_phase_key = None
 
     def _render_status(self) -> None:
-        """Recompose the status label from its base text plus stage elapsed time."""
+        """Recompose the status label: coloured stage, detail, and stage elapsed."""
+        self._render_eta()
         base = getattr(self, "_status_base_text", "")
         if not base:
             return
+        now = time.monotonic()
         started = getattr(self, "_status_phase_started", None)
-        if started is None:
-            self._status_label.setText(base)
+        detail = base if started is None else f"{base} · {format_duration(now - started)}"
+        # Keep the measured stage remainder visible no matter what: it is the same
+        # kind of live figure a tqdm bar shows, trustworthy even on a first run,
+        # and it is stage-scoped so it never masquerades as the whole-run total.
+        est = getattr(self, "_eta", None)
+        stage_left = est.current_stage_remaining(now) if est is not None else None
+        if stage_left is not None:
+            detail = f"{detail} · ~{format_duration(stage_left)} left"
+        # Colour the active coarse stage so the left text names it (and the stage
+        # name is dropped from the bars). Rich text keeps it to one coloured token.
+        stage = stage_label_for_phase(getattr(self, "_status_phase_key", "") or "")
+        if stage:
+            self._status_label.setText(
+                f'<b><span style="color:{PRIMARY}">{stage}</span></b> · {detail}'
+            )
+        else:
+            self._status_label.setText(detail)
+
+    def _render_eta(self) -> None:
+        """Refresh the visible overall-estimate label and the breakdown popup."""
+        est = getattr(self, "_eta", None)
+        if est is None:
             return
-        self._status_label.setText(f"{base} · {_fmt_elapsed(time.monotonic() - started)}")
+        now = time.monotonic()
+        visible = est.visible_remaining(now)
+        # Overall estimate shown plainly rather than buried in the hover. None
+        # means no trustworthy figure yet (a first run still calibrating).
+        self._eta_total_label.setText(
+            f"~{format_duration(visible)} left" if visible is not None else "estimating…"
+        )
+        popup = getattr(self, "_timing_popup", None)
+        if popup is not None and popup.isVisible():
+            popup.set_rows(est.stage_rows(now), est.total_remaining_s(now), est.has_history)
+
+    def _on_total_bar_hover(self, global_pos) -> None:
+        est = getattr(self, "_eta", None)
+        if global_pos is None or est is None:
+            popup = getattr(self, "_timing_popup", None)
+            if popup is not None:
+                popup.hide()
+            return
+        popup = self._ensure_timing_popup()
+        now = time.monotonic()
+        popup.set_rows(est.stage_rows(now), est.total_remaining_s(now), est.has_history)
+        popup.move(int(global_pos.x()) + 14, int(global_pos.y()) + 16)
+        popup.show()
 
     def _apply_progress(
         self,
@@ -247,6 +330,16 @@ class ProgressBarsMixin(MixinBase):
             self._status_phase_key = phase_key
             self._status_phase_started = time.monotonic()
 
+        est = getattr(self, "_eta", None)
+        if est is not None and stage_for_phase(phase_key) is not None:
+            # The preprocess total is the selected frame count, the size the
+            # per-frame stages scale with; capture it for pending predictions.
+            if phase_key == "preprocess" and total > 0:
+                est.frames = total
+            est.update(phase_key, current, total, time.monotonic())
+
+        # The bars carry no text (the stage name is coloured in the status line);
+        # they only show fill. Indeterminate for total <= 0.
         if total > 1:
             if self._progress_bar.minimum() != 0 or self._progress_bar.maximum() != total:
                 self._progress_bar.setRange(0, total)
@@ -260,7 +353,7 @@ class ProgressBarsMixin(MixinBase):
             self._progress_bar.setRange(0, 0)
             self._status_base_text = f"{label}…"
         self._render_status()
-        self._progress_bar.setVisible(True)
+        self._progress_bar.setEnabled(True)
 
         if self._active_progress_model is not None:
             pct = self._active_progress_model.update(
@@ -270,7 +363,7 @@ class ProgressBarsMixin(MixinBase):
             )
             self._total_progress_bar.setRange(0, 100)
             self._total_progress_bar.setValue(pct)
-            self._total_progress_bar.setVisible(True)
+            self._total_progress_bar.setEnabled(True)
 
         if flush:
             QApplication.processEvents()
