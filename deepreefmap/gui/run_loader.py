@@ -100,6 +100,12 @@ class RunLoadingMixin(MixinBase):
                 scs_opts["checkpoint_path"] = scs_ckpt
             kwargs["mapping_options"] = scs_opts
 
+        # Warn before committing to a 10-30 min run the machine likely can't hold.
+        # The form is still enabled here, so a cancel just returns quietly.
+        if not self._preflight_memory_ok(out_dir, kwargs):
+            self._status_label.setText("Run cancelled after the memory check.")
+            return
+
         self._set_form_enabled(False)
         self._begin_progress(self._recon_model)
         self._status_label.setText("Reconstruction starting…")
@@ -245,6 +251,52 @@ class RunLoadingMixin(MixinBase):
             if abs(end_arg - self._video_duration_s) < 1e-3:
                 end_arg = None
         return begin_arg, end_arg
+
+    def _estimate_frame_count(self, fps: int) -> int | None:
+        """Frames this run will process, from the selected time range and fps.
+
+        None when the video duration is unknown, so the memory check simply skips
+        rather than guessing.
+        """
+        begin, end = self._effective_time_range()
+        begin = begin or 0.0
+        if end is None:
+            end = self._video_duration_s
+        if end is None:
+            return None
+        frames = int(max(0.0, end - begin) * max(1, fps))
+        return frames or None
+
+    def _preflight_memory_ok(self, out_dir: Path, kwargs: dict) -> bool:
+        """True to proceed. Shows a confirm/cancel dialog when a run may exhaust RAM.
+
+        The check never blocks a run on its own account: any failure to estimate,
+        and any 'ok' verdict, proceeds silently. Only warn/block verdicts prompt.
+        """
+        try:
+            from deepreefmap.gui.run_history import history_key, load_expected_peaks
+            from deepreefmap.memory_estimate import estimate_peak_bytes, preflight_check
+            from deepreefmap.system_probe import probe_system
+
+            fps = int(kwargs["fps"])
+            frames = self._estimate_frame_count(fps)
+            if frames is None:
+                return True
+            width, height = int(kwargs["processing_width"]), int(kwargs["processing_height"])
+            mapping_name, seg_name = str(kwargs["mapping_name"]), str(kwargs["segmentation_name"])
+            key = history_key(mapping_name, seg_name, width, height, fps)
+            est = estimate_peak_bytes(
+                frames, width, height, mapping_name, seg_name, recorded=load_expected_peaks(key)
+            )
+            verdict = preflight_check(probe_system(out_dir), est)
+        except Exception:
+            logger.warning("Pre-flight memory check failed; proceeding", exc_info=True)
+            return True
+        if verdict.level == "ok":
+            return True
+        from deepreefmap.gui.preflight_dialog import PreflightDialog
+
+        return PreflightDialog(verdict, self).confirmed()
 
     def _auto_load_run(self, run_dir: Path) -> None:
         self._load_cancelled = False
