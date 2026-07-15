@@ -109,6 +109,7 @@ class FormPanelMixin(MixinBase):
         self._TAB_RESULTS = 1
         self._TAB_MODELS = 2
         self._TAB_UPDATES = 3
+        self._TAB_SYSTEM = 4
         self._sidebar_tabs = QTabWidget()
         # Tabs expand to share the panel width equally so labels of different
         # length (Run / Results / Models / Updates) end up the same visible width.
@@ -135,10 +136,15 @@ class FormPanelMixin(MixinBase):
         # which makes word-wrapped labels wrap at a narrow heuristic width. The
         # trailing addStretch() keeps content top-aligned while letting labels
         # use the full panel width.
+        from deepreefmap.gui.system_panel import build_system_tab
+
+        self._system_tab, system_layout = build_system_tab(self._sidebar_tabs)
         self._sidebar_tabs.addTab(self._run_tab, "Run")
         self._sidebar_tabs.addTab(self._viewer_tab, "Results")
         self._sidebar_tabs.addTab(self._models_tab, "Models")
         self._sidebar_tabs.addTab(self._updates_tab, "Updates")
+        self._sidebar_tabs.addTab(self._system_tab, "System")
+        self._build_system_panel(system_layout)
         # Results tab has nothing to show until a run loads — disable it so
         # the tab is greyed out and unclickable until _show_viewer_controls
         # runs.

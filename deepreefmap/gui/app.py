@@ -32,6 +32,7 @@ from deepreefmap.gui.past_runs import (
 )
 from deepreefmap.gui.results import ResultsMixin
 from deepreefmap.gui.run_loader import RunLoadingMixin
+from deepreefmap.gui.system_panel import SystemPanelMixin
 from deepreefmap.gui.viewer_controls import ViewerControlsMixin
 from deepreefmap.gui.progress import (
     ProgressBarsMixin,
@@ -57,6 +58,7 @@ class DeepReefMapWindow(
     ProgressBarsMixin,
     ResultsMixin,
     RunLoadingMixin,
+    SystemPanelMixin,
     ViewerControlsMixin,
     VersionCheckMixin,
 ):
