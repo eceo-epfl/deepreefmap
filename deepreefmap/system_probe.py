@@ -48,6 +48,8 @@ class SystemProfile:
     cpu_physical: int | None
     total_ram_bytes: int
     available_ram_bytes: int
+    total_swap_bytes: int
+    free_swap_bytes: int
     gpu: GpuInfo
     disk_total_bytes: int
     disk_free_bytes: int
@@ -93,6 +95,11 @@ def probe_system(disk_path: Path | str | None = None) -> SystemProfile:
     directory in practice); it defaults to the current working directory.
     """
     vm = psutil.virtual_memory()
+    try:
+        sw = psutil.swap_memory()
+        swap_total, swap_free = int(sw.total), int(sw.free)
+    except Exception:
+        swap_total = swap_free = 0
     path = Path(disk_path) if disk_path is not None else Path.cwd()
     try:
         du = psutil.disk_usage(str(path))
@@ -106,6 +113,8 @@ def probe_system(disk_path: Path | str | None = None) -> SystemProfile:
         cpu_physical=psutil.cpu_count(logical=False),
         total_ram_bytes=int(vm.total),
         available_ram_bytes=int(vm.available),
+        total_swap_bytes=swap_total,
+        free_swap_bytes=swap_free,
         gpu=_probe_gpu(),
         disk_total_bytes=disk_total,
         disk_free_bytes=disk_free,

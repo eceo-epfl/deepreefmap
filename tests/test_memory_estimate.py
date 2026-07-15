@@ -8,12 +8,13 @@ from deepreefmap.system_probe import GPU_CUDA, GPU_MPS, GPU_NONE, GpuInfo, Syste
 _GB = 1024**3
 
 
-def _profile(*, avail_gb, total_gb=None, gpu=None):
+def _profile(*, avail_gb, total_gb=None, gpu=None, swap_gb=0):
     total_gb = total_gb or avail_gb
     gpu = gpu or GpuInfo(GPU_NONE, "CPU only", None, None)
     return SystemProfile(
         os_name="Linux", os_release="x", cpu_logical=8, cpu_physical=4,
         total_ram_bytes=int(total_gb * _GB), available_ram_bytes=int(avail_gb * _GB),
+        total_swap_bytes=int(swap_gb * _GB), free_swap_bytes=int(swap_gb * _GB),
         gpu=gpu, disk_total_bytes=0, disk_free_bytes=0, disk_path="/",
     )
 
@@ -65,3 +66,19 @@ def test_cuda_vram_shortfall_only_warns_never_blocks_on_ram():
     verdict = preflight_check(_profile(avail_gb=64, gpu=cuda), est)
     assert verdict.level == "warn"
     assert "vram" in verdict.message.lower()
+
+
+def test_exceeding_ram_but_fitting_swap_warns_not_blocks():
+    # 40 GB run, 30 GB free RAM but 20 GB swap: it thrashes, it does not crash.
+    recorded = {"ram_bytes": 40 * _GB, "vram_bytes": None, "frames": 1000}
+    est = estimate_peak_bytes(1000, 1376, 768, "loger_star", "seg", recorded=recorded)
+    verdict = preflight_check(_profile(avail_gb=30, total_gb=32, swap_gb=20), est)
+    assert verdict.level == "warn"
+    assert "swap" in verdict.message.lower()
+
+
+def test_exceeding_ram_and_swap_blocks():
+    recorded = {"ram_bytes": 40 * _GB, "vram_bytes": None, "frames": 1000}
+    est = estimate_peak_bytes(1000, 1376, 768, "loger_star", "seg", recorded=recorded)
+    verdict = preflight_check(_profile(avail_gb=30, total_gb=32, swap_gb=4), est)
+    assert verdict.level == "block"

@@ -79,6 +79,7 @@ def probe(
     typer.echo(f"OS       : {profile.os_name} {profile.os_release}")
     typer.echo(f"CPU      : {profile.cpu_logical} logical / {profile.cpu_physical or '?'} physical cores")
     typer.echo(f"RAM      : {format_bytes(profile.available_ram_bytes)} free / {format_bytes(profile.total_ram_bytes)}")
+    typer.echo(f"Swap     : {format_bytes(profile.free_swap_bytes)} free / {format_bytes(profile.total_swap_bytes)}")
     typer.echo(f"GPU      : {vram}")
     typer.echo(f"Disk ({profile.disk_path}): {format_bytes(profile.disk_free_bytes)} free / {format_bytes(profile.disk_total_bytes)}")
 

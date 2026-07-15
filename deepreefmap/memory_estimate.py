@@ -118,39 +118,48 @@ def max_frames_for_ram(available_bytes: int, width: int, height: int, *, margin_
 
 
 def preflight_check(profile: SystemProfile, est: MemoryEstimate) -> Verdict:
-    """Grade a run against the machine: ok (silent), warn (confirm), block (likely crash).
+    """Grade a run against the machine: ok (silent), warn, block (likely crash).
 
-    On Apple's unified memory the GPU draws from system RAM, so the VRAM need is
-    added to the RAM need. On a discrete CUDA GPU, VRAM is checked separately and
-    can only escalate to a warning, since a VRAM OOM is recoverable.
+    Swap is part of the budget: a run that exceeds free RAM but fits in RAM plus
+    free swap will not be OOM-killed, it will thrash into swap and run slowly, so
+    that is a warn, not a block. Only exceeding RAM plus swap is a block. On
+    Apple's unified memory the GPU draws from RAM, so the VRAM need is added to
+    the RAM need. On a discrete CUDA GPU, VRAM is checked separately and can only
+    escalate to a warning, since a VRAM OOM is recoverable.
     """
     ram_need = est.ram_bytes
     if profile.gpu.kind == GPU_MPS and est.vram_bytes:
         ram_need += est.vram_bytes
     available = profile.available_ram_bytes
+    swap = profile.free_swap_bytes
     headroom = available - ram_need
 
-    if headroom < _BLOCK_HEADROOM:
-        level = "block"
-    elif headroom < _WARN_HEADROOM:
-        level = "warn"
-    else:
-        level = "ok"
-
     qualifier = " (estimated, no history yet)" if est.source == "analytic" else ""
-    if level == "block":
+    if ram_need > available + swap - _BLOCK_HEADROOM:
+        level = "block"
+        swap_note = f" plus {format_bytes(swap)} swap" if swap else ""
         message = (
             f"This run needs about {format_bytes(ram_need)} of RAM but only "
-            f"{format_bytes(available)} is free{qualifier}. It will very likely run out of "
-            f"memory and crash. Reduce the fps or the processing resolution before running."
+            f"{format_bytes(available)}{swap_note} is free{qualifier}. It will very likely run "
+            f"out of memory and crash. Reduce the fps or the processing resolution before running."
         )
-    elif level == "warn":
+    elif headroom < 0:
+        # Fits only by spilling into swap: it will complete, but slowly.
+        level = "warn"
+        message = (
+            f"This run needs about {format_bytes(ram_need)} of RAM, more than the "
+            f"{format_bytes(available)} free{qualifier}. It will spill into swap and run "
+            f"very slowly. A lower fps or resolution avoids the slowdown."
+        )
+    elif headroom < _WARN_HEADROOM:
+        level = "warn"
         message = (
             f"This run needs about {format_bytes(ram_need)} of RAM, leaving only "
             f"{format_bytes(headroom)} spare{qualifier}. It may run out of memory. "
             f"Consider a lower fps or resolution."
         )
     else:
+        level = "ok"
         message = f"Estimated peak RAM about {format_bytes(ram_need)}, comfortably within free memory."
 
     # Discrete-GPU VRAM: a shortfall is recoverable, so at most warn.

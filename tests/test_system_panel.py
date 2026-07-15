@@ -68,6 +68,7 @@ def test_benchmark_button_fills_the_readout(qapp, monkeypatch):
         lambda *a, **k: probe.SystemProfile(
             os_name="Linux", os_release="x", cpu_logical=16, cpu_physical=8,
             total_ram_bytes=64 * 1024**3, available_ram_bytes=48 * 1024**3,
+            total_swap_bytes=8 * 1024**3, free_swap_bytes=8 * 1024**3,
             gpu=probe.GpuInfo(probe.GPU_CUDA, "RTX 4090", 24 * 1024**3, 20 * 1024**3),
             disk_total_bytes=1000 * 1024**3, disk_free_bytes=400 * 1024**3, disk_path="/",
         ),

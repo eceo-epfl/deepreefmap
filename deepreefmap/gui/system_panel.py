@@ -146,6 +146,7 @@ class SystemPanelMixin(MixinBase):
             f"OS: {profile.os_name} {profile.os_release}\n"
             f"CPU: {profile.cpu_logical} logical / {profile.cpu_physical or '?'} physical cores\n"
             f"RAM: {format_bytes(profile.available_ram_bytes)} free / {format_bytes(profile.total_ram_bytes)}\n"
+            f"Swap: {format_bytes(profile.free_swap_bytes)} free / {format_bytes(profile.total_swap_bytes)}\n"
             f"GPU: {gpu_line}\n"
             f"Disk: {format_bytes(profile.disk_free_bytes)} free / {format_bytes(profile.disk_total_bytes)}\n\n"
             f"{headroom}"
