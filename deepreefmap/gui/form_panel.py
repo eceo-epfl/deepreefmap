@@ -1023,10 +1023,22 @@ class FormPanelMixin(MixinBase):
         # sidebar blends into the main window instead of looking like a panel
         # inside a panel.
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # The sidebar only ever scrolls vertically. Every wide child (model
+        # rows, path fields, warning labels) word-wraps or elides, so a
+        # horizontal scrollbar would only ever appear transiently while the
+        # vertical one steals a few pixels — forcing it off keeps the panel
+        # clean at any width.
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # Allow the user to drag the splitter to collapse the form down to a
         # small minimum. Removing the hard min lets the 3D viewport take as
         # much space as they want.
         scroll.setMinimumWidth(0)
+        # DPI-aware preferred width for the initial splitter position. Font
+        # metrics scale with the system's display scaling, so this widens
+        # automatically on Hi-DPI / large-font setups instead of clipping.
+        # Room for a ~34-char label column plus the ~110px action buttons.
+        fm = panel.fontMetrics()
+        self._form_preferred_width = fm.horizontalAdvance("0") * 34 + 150
         return scroll
     def _build_top_bar(self) -> QWidget:
         bar = QWidget()

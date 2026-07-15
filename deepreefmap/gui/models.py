@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QWidget,
 )
 
@@ -320,22 +321,34 @@ class ModelManagementMixin(MixinBase):
         )
         grid_row = 0
         for info, cached in ordered_states:
+            # Name on line one, size/date/REQUIRED on a wrapped second line.
+            # Keeping the metadata off the name line shrinks the row's minimum
+            # width so the action button never gets clipped in a narrow sidebar.
             name_html = f'<span style="color:#cfd">{info.name}</span>'
+            meta_parts: list[str] = []
             if info.approx_size_mb:
                 size_text = (
                     f"~{info.approx_size_mb / 1024:.1f} GB"
                     if info.approx_size_mb >= 1024
                     else f"~{info.approx_size_mb} MB"
                 )
-                name_html += f'&nbsp;<span style="color:#888; font-size:10px">{size_text}</span>'
+                meta_parts.append(f'<span style="color:#888; font-size:10px">{size_text}</span>')
             if info.release_date:
-                name_html += f'&nbsp;<span style="color:#888; font-size:10px">({info.release_date})</span>'
+                meta_parts.append(
+                    f'<span style="color:#888; font-size:10px">({info.release_date})</span>'
+                )
             if info.name in required:
-                name_html += (
-                    f'&nbsp;<span style="color:{WARNING}; '
+                meta_parts.append(
+                    f'<span style="color:{WARNING}; '
                     'font-size:10px; font-weight:bold">REQUIRED</span>'
                 )
+            if meta_parts:
+                name_html += "<br>" + "&nbsp;".join(meta_parts)
             name_label = QLabel(name_html)
+            name_label.setWordWrap(True)
+            # Ignored horizontal policy lets the label give up width freely so
+            # the fixed-width action button in column 1 is always visible.
+            name_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             self._models_grid.addWidget(name_label, grid_row, 0)
 
             action = self._make_action_widget(info, cached, auth_user)

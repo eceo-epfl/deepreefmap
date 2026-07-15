@@ -97,7 +97,18 @@ class DeepReefMapWindow(
         self._sig_discovery_done.connect(self._on_discovery_done)
 
         self.setWindowTitle("DeepReefMap")
-        self.resize(1400, 900)
+        # Open at ~90% of the available screen, capped at the comfortable
+        # 1400x900 target. Small laptops / low resolutions then get a window
+        # that fits their screen instead of one clipped by the panels or the
+        # taskbar. availableGeometry excludes docks and taskbars.
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            init_w = min(1400, int(avail.width() * 0.9))
+            init_h = min(900, int(avail.height() * 0.9))
+        else:
+            init_w, init_h = 1400, 900
+        self.resize(init_w, init_h)
         # Explicit floor so the window can always be shrunk back after the user
         # enlarges it. Without this, Qt's computed minimumSize follows whichever
         # child currently sizes the widest (e.g. the past-runs combo after it
@@ -129,7 +140,13 @@ class DeepReefMapWindow(
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(form_panel)
         splitter.addWidget(self._viewer)
-        splitter.setSizes([440, 960])
+        # Size the form pane to its DPI-aware content width, clamped to at most
+        # half the window so the 3D viewport keeps the majority. Stretch factor
+        # 0 then pins that width when the window grows — the viewer absorbs the
+        # extra space rather than the form.
+        form_w = getattr(self, "_form_preferred_width", 440)
+        form_w = max(360, min(form_w, self.width() // 2))
+        splitter.setSizes([form_w, max(400, self.width() - form_w)])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setChildrenCollapsible(True)
@@ -142,7 +159,10 @@ class DeepReefMapWindow(
         self._central_vsplitter = QSplitter(Qt.Orientation.Vertical)
         self._central_vsplitter.addWidget(splitter)
         self._central_vsplitter.addWidget(log_panel)
-        self._central_vsplitter.setSizes([700, 220])
+        # Log takes ~a quarter of the height when shown, proportional to the
+        # window so it doesn't dwarf a short window or vanish in a tall one.
+        _log_h = max(180, self.height() // 4)
+        self._central_vsplitter.setSizes([self.height() - _log_h, _log_h])
         self._central_vsplitter.setStretchFactor(0, 1)
         self._central_vsplitter.setStretchFactor(1, 0)
         self._central_vsplitter.setChildrenCollapsible(True)
