@@ -55,6 +55,34 @@ def list_profiles() -> None:
         typer.echo(name)
 
 
+@app.command("probe")
+def probe(
+    json_out: bool = typer.Option(False, "--json", help="Emit the raw profile as JSON."),
+    out: Path = typer.Option(Path.cwd(), help="Volume to report free disk for (the run output dir in practice)."),
+) -> None:
+    """Report this machine's RAM, VRAM, CPU and free disk without loading a video."""
+    import json as _json
+
+    from deepreefmap.system_probe import format_bytes, probe_system
+
+    profile = probe_system(out)
+    if json_out:
+        typer.echo(_json.dumps(profile.to_dict(), indent=2))
+        return
+    gpu = profile.gpu
+    if gpu.has_distinct_vram:
+        vram = f"{gpu.name} ({format_bytes(gpu.free_vram_bytes)} free / {format_bytes(gpu.total_vram_bytes)})"
+    elif gpu.kind == "mps":
+        vram = f"{gpu.name} (shares system RAM)"
+    else:
+        vram = gpu.name
+    typer.echo(f"OS       : {profile.os_name} {profile.os_release}")
+    typer.echo(f"CPU      : {profile.cpu_logical} logical / {profile.cpu_physical or '?'} physical cores")
+    typer.echo(f"RAM      : {format_bytes(profile.available_ram_bytes)} free / {format_bytes(profile.total_ram_bytes)}")
+    typer.echo(f"GPU      : {vram}")
+    typer.echo(f"Disk ({profile.disk_path}): {format_bytes(profile.disk_free_bytes)} free / {format_bytes(profile.disk_total_bytes)}")
+
+
 @app.command("reconstruct")
 def reconstruct(
     videos: str = typer.Option(..., help="Comma-separated video paths in processing order."),
