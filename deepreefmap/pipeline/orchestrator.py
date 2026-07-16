@@ -750,9 +750,8 @@ def _prepare_frames(
     labels_dir.mkdir(parents=True, exist_ok=True)
     masks_dir.mkdir(parents=True, exist_ok=True)
     ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
-    # Labels are uint8 in RAM and on disk (a quarter of the old int32 across
-    # a whole run), so ids must fit a byte. int32 caches from older runs
-    # still load (resume downcasts).
+    # Labels are uint8 in RAM and cached as 8-bit grayscale PNG, so class ids
+    # must fit a byte.
     max_class_id = max((cls.id for cls in classes_config.classes), default=0)
     if max_class_id > 255:
         raise ValueError(
@@ -802,7 +801,7 @@ def _prepare_frames(
             mask_path = masks_dir / f"{stem}.png"
             cv2.imwrite(str(image_path), cv2.cvtColor(rectified, cv2.COLOR_RGB2BGR))
             # Lossless grayscale PNG: label rasters are flat regions, so this
-            # is ~50x smaller on disk than the raw array.
+            # is ~200x smaller on disk than the raw array.
             cv2.imwrite(str(labels_path), labels)
             cv2.imwrite(str(mask_path), keep_mask)
             prepared.append(

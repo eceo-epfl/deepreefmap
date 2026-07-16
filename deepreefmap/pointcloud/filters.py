@@ -291,7 +291,7 @@ def build_semantic_reference_cloud(
         frame_f = np.full(n, int(frame_index), dtype=np.int32)
         return xyz_f, rgb_f, lab_f, frame_f, conf_f, dist_f
 
-    parts: list[tuple[np.ndarray, ...] | None] = []
+    parts: list[tuple[np.ndarray, ...]] = []
 
     work = list(enumerate(mapping.frame_indices.tolist()))
     total = len(work)
@@ -313,36 +313,35 @@ def build_semantic_reference_cloud(
     # lexsort that follows are the silent gap the user sees after the
     # per-frame loop hits N/N — surface them via stage_cb.
     _emit_stage("concatenating")
-    n_total = sum(part[0].shape[0] for part in parts if part is not None)
+    n_total = sum(part[0].shape[0] for part in parts)
     xyz = np.empty((n_total, 3), dtype=np.float32)
     rgb = np.empty((n_total, 3), dtype=np.uint8)
-    labels_out = np.empty(n_total, dtype=np.int32)
-    frame_out = np.empty(n_total, dtype=np.int32)
-    conf_out = np.empty(n_total, dtype=np.float32)
-    dist_out = np.empty(n_total, dtype=np.float32)
-    # Filling at a running offset and releasing each part right after keeps
-    # the peak at ~one cloud instead of every part plus six concatenated
-    # copies co-resident. Row order matches the old np.concatenate exactly.
+    labels = np.empty(n_total, dtype=np.int32)
+    frame_indices = np.empty(n_total, dtype=np.int32)
+    confidence = np.empty(n_total, dtype=np.float32)
+    distance = np.empty(n_total, dtype=np.float32)
+    # Popping each part after copying keeps the peak at ~one cloud instead of
+    # every part plus six concatenated copies co-resident. Row order matches
+    # the old np.concatenate exactly.
+    parts.reverse()
     offset = 0
-    for i, part in enumerate(parts):
-        assert part is not None
-        xyz_f, rgb_f, lab_f, frame_f, conf_f, dist_f = part
+    while parts:
+        xyz_f, rgb_f, lab_f, frame_f, conf_f, dist_f = parts.pop()
         stop = offset + xyz_f.shape[0]
         xyz[offset:stop] = xyz_f
         rgb[offset:stop] = rgb_f
-        labels_out[offset:stop] = lab_f
-        frame_out[offset:stop] = frame_f
-        conf_out[offset:stop] = conf_f
-        dist_out[offset:stop] = dist_f
-        parts[i] = None
+        labels[offset:stop] = lab_f
+        frame_indices[offset:stop] = frame_f
+        confidence[offset:stop] = conf_f
+        distance[offset:stop] = dist_f
         offset = stop
     cloud = SemanticPointCloud(
         xyz=xyz,
         rgb=rgb,
-        labels=labels_out,
-        frame_indices=frame_out,
-        confidence=conf_out,
-        distance_to_camera=dist_out,
+        labels=labels,
+        frame_indices=frame_indices,
+        confidence=confidence,
+        distance_to_camera=distance,
     )
 
     if active_radius is not None:
