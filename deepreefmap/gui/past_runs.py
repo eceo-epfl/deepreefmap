@@ -48,6 +48,27 @@ def _run_sort_key(manifest: dict, mtime: float) -> float:
     return mtime
 
 
+def _related_run_counts(entries: list[tuple[Path, str, float, dict]]) -> dict[Path, int]:
+    """Per run dir, how many sibling runs share a video_hash with it.
+
+    Old manifests have no video_hashes and never count as related.
+    """
+    dirs_by_hash: dict[str, set[Path]] = {}
+    for run_dir, _display, _mtime, manifest in entries:
+        for h in manifest.get("video_hashes") or []:
+            if h:
+                dirs_by_hash.setdefault(h, set()).add(run_dir)
+    counts: dict[Path, int] = {}
+    for run_dir, _display, _mtime, manifest in entries:
+        related: set[Path] = set()
+        for h in manifest.get("video_hashes") or []:
+            if h:
+                related |= dirs_by_hash[h]
+        related.discard(run_dir)
+        counts[run_dir] = len(related)
+    return counts
+
+
 def _format_disk_size(run_dir: Path) -> str | None:
     try:
         total = sum(p.stat().st_size for p in run_dir.rglob("*") if p.is_file())
@@ -251,6 +272,7 @@ class PastRunsMixin(MixinBase):
                     pass
                 entries.append((child, display, manifest.stat().st_mtime, data))
         entries.sort(key=lambda e: _run_sort_key(e[3], e[2]), reverse=True)
+        related_counts = _related_run_counts(entries)
 
         # Block signals to avoid triggering _on_past_run_selected during repopulation.
         self._past_runs_combo.blockSignals(True)
@@ -264,7 +286,7 @@ class PastRunsMixin(MixinBase):
                 self._past_runs_combo.setItemData(idx, tooltip, Qt.ItemDataRole.ToolTipRole)
                 self._past_runs_combo.setItemData(
                     idx,
-                    self._build_past_run_card_meta(data, path),
+                    self._build_past_run_card_meta(data, path, related_counts.get(path, 0)),
                     _PAST_RUN_META_ROLE,
                 )
             if self._active_run_dir is not None:
@@ -329,7 +351,7 @@ class PastRunsMixin(MixinBase):
         return "<br>".join(lines)
 
     @staticmethod
-    def _build_past_run_card_meta(manifest: dict, run_dir: Path) -> dict:
+    def _build_past_run_card_meta(manifest: dict, run_dir: Path, related_runs: int = 0) -> dict:
         """Build a flat dict the dropdown delegate uses to paint each card."""
         name = (manifest.get("name") or "").strip() or run_dir.name
         facts: list[str] = []
@@ -357,6 +379,8 @@ class PastRunsMixin(MixinBase):
                 facts.append(f"{n / 1_000:.0f}k pts")
             else:
                 facts.append(f"{n} pts")
+        if related_runs:
+            facts.append(f"{related_runs} related run{'s' if related_runs > 1 else ''}")
         videos = manifest.get("input_videos") or []
         video_line = ""
         if videos:

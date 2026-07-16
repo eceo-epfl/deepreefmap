@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import cast
 
 from PySide6.QtCore import QFileSystemWatcher, QSettings, QSize, QStandardPaths, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QStandardItemModel
+from PySide6.QtGui import QDesktopServices, QIcon, QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
@@ -247,16 +248,26 @@ class FormPanelMixin(MixinBase):
         video_row.addWidget(browse_btn)
         ig.addLayout(video_row)
 
-        ig.addWidget(QLabel("Camera profile"))
+        profile_fps_row = QHBoxLayout()
+        profile_fps_row.setContentsMargins(0, 0, 0, 0)
+        profile_col = QVBoxLayout()
+        profile_col.setContentsMargins(0, 0, 0, 0)
+        profile_col.addWidget(QLabel("Camera profile"))
         self._profile_combo = QComboBox()
         self._profile_combo.addItems(profiles)
-        ig.addWidget(self._profile_combo)
+        profile_col.addWidget(self._profile_combo)
+        profile_fps_row.addLayout(profile_col, 1)
 
-        ig.addWidget(QLabel("FPS"))
+        fps_col = QVBoxLayout()
+        fps_col.setContentsMargins(0, 0, 0, 0)
+        fps_col.addWidget(QLabel("FPS"))
         self._fps_spin = QSpinBox()
         self._fps_spin.setRange(1, 60)
         self._fps_spin.setValue(5)
-        ig.addWidget(self._fps_spin)
+        self._fps_spin.setMinimumWidth(64)
+        fps_col.addWidget(self._fps_spin)
+        profile_fps_row.addLayout(fps_col)
+        ig.addLayout(profile_fps_row)
 
         range_row = QHBoxLayout()
         range_row.setContentsMargins(0, 0, 0, 0)
@@ -281,6 +292,19 @@ class FormPanelMixin(MixinBase):
         self._end_spin.setValue(0.0)
         end_col.addWidget(self._end_spin)
         range_row.addLayout(end_col, 1)
+
+        # Sits with Begin/End: it is the visual way to set exactly these two.
+        self._scrub_btn = QPushButton()
+        self._scrub_btn.setIcon(QIcon.fromTheme(
+            "video-x-generic",
+            self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
+        ))
+        self._scrub_btn.setIconSize(QSize(18, 18))
+        self._scrub_btn.setFixedSize(28, 28)
+        self._scrub_btn.setToolTip("Preview the video and drag handles to set Begin/End")
+        self._scrub_btn.setEnabled(False)
+        self._scrub_btn.clicked.connect(self._open_scrub_dialog)
+        range_row.addWidget(self._scrub_btn, 0, Qt.AlignmentFlag.AlignBottom)
         ig.addLayout(range_row)
 
         self._video_duration_s: float | None = None
@@ -1493,6 +1517,7 @@ class FormPanelMixin(MixinBase):
         if duration is None:
             return
         self._video_duration_s = duration
+        self._scrub_btn.setEnabled(True)
         # Cap is generous to allow concatenated streams beyond a single file.
         self._end_spin.setMaximum(max(duration, 1e9))
         self._begin_spin.setMaximum(max(duration, 1e9))
@@ -1507,6 +1532,25 @@ class FormPanelMixin(MixinBase):
         path = self._video_input.text().strip()
         if path and Path(path).exists():
             self._auto_probe_video_duration(path)
+
+    def _open_scrub_dialog(self) -> None:
+        """Preview the video and write the scrubbed range into the spinboxes."""
+        from deepreefmap.gui.video_scrub_dialog import VideoScrubDialog
+
+        path = self._video_input.text().strip()
+        if not path or not Path(path).exists() or self._video_duration_s is None:
+            return
+        dialog = VideoScrubDialog(
+            path,
+            self._video_duration_s,
+            begin_s=float(self._begin_spin.value()),
+            end_s=float(self._end_spin.value()),
+            parent=self,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            begin, end = dialog.time_range()
+            self._begin_spin.setValue(begin)
+            self._end_spin.setValue(end)
 
     def _browse_output_root(self) -> None:
         path = QFileDialog.getExistingDirectory(

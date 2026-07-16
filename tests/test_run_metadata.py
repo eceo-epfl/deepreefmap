@@ -51,10 +51,13 @@ def test_build_manifest_merges_run_params_and_bumps_schema(tmp_path: Path) -> No
         mode="semantic",
         run_name="reef",
         input_videos=["a.mp4"],
+        video_hashes=["deadbeefdeadbeefdeadbeefdeadbeef"],
         run_params=run_params,
     )
 
-    assert manifest["schema_version"] == 3
+    assert manifest["schema_version"] == 4
+    assert manifest["video_hashes"] == ["deadbeefdeadbeefdeadbeefdeadbeef"]
+    assert len(manifest["video_hashes"]) == len(manifest["input_videos"])
     assert manifest["mapping_backend"] == "loger"
     assert manifest["mapping_options"] == {"window_size": 16, "overlap_size": 2, "model_path": None}
     assert manifest["geometry_source"] == "world_points"
@@ -130,7 +133,8 @@ def test_build_manifest_without_run_params_is_minimal(tmp_path: Path) -> None:
         output_files=["run_manifest.json"],
         mode="geometry_only",
     )
-    assert manifest["schema_version"] == 3
+    assert manifest["schema_version"] == 4
+    assert manifest["video_hashes"] == []
     assert "geometry_source" not in manifest
 
 

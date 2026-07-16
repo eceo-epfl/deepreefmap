@@ -133,6 +133,7 @@ if TYPE_CHECKING:
         _rename_btn: QPushButton
         _rename_cancel_btn: QPushButton
         _rename_ok_btn: QPushButton
+        _scrub_btn: QPushButton
         _spinner_stop: SpinnerStopButton
         _start_btn: QPushButton
         _update_btn: QPushButton

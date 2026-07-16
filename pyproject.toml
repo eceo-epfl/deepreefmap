@@ -49,6 +49,9 @@ dependencies = [
   # User-writable location for LoGeR checkpoints (see deepreefmap.paths.loger_ckpts_dir):
   # a frozen PyApp binary's install tree is read-only, so they can't live under third_party/.
   "platformdirs>=4",
+  # Constant-time sampled video hashing (deepreefmap.io.video_hash) — dedup-grade
+  # identity for grouping runs of the same clip, not an integrity hash.
+  "imohash>=1.1.0",
 ]
 
 [project.optional-dependencies]
@@ -159,6 +162,7 @@ module = [
   "loger.*",
   "py_gpmf_parser.*",
   "psutil.*",
+  "imohash.*",
 ]
 ignore_missing_imports = true
 
