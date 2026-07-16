@@ -24,19 +24,20 @@ from deepreefmap.system_probe import GPU_CUDA, GPU_MPS, SystemProfile, format_by
 # RAM FOOTPRINT (allocations on top of whatever is already resident), which is why
 # preflight_check grades it against FREE RAM. A measured peak from perf_sampler is
 # different in kind: an absolute system-wide high-water mark graded against TOTAL
-# RAM. On the 31 GB reference box a 1134-frame 3fps run footprints ~19 GB and rode
-# to a 30 GB / 97% system peak; the analytic footprint matches, and once measured
-# the absolute peak supersedes it.
+# RAM; once a comparable run has been recorded the measured peak supersedes the
+# analytic footprint.
 #
 # Two independent per-frame terms:
 # - Prepared frames stay in RAM for the whole run at the PROCESSING resolution:
 #   rgb uint8 (3) + labels int32 (4) + keep_mask uint8 (1) = 8 B/px.
 # - Mapping arrays live at LoGeR's own 504x280 inference grid, NOT the
-#   processing resolution. The peak stage is the pose re-anchor, where
-#   local_points + world_points + rebased output (f32, 12 each) + depth (4)
-#   are co-resident = 40 B per mapping pixel.
+#   processing resolution. The peak stage is Pi3's CPU window merge, where
+#   the per-window parts (points + local_points f32, 12 each, + conf 4 =
+#   28) are still referenced while torch.cat materialises the merged copies
+#   (another 28) = 56 B per mapping pixel. The later re-anchor rebases
+#   points in place and adds no full-size buffer (loger_backend.py).
 #
-# The cloud stage (~110 B per kept point) overtakes the re-anchor only when
+# The cloud stage (~110 B per kept point) overtakes the merge only when
 # point filtering keeps an unusually large cloud; measured peaks catch that
 # case per machine. scsfmlearner maps frame-by-frame and is far lighter, so
 # this model is conservative for it.
@@ -44,7 +45,7 @@ _FRAME_BATCH_BYTES_PER_PIXEL = 8
 # LoGeR's default target_resolution (loger_backend.py). If a backend override
 # changes it this drifts, but measured peaks supersede after one recorded run.
 _MAPPING_PIXELS_PER_FRAME = 504 * 280
-_REANCHOR_BYTES_PER_MAPPING_PIXEL = 40
+_MERGE_BYTES_PER_MAPPING_PIXEL = 56
 # Allocator slack, per-block float64 transients and the confidence array.
 _OVERHEAD = 1.15
 # Torch, model weights and interpreter working set, present regardless of frames.
@@ -107,7 +108,7 @@ def _bytes_per_frame(width: int, height: int) -> int:
     """Per-frame resident bytes at the run's peak stage (see the model above)."""
     return (
         max(1, width * height) * _FRAME_BATCH_BYTES_PER_PIXEL
-        + _MAPPING_PIXELS_PER_FRAME * _REANCHOR_BYTES_PER_MAPPING_PIXEL
+        + _MAPPING_PIXELS_PER_FRAME * _MERGE_BYTES_PER_MAPPING_PIXEL
     )
 
 
