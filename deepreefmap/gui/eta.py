@@ -1,10 +1,10 @@
 """Remaining-time estimation for a reconstruction run.
 
-The estimate is measurement-first. A stage that is running is extrapolated from its
-own live throughput; only stages that have not started yet are seeded from a prior,
-and the instant such a stage starts, its own rate takes over. Before there is any
-real signal the estimator returns ``None`` so the UI can say "estimating…" rather
-than show a fabricated number.
+The estimate is measurement-first. A running stage starts from its prior scaled to
+what is left, then glides onto its own live throughput as that rate settles, so a
+countdown never blanks or snaps mid-stage. Before there is any real signal the
+estimator returns ``None`` so the UI can say "estimating…" rather than show a
+fabricated number.
 
 This module is deliberately Qt-free so the logic can be tested without a display.
 """
@@ -89,6 +89,10 @@ _PHASE_TO_STAGE = {
 # Only trust the live extrapolation once a stage has made enough progress that its
 # rate has settled. Extrapolating from 1% done wildly overshoots.
 _MIN_FRAC_FOR_LIVE = 0.08
+# Over [_MIN_FRAC_FOR_LIVE, _LIVE_HANDOVER_FRAC] the estimate glides from the prior
+# to the stage's own measured rate, so it does not snap (e.g. halve) the instant
+# the library reports its first real numbers.
+_LIVE_HANDOVER_FRAC = 0.4
 _EMA_ALPHA = 0.3
 
 
@@ -126,7 +130,8 @@ def driver_denominator(driver: str, frames: int, points: int | None) -> float | 
     if driver == FIXED:
         return 1.0
     if driver == FRAMES:
-        return float(frames)
+        # frames == 0 means the count isn't known yet, same as points == None.
+        return float(frames) if frames > 0 else None
     if points is None:
         return None
     return float(points) if driver == POINTS else _nlogn(points)
@@ -210,7 +215,15 @@ class RunEtaEstimator:
             run.started_at = now
         if run.state == "done":
             return
-        frac = current / total if total > 0 else 0.0
+        if total <= 0:
+            # Indeterminate sub-steps (align prep, the resume save) carry no
+            # fraction; zeroing frac here would blank the remainder mid-stage.
+            return
+        # Sub-phases fold onto one stage but count different units (mapping
+        # windows, then re-anchor points), so a later sub-phase restarting at 0
+        # must not drag the stage's fraction backwards. Same monotonic fill as
+        # the visible mapping bar.
+        frac = max(run.frac, current / total)
         elapsed = run.elapsed(now)
         if frac > 0 and elapsed > 0:
             inst = frac / elapsed
@@ -259,22 +272,54 @@ class RunEtaEstimator:
             return max(0.0, (1.0 - run.frac) / run.rate)
         return None
 
+    def _prior_remaining(self, spec: StageSpec, now: float) -> float | None:
+        """The prior stage duration scaled to what is left, for a running stage.
+
+        `_prior_estimate` is the whole-stage duration; a stage part-way through has
+        only `(1 - frac)` of it left. This is what lets a running stage count down
+        from our estimate before its own measured rate is trustworthy.
+        """
+        full = self._prior_estimate(spec, now)
+        if full is None:
+            return None
+        return max(0.0, full * (1.0 - self._runs[spec.key].frac))
+
+    def _live_confidence(self, spec: StageSpec) -> float:
+        """0 at the live threshold, ramping to 1 by the handover fraction."""
+        frac = self._runs[spec.key].frac
+        if frac <= _MIN_FRAC_FOR_LIVE:
+            return 0.0
+        if frac >= _LIVE_HANDOVER_FRAC:
+            return 1.0
+        return (frac - _MIN_FRAC_FOR_LIVE) / (_LIVE_HANDOVER_FRAC - _MIN_FRAC_FOR_LIVE)
+
     def _running_remaining(self, spec: StageSpec, now: float) -> float | None:
+        """Remaining for the running stage: prior first, gliding into the live rate.
+
+        Before the stage's own rate has settled we show the prior scaled to what is
+        left, so the step and the total both count down from the estimate we already
+        had instead of sitting blank. Once the live rate is reliable we blend into
+        it over a short window so the figure glides rather than snapping.
+        """
         live = self._live_remaining(spec)
-        if live is not None:
+        prior = self._prior_remaining(spec, now)
+        if live is None:
+            return prior
+        if prior is None:
             return live
-        # Indeterminate or too-early: lean on the prior for the total estimate.
-        return self._prior_estimate(spec, now)
+        w = self._live_confidence(spec)
+        return w * live + (1.0 - w) * prior
 
     def current_stage_remaining(self, now: float) -> float | None:
-        """Live remainder for whichever stage is running, or None if not yet reliable.
+        """Remainder for whichever stage is running, or None with no signal at all.
 
-        This is the same kind of measured figure a tqdm bar shows for the stage,
-        so it is trustworthy even on a first run with no stored profile.
+        Prior-first like the total, so the status line's countdown never blinks
+        out early in a stage. On a first run with no priors it degrades to the
+        purely measured figure, appearing once the live rate settles.
         """
         for spec in STAGES:
             if self._runs[spec.key].state == "running":
-                return self._live_remaining(spec)
+                return self._running_remaining(spec, now)
         return None
 
     def visible_remaining(self, now: float) -> float | None:
@@ -314,7 +359,7 @@ class RunEtaEstimator:
             elif run.state == "running":
                 rows.append(StageRow(
                     spec.key, spec.label, "running", run.elapsed(now), False,
-                    remaining=self._live_remaining(spec), frac=run.frac,
+                    remaining=self._running_remaining(spec, now), frac=run.frac,
                 ))
             else:
                 est = self._prior_estimate(spec, now)

@@ -312,9 +312,8 @@ class ProgressBarsMixin(MixinBase):
         started = getattr(self, "_status_phase_started", None)
         # Second line: count · stage elapsed · stage remainder. Kept off the
         # first line so the label text never jumps as the numbers grow. The
-        # measured remainder is the same kind of live figure a tqdm bar shows,
-        # trustworthy even on a first run, and stage-scoped so it never
-        # masquerades as the whole-run total.
+        # remainder is prior-first then live (same blend as the total), and
+        # stage-scoped so it never masquerades as the whole-run total.
         parts: list[str] = []
         count = getattr(self, "_status_count_text", "")
         if count:

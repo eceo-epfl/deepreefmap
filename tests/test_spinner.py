@@ -99,8 +99,10 @@ def test_status_ticker_resets_per_stage(qapp, monkeypatch):
     clock[0] += 40.0
     window._apply_progress("mapping", "Mapping", current=1, total=5)
     # A new phase restarts the stopwatch, so elapsed is near zero, not 40s.
+    # The line may carry a stage remainder after it, so pick the elapsed field.
     window._render_status()
-    assert _plain(window._status_label.text()).endswith("0s")
+    parts = _plain(window._status_label.text()).split(" · ")
+    assert parts[2] == "0s"
 
 
 def test_update_progress_zero_total_is_indeterminate(qapp):

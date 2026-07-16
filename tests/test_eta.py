@@ -21,6 +21,66 @@ def test_running_stage_extrapolates_from_live_rate():
     assert 40.0 <= remaining <= 70.0
 
 
+def test_running_stage_shows_prior_before_live_is_reliable():
+    # Preprocess prior: 100 frames * 1 s/frame = 100s. At 4% done (below the 8%
+    # live threshold) the step must still count down from the prior, not sit blank
+    # waiting for the library's first real numbers.
+    est = RunEtaEstimator(frames=100, priors={"preprocess": 1.0})
+    est.update("preprocess", current=4, total=100, now=4.0)
+    row = {r.key: r for r in est.stage_rows(now=4.0)}["preprocess"]
+    assert row.state == "running"
+    assert row.remaining is not None
+    assert 90.0 <= row.remaining <= 100.0  # ~100 * (1 - 0.04)
+
+
+def test_running_stage_hands_over_to_live_rate():
+    # Prior says 100s; the stage actually runs at double speed. Past the handover
+    # fraction the live rate wins, so it reads ~25s, not the ~50s prior remainder.
+    est = RunEtaEstimator(frames=100, priors={"preprocess": 1.0})
+    est.update("preprocess", current=1, total=100, now=0.0)
+    est.update("preprocess", current=50, total=100, now=25.0)
+    row = {r.key: r for r in est.stage_rows(now=25.0)}["preprocess"]
+    assert row.remaining is not None
+    assert 20.0 <= row.remaining <= 32.0
+
+
+def test_status_stage_remaining_counts_down_from_prior():
+    # The status line uses current_stage_remaining; it must fall back to the
+    # prior like the total does, not blank out below the live threshold.
+    est = RunEtaEstimator(frames=100, priors={"preprocess": 1.0})
+    est.update("preprocess", current=4, total=100, now=4.0)
+    remaining = est.current_stage_remaining(now=4.0)
+    assert remaining is not None
+    assert 90.0 <= remaining <= 100.0
+
+
+def test_indeterminate_subphase_keeps_the_stage_remainder():
+    # The resume save reports (0, 0). It must not zero mapping's fraction and
+    # blank the countdown while the save runs.
+    est = RunEtaEstimator(frames=100, priors={"mapping": 1.0})
+    est.update("mapping", current=1, total=100, now=0.0)
+    est.update("mapping", current=90, total=100, now=90.0)
+    before = est.current_stage_remaining(now=90.0)
+    est.update("mapping", current=0, total=0, now=91.0)
+    after = est.current_stage_remaining(now=91.0)
+    assert before is not None and after is not None
+    assert abs(after - before) < 2.0
+
+
+def test_subphase_unit_change_does_not_drag_frac_backwards():
+    # The pose re-anchor reports point counts, restarting near zero in a new
+    # unit. Mapping's fraction must stay monotonic so the countdown neither
+    # blanks nor jumps back to the full prior.
+    est = RunEtaEstimator(frames=100, priors={"mapping": 1.0})
+    est.update("mapping", current=1, total=100, now=0.0)
+    est.update("mapping", current=90, total=100, now=90.0)
+    est.update("mapping_align", current=1_000, total=500_000, now=91.0)
+    row = {r.key: r for r in est.stage_rows(now=91.0)}["mapping"]
+    assert row.frac >= 0.9
+    assert row.remaining is not None
+    assert row.remaining < 30.0
+
+
 def test_completed_stage_calibrates_pending_via_weights():
     est = RunEtaEstimator(frames=100)
     est.update("preprocess", current=1, total=100, now=0.0)

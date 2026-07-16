@@ -19,11 +19,15 @@ _BAR_CELLS = 10  # width of the per-stage fill bar, in block glyphs
 
 
 def _bar(frac: float, colour: str) -> str:
-    """A small two-tone fill bar as block glyphs, coloured by stage state."""
+    """A thin two-tone fill bar, matching the flat progress bars elsewhere.
+
+    Heavy horizontal-line glyphs read as a slim bar rather than the tall block
+    glyphs, so the popup breakdown lines up with the app's thin QProgressBars.
+    """
     filled = max(0, min(_BAR_CELLS, round(_BAR_CELLS * frac)))
     return (
-        f"<span style='color:{colour}'>{'█' * filled}</span>"
-        f"<span style='color:{TEXT_MUTED}'>{'░' * (_BAR_CELLS - filled)}</span>"
+        f"<span style='color:{colour}'>{'━' * filled}</span>"
+        f"<span style='color:{TEXT_MUTED}'>{'━' * (_BAR_CELLS - filled)}</span>"
     )
 
 
@@ -89,7 +93,7 @@ class TimingPopup(QWidget):
             if row.state in ("done", "running"):
                 elapsed_total += row.seconds
                 time_text = format_duration(row.seconds)
-                # The running stage's remainder is measured, so show it always.
+                # Prior-seeded early in the stage, live-measured later.
                 if row.state == "running" and row.remaining is not None:
                     remaining_text = f"· ~{format_duration(row.remaining)} left"
             elif has_history:
