@@ -53,6 +53,11 @@ Name: "{userprograms}\DeepReefMap"; Filename: "{app}\deepreefmap.exe"; IconFilen
 Name: "{userdesktop}\DeepReefMap"; Filename: "{app}\deepreefmap.exe"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 
 [Run]
+; Provision the Python environment during install so the first launch is
+; instant and console-free. `self restore` is PyApp-internal and installs the
+; env fresh. Inno ignores the exit code, so an offline install still completes
+; and the first launch provisions silently instead (hidden console).
+Filename: "{app}\deepreefmap.exe"; Parameters: "self restore"; StatusMsg: "Setting up Python environment (this may take several minutes)..."; Flags: runhidden waituntilterminated
 Filename: "{app}\deepreefmap.exe"; Description: "Launch DeepReefMap"; Flags: nowait postinstall skipifsilent
 
 [Code]

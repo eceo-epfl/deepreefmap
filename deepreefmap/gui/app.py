@@ -202,6 +202,11 @@ def launch(classes_path: Path | None = None, view_run_dir: Path | None = None) -
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    # After basicConfig: the root StreamHandler keeps the real stderr, so
+    # redirected writes can't loop back through it.
+    from deepreefmap.gui.log_view import redirect_std_streams_to_logging
+
+    redirect_std_streams_to_logging()
     if os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("QT_QPA_PLATFORM"):
         os.environ["QT_QPA_PLATFORM"] = "xcb"
     os.environ.setdefault("QT_OPENGL", "desktop")

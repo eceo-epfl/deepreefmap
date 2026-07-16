@@ -47,6 +47,8 @@ fi
 cat > "$PYAPP_DIR/src/process.rs" <<'RUST'
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::process::exit;
 use std::process::{Command, ExitStatus};
 
@@ -56,6 +58,11 @@ use crate::app;
 
 pub fn wait_for(mut command: Command, message: String) -> Result<(ExitStatus, String)> {
     eprintln!("==> {}", message);
+    // The launcher is a GUI-subsystem exe; spawning console-subsystem uv/pip
+    // without this flag pops a visible console window during provisioning.
+    // Piped stdio still flows, so callers can stream install output.
+    #[cfg(windows)]
+    command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     let mut child = command.spawn()?;
     let status = child.wait()?;
     Ok((status, String::new()))

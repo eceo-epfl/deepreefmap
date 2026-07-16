@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import logging
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QUrl, Signal, SignalInstance
@@ -127,6 +129,56 @@ def install_qt_log_handler(level: int = logging.INFO) -> QtLogHandler:
     root.addHandler(handler)
     root.setLevel(min(root.level or level, level))
     return handler
+
+
+class _StreamToLogger(io.TextIOBase):
+    """File-like shim that turns stream writes into log records.
+
+    `isatty()` is False so tqdm bars created with `disable=None` stay off and
+    don't spam the log with carriage-return redraws.
+    """
+
+    def __init__(self, logger: logging.Logger, level: int) -> None:
+        self._logger = logger
+        self._level = level
+        self._buffer = ""
+
+    def write(self, s: str) -> int:
+        self._buffer += s
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            self._emit(line)
+        return len(s)
+
+    def flush(self) -> None:
+        line, self._buffer = self._buffer, ""
+        self._emit(line)
+
+    def _emit(self, line: str) -> None:
+        # Keep the final \r segment only, matching what a terminal would show
+        # after in-place redraws.
+        line = line.split("\r")[-1]
+        if line.strip():
+            self._logger.log(self._level, line)
+
+    def isatty(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
+
+
+def redirect_std_streams_to_logging() -> None:
+    """Route stray stdout/stderr writes into the `deepreefmap` logger tree.
+
+    From there they reach the Qt log window and the per-run log file on every
+    platform. On the Windows GUI-subsystem binary there is no console at all,
+    so this is the only place such output remains visible. Call after
+    `logging.basicConfig` so the root StreamHandler keeps the real stderr and
+    no feedback loop forms.
+    """
+    sys.stdout = _StreamToLogger(logging.getLogger("deepreefmap.stdout"), logging.INFO)
+    sys.stderr = _StreamToLogger(logging.getLogger("deepreefmap.stderr"), logging.WARNING)
 
 
 def open_run_log_file(run_dir: Path, level: int = logging.INFO) -> logging.FileHandler:

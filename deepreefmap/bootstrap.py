@@ -46,6 +46,23 @@ def _attach_parent_console() -> None:
         pass
 
 
+def _ensure_stdio_streams() -> None:
+    """Guarantee stdout/stderr/stdin are never None.
+
+    A GUI-subsystem process on Windows starts with no console, so all three
+    std streams are None. Anything that writes to them then crashes: tqdm
+    defaults to file=sys.stderr and dies with 'NoneType has no attribute
+    write' on its first refresh, killing the reconstruction. Point any missing
+    stream at the null device so writes are silently discarded.
+    """
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w")  # noqa: SIM115
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w")  # noqa: SIM115
+    if sys.stdin is None:
+        sys.stdin = open(os.devnull)  # noqa: SIM115
+
+
 def _refresh_uninstall_display_version() -> None:
     """Keep Add/Remove Programs in sync after an in-app update or rollback.
 
@@ -76,6 +93,7 @@ def main() -> None:
     args = sys.argv[1:]
     if args:
         _attach_parent_console()
+    _ensure_stdio_streams()
 
     from deepreefmap.gui.binary_swap import (
         cleanup_stale_backups,

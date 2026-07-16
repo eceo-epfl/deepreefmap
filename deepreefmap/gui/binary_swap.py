@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -240,6 +241,51 @@ def prune_previous_env(current_prefix: str | os.PathLike[str] | None = None) -> 
     return removed
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def provision_env(
+    binary_path: str | os.PathLike[str],
+    line_cb: Callable[[str], None] | None = None,
+) -> bool:
+    """Provision the new binary's environment via ``self restore``, streaming
+    install output to ``line_cb``. Returns False on failure instead of raising
+    (the binary is already swapped; the next launch retries provisioning).
+    """
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    def log(message: str) -> None:
+        if line_cb is not None:
+            line_cb(message)
+
+    try:
+        proc = subprocess.Popen(
+            [str(binary_path), "self", "restore"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            creationflags=creationflags,
+        )
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            # uv redraws progress with \r and ANSI escapes; keep the final
+            # segment of each line as the log entry.
+            segment = _ANSI_RE.sub("", raw).split("\r")[-1].strip()
+            if segment:
+                log(segment)
+        code = proc.wait()
+    except Exception:
+        logger.exception("Provisioning failed for %s", binary_path)
+        log("Environment preparation failed; it will be retried on next launch.")
+        return False
+    if code != 0:
+        logger.warning("`self restore` exited with %d for %s", code, binary_path)
+        log("Environment preparation failed; it will be retried on next launch.")
+        return False
+    return True
+
+
 def perform_update(
     release: dict,
     binary_path: Path,
@@ -247,7 +293,8 @@ def perform_update(
     progress_cb: Callable[[int, int], None] | None = None,
     line_cb: Callable[[str], None] | None = None,
 ) -> None:
-    """Download the release's binary asset and swap it in place.
+    """Download the release's binary asset and swap it in place, then
+    provision the new version's environment so the relaunch is instant.
 
     Qt-free so the GUI worker, unit tests, and the e2e harness share one path.
     Records the running env for pruning just before the swap.
@@ -270,4 +317,6 @@ def perform_update(
     record_previous_env()
     log(f"Replacing binary at {binary_path}")
     replace_binary(binary_path, staged)
+    log("Preparing the new version's environment…")
+    provision_env(binary_path, line_cb=line_cb)
     log("Done. Relaunch to use the new version.")

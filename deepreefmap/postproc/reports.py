@@ -160,7 +160,7 @@ def render_offline_video_placeholder(
     # When a progress_callback is provided (GUI usage) we skip the tqdm bar to
     # avoid double progress reporting and let the caller drive its own widget.
     if progress_callback is None:
-        progress: Any = tqdm(iterable, desc="render-video", unit="frame", total=n_frames)
+        progress: Any = tqdm(iterable, desc="render-video", unit="frame", total=n_frames, disable=None)
     else:
         progress = iterable
     for idx, frame_path in progress:

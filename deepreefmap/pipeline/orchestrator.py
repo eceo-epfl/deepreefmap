@@ -782,6 +782,9 @@ def _prepare_frames(
         desc="Preparing frames",
         unit="frame",
         dynamic_ncols=True,
+        # Off-TTY (GUI: stderr is a log shim or devnull) the bar is redundant
+        # and its \r redraws would spam the log window.
+        disable=None,
     )
 
     def flush_pending() -> None:
