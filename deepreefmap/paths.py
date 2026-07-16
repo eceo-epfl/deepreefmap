@@ -24,11 +24,9 @@ def loger_ckpts_dir() -> Path:
 
 
 def env_prune_marker_path() -> Path:
-    """Marker recording the previous version's env dir, pending removal.
+    """Marker file used by the retired marker-based env pruning.
 
-    Written just before an in-app update swaps the binary (while the old version
-    is still running) and consumed on the next launch, once the new version has
-    provisioned successfully. Lives alongside the other user-writable app data so
-    it survives the binary swap.
+    Superseded by the launch-time sweep (`binary_swap.prune_stale_envs`), which
+    unlinks any leftover marker. Kept only for that cleanup.
     """
     return Path(platformdirs.user_data_dir("deepreefmap", appauthor=False)) / "pending_env_prune.json"

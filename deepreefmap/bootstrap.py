@@ -1,8 +1,8 @@
 """Entry point for the packaged (PyApp) binary.
 
 Runs on every launch to keep the environment in sync with the binary:
-re-provision it if files were deleted (OS update / antivirus), and drop the
-previous version's environment after an in-app update. Then dispatches: no
+re-provision it if files were deleted (OS update / antivirus), and drop every
+other version's environment. Then dispatches: no
 arguments launches the GUI (double-click, desktop shortcut), any arguments go
 to the Typer CLI, so the installed binary supports `deepreefmap reconstruct …`
 and friends.
@@ -98,7 +98,7 @@ def main() -> None:
     from deepreefmap.gui.binary_swap import (
         cleanup_stale_backups,
         env_is_healthy,
-        prune_previous_env,
+        prune_stale_envs,
         self_restore,
     )
 
@@ -119,9 +119,10 @@ def main() -> None:
 
         cleanup_stale_backups(Path(binary))
 
-    # The new version has provisioned successfully (we got here), so it is safe
-    # to drop the environment a prior in-app update left behind.
-    prune_previous_env()
+    # This version has provisioned successfully (we got here), so every other
+    # version's env — left by an in-app update or an installer reinstall — is
+    # safe to drop.
+    prune_stale_envs()
 
     _refresh_uninstall_display_version()
 

@@ -91,9 +91,15 @@ class LoGeRBackend(MappingBackend):
 
     def _load_loger(self) -> None:
         import torch
-        from loger.models.pi3 import Pi3
 
-        from deepreefmap.device import resolve_device
+        from deepreefmap.device import (
+            disable_torch_compile_without_triton,
+            resolve_device,
+        )
+
+        disable_torch_compile_without_triton()
+
+        from loger.models.pi3 import Pi3
 
         if self._requested_device is not None:
             device = torch.device(self._requested_device)

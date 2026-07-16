@@ -63,7 +63,6 @@ def test_perform_update_provisions_after_swap(tmp_path, monkeypatch):
         calls.append("download")
 
     monkeypatch.setattr(binary_swap, "download_to", fake_download)
-    monkeypatch.setattr(binary_swap, "record_previous_env", lambda: calls.append("record"))
     monkeypatch.setattr(
         binary_swap, "replace_binary", lambda target, src: calls.append("replace")
     )
@@ -73,7 +72,7 @@ def test_perform_update_provisions_after_swap(tmp_path, monkeypatch):
         lambda path, line_cb=None: calls.append("provision") or True,
     )
     binary_swap.perform_update({"tag_name": "v9.9.9"}, tmp_path / "bin", "9.9.9")
-    assert calls == ["download", "record", "replace", "provision"]
+    assert calls == ["download", "replace", "provision"]
 
 
 def test_stream_to_logger_buffers_partial_lines(caplog):

@@ -6,6 +6,7 @@ import torch
 
 from deepreefmap.device import (
     autocast_context,
+    disable_torch_compile_without_triton,
     get_autocast_dtype,
     release_device_memory,
     resolve_device,
@@ -63,6 +64,28 @@ def test_get_autocast_dtype_old_gpu_skips_flash_probe():
         ),
     ):
         assert get_autocast_dtype(torch.device("cuda")) == torch.float16
+
+
+def test_disable_torch_compile_without_triton_disables_dynamo():
+    original = torch._dynamo.config.disable
+    try:
+        with patch("deepreefmap.device.importlib.util.find_spec", return_value=None):
+            torch._dynamo.config.disable = False
+            disable_torch_compile_without_triton()
+            assert torch._dynamo.config.disable is True
+    finally:
+        torch._dynamo.config.disable = original
+
+
+def test_disable_torch_compile_with_triton_leaves_dynamo_alone():
+    original = torch._dynamo.config.disable
+    try:
+        with patch("deepreefmap.device.importlib.util.find_spec", return_value=object()):
+            torch._dynamo.config.disable = False
+            disable_torch_compile_without_triton()
+            assert torch._dynamo.config.disable is False
+    finally:
+        torch._dynamo.config.disable = original
 
 
 def test_autocast_context_returns_context_manager():

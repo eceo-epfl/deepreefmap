@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -179,9 +178,9 @@ def self_restore(binary_path: str | os.PathLike[str]) -> bool:
         return False
 
 
-# --- Previous-environment pruning -------------------------------------------
-# Each version's env is a multi-GB directory PyApp never removes. Record the
-# running env before an update swaps the binary, then drop it on the next launch.
+# --- Stale-environment pruning ------------------------------------------------
+# Each version's env is a multi-GB directory PyApp never removes, and installer
+# reinstalls leave the previous version's env behind. Sweep them on every launch.
 
 
 def _env_dir_for_prefix(prefix: str | os.PathLike[str]) -> Path:
@@ -189,55 +188,34 @@ def _env_dir_for_prefix(prefix: str | os.PathLike[str]) -> Path:
     return Path(prefix).parent
 
 
-def record_previous_env(prefix: str | os.PathLike[str] | None = None) -> None:
-    """Record the active version's env dir for removal after the next launch."""
-    from deepreefmap.paths import env_prune_marker_path
+def prune_stale_envs(current_prefix: str | os.PathLike[str] | None = None) -> list[Path]:
+    """Remove every version env except the running one.
 
-    env_dir = _env_dir_for_prefix(prefix or sys.prefix)
-    version = ""
-    try:
-        import importlib.metadata
+    PyApp lays envs out as ``.../pyapp/deepreefmap/<version>/python``, so the
+    running env's siblings are all stale — whether left by an in-app update or
+    a manual installer reinstall. Runs at startup, so the current env has
+    already provisioned. A no-op outside a PyApp env (dev venv). Returns the
+    removed dirs.
 
-        version = importlib.metadata.version("deepreefmap")
-    except Exception:
-        pass
-    marker = env_prune_marker_path()
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(json.dumps({"env_dir": str(env_dir), "version": version}))
-
-
-def prune_previous_env(current_prefix: str | os.PathLike[str] | None = None) -> Path | None:
-    """Remove the env recorded by a prior update, unless it is the active one.
-
-    Runs at startup once the new version has provisioned. Never deletes the
-    running env or anything outside a PyApp data dir. Returns the removed dir,
-    or None if there was nothing to prune.
+    Tradeoff: two installed binaries of different versions would delete each
+    other's env on every launch. PyApp keys envs by project name + version
+    only, so their envs are indistinguishable; one install per machine is the
+    deployed reality.
     """
     from deepreefmap.paths import env_prune_marker_path
 
-    marker = env_prune_marker_path()
-    if not marker.exists():
-        return None
-    try:
-        data = json.loads(marker.read_text())
-        old = data.get("env_dir")
-    except Exception:
-        marker.unlink(missing_ok=True)
-        return None
+    # Legacy marker from the pre-sweep prune mechanism.
+    env_prune_marker_path().unlink(missing_ok=True)
 
-    removed: Path | None = None
-    current_dir = _env_dir_for_prefix(current_prefix or sys.prefix)
-    if old:
-        old_path = Path(old)
-        if (
-            old_path != current_dir
-            and "pyapp" in old_path.parts
-            and old_path.is_dir()
-        ):
-            shutil.rmtree(old_path, ignore_errors=True)
-            removed = old_path
-            logger.info("Pruned previous environment %s", old_path)
-    marker.unlink(missing_ok=True)
+    current = _env_dir_for_prefix(current_prefix or sys.prefix)
+    if "pyapp" not in current.parts or not current.is_dir():
+        return []
+    removed: list[Path] = []
+    for sibling in current.parent.iterdir():
+        if sibling != current and sibling.is_dir():
+            shutil.rmtree(sibling, ignore_errors=True)
+            removed.append(sibling)
+            logger.info("Pruned stale environment %s", sibling)
     return removed
 
 
@@ -297,7 +275,7 @@ def perform_update(
     provision the new version's environment so the relaunch is instant.
 
     Qt-free so the GUI worker, unit tests, and the e2e harness share one path.
-    Records the running env for pruning just before the swap.
+    The old version's env is swept on the new version's first launch.
     """
     binary_path = Path(binary_path)
 
@@ -314,7 +292,6 @@ def perform_update(
         staged.unlink()
     download_to(url, staged, progress_cb=progress_cb)
     log(f"Verifying download ({staged.stat().st_size} bytes)…")
-    record_previous_env()
     log(f"Replacing binary at {binary_path}")
     replace_binary(binary_path, staged)
     log("Preparing the new version's environment…")

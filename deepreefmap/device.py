@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import gc
+import importlib.util
 import logging
 import os
 
@@ -10,6 +11,7 @@ import torch
 logger = logging.getLogger(__name__)
 
 _rocm_attention_notice_emitted = False
+_triton_notice_emitted = False
 
 
 def _enable_rocm_experimental_attention() -> None:
@@ -67,6 +69,30 @@ def _flash_sdpa_works() -> bool:
             "using float16 autocast instead of bfloat16."
         )
         return False
+
+
+def disable_torch_compile_without_triton() -> None:
+    """Run ``@torch.compile`` functions eagerly when Triton is missing.
+
+    torch.compile's inductor backend needs Triton to generate GPU kernels, but
+    Windows torch wheels ship without it, so LoGeR's compiled TTT functions
+    (third_party/LoGeR ttt.py) abort with TritonMissing. Dynamo checks
+    ``config.disable`` at call time, so flipping it after the decorators have
+    run still forces eager execution — numerically identical, just slower.
+    """
+    global _triton_notice_emitted
+    try:
+        if importlib.util.find_spec("triton") is not None:
+            return
+        torch._dynamo.config.disable = True
+        if not _triton_notice_emitted:
+            logger.warning(
+                "Triton unavailable on this torch build; running "
+                "torch.compile-decorated functions eagerly."
+            )
+            _triton_notice_emitted = True
+    except Exception:
+        pass
 
 
 def get_autocast_dtype(device: torch.device) -> torch.dtype:

@@ -662,60 +662,48 @@ def test_env_is_healthy_detects_missing_and_intact(tmp_path):
     assert env_is_healthy(purelib) is False
 
 
-def test_prune_previous_env_removes_old_keeps_current(tmp_path, monkeypatch):
+def test_prune_stale_envs_removes_siblings_keeps_current(tmp_path, monkeypatch):
     from deepreefmap.gui import binary_swap
 
     pyapp_root = tmp_path / "pyapp" / "deepreefmap" / "hash"
-    old_env = pyapp_root / "1.0.0"
-    new_env = pyapp_root / "1.1.0"
-    (old_env / "python").mkdir(parents=True)
-    (new_env / "python").mkdir(parents=True)
+    installer_env = pyapp_root / "1.0.0"
+    branch_env = pyapp_root / "1.1.0+gaaa"
+    current_env = pyapp_root / "1.1.0+gbbb"
+    for env in (installer_env, branch_env, current_env):
+        (env / "python").mkdir(parents=True)
 
     marker = tmp_path / "pending_env_prune.json"
-    monkeypatch.setattr(
-        "deepreefmap.paths.env_prune_marker_path", lambda: marker
-    )
+    marker.write_text("{}")  # leftover from the retired marker mechanism
+    monkeypatch.setattr("deepreefmap.paths.env_prune_marker_path", lambda: marker)
 
-    # Recorded while the old version was running (prefix = <env>/python).
-    binary_swap.record_previous_env(old_env / "python")
-    assert marker.exists()
+    removed = binary_swap.prune_stale_envs(current_prefix=current_env / "python")
 
-    # Now running the new version → old env pruned, new env untouched.
-    removed = binary_swap.prune_previous_env(current_prefix=new_env / "python")
-
-    assert removed == old_env
-    assert not old_env.exists()
-    assert new_env.exists()
+    assert sorted(removed) == sorted([installer_env, branch_env])
+    assert not installer_env.exists()
+    assert not branch_env.exists()
+    assert current_env.exists()
     assert not marker.exists()
 
 
-def test_prune_previous_env_no_marker_is_noop(tmp_path, monkeypatch):
+def test_prune_stale_envs_refuses_paths_outside_pyapp(tmp_path, monkeypatch):
     from deepreefmap.gui import binary_swap
 
     monkeypatch.setattr(
         "deepreefmap.paths.env_prune_marker_path",
         lambda: tmp_path / "absent.json",
     )
-    assert binary_swap.prune_previous_env(current_prefix=tmp_path) is None
-
-
-def test_prune_refuses_paths_outside_pyapp(tmp_path, monkeypatch):
-    from deepreefmap.gui import binary_swap
-
-    marker = tmp_path / "marker.json"
-    monkeypatch.setattr("deepreefmap.paths.env_prune_marker_path", lambda: marker)
+    current = tmp_path / "not-pyapp" / "1.1.0"
     victim = tmp_path / "not-pyapp" / "1.0.0"
+    (current / "python").mkdir(parents=True)
     (victim / "python").mkdir(parents=True)
-    marker.write_text(json.dumps({"env_dir": str(victim), "version": "1.0.0"}))
 
-    removed = binary_swap.prune_previous_env(current_prefix=tmp_path / "cur")
+    removed = binary_swap.prune_stale_envs(current_prefix=current / "python")
 
-    assert removed is None
-    assert victim.exists()  # guard kept us from deleting a non-pyapp dir
-    assert not marker.exists()
+    assert removed == []
+    assert victim.exists()  # guard kept us from deleting outside a pyapp dir
 
 
-def test_perform_update_downloads_swaps_and_records_prune(tmp_path, monkeypatch):
+def test_perform_update_downloads_and_swaps(tmp_path, monkeypatch):
     from deepreefmap.gui import binary_swap
 
     payload = b"NEW-BINARY-BYTES"
@@ -742,9 +730,6 @@ def test_perform_update_downloads_swaps_and_records_prune(tmp_path, monkeypatch)
     target = tmp_path / "deepreefmap"
     target.write_bytes(b"OLD-BINARY")
 
-    marker = tmp_path / "pending_env_prune.json"
-    monkeypatch.setattr("deepreefmap.paths.env_prune_marker_path", lambda: marker)
-
     lines: list[str] = []
     try:
         binary_swap.perform_update(
@@ -755,13 +740,12 @@ def test_perform_update_downloads_swaps_and_records_prune(tmp_path, monkeypatch)
 
     assert target.read_bytes() == payload
     assert not target.with_name(target.name + ".new").exists()
-    assert marker.exists()  # next launch will consume this to prune the old env
     assert any("Replacing binary" in line for line in lines)
 
 
 def test_update_then_prune_end_to_end(tmp_path, monkeypatch):
-    """The container e2e as a fast headless test: real download + swap + marker,
-    then prune of the previous env with the shared uv cache left intact."""
+    """The container e2e as a fast headless test: real download + swap, then
+    the launch-time sweep drops the old env with the shared uv cache intact."""
     from deepreefmap.gui import binary_swap
 
     payload = b"NEW-BINARY-BYTES"
@@ -789,8 +773,10 @@ def test_update_then_prune_end_to_end(tmp_path, monkeypatch):
     uv_cache = tmp_path / ".cache" / "uv"  # shared cache must survive the prune
     uv_cache.mkdir(parents=True)
 
-    marker = tmp_path / "pending_env_prune.json"
-    monkeypatch.setattr("deepreefmap.paths.env_prune_marker_path", lambda: marker)
+    monkeypatch.setattr(
+        "deepreefmap.paths.env_prune_marker_path",
+        lambda: tmp_path / "pending_env_prune.json",
+    )
     # While the old version runs, sys.prefix points into its env.
     monkeypatch.setattr(binary_swap.sys, "prefix", str(old_env / "python"))
 
@@ -808,15 +794,14 @@ def test_update_then_prune_end_to_end(tmp_path, monkeypatch):
         server.server_close()
 
     assert target.read_bytes() == payload  # swapped in place
-    assert marker.exists()  # old env recorded for pruning
 
-    removed = binary_swap.prune_previous_env(current_prefix=str(new_env / "python"))
+    # The new version's first launch sweeps every other env.
+    removed = binary_swap.prune_stale_envs(current_prefix=str(new_env / "python"))
 
-    assert removed == old_env
+    assert removed == [old_env]
     assert not old_env.exists()
     assert new_env.exists()
     assert uv_cache.exists()
-    assert not marker.exists()
 
 
 def test_update_dialog_runs_perform_update(qapp, tmp_path, monkeypatch):
