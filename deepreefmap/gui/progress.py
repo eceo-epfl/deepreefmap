@@ -326,8 +326,13 @@ class ProgressBarsMixin(MixinBase):
             parts.append(f"~{format_duration(stage_left)} left")
         metrics = " · ".join(parts)
         # Colour the active coarse stage so the left text names it (and the stage
-        # name is dropped from the bars). Rich text keeps it to one coloured token.
-        stage = stage_label_for_phase(getattr(self, "_status_phase_key", "") or "")
+        # name is dropped from the bars). During a reconstruction take it from the
+        # estimator's running stage (monotonic), so a late viewer-setup event can't
+        # regress the token to a finished stage while a later save is still running.
+        # Fall back to the fine phase key when there is no estimator (cached load).
+        stage = est.running_stage_label() if est is not None else None
+        if not stage:
+            stage = stage_label_for_phase(getattr(self, "_status_phase_key", "") or "")
         if stage:
             first = f'<b><span style="color:{PRIMARY}">{stage}</span></b> · {base}'
         else:
@@ -380,9 +385,25 @@ class ProgressBarsMixin(MixinBase):
         """
         # Reset the stage stopwatch when the phase key changes so elapsed time
         # is per-stage, not per-run.
+        now = time.monotonic()
         if getattr(self, "_status_phase_key", None) != phase_key:
             self._status_phase_key = phase_key
-            self._status_phase_started = time.monotonic()
+            self._status_phase_started = now
+
+        # Mapping is three sub-phases (window inference, pose re-anchor, resume
+        # save) folded into one monotonic 0-100 fill sized by their weights.
+        # Compute that combined value once so the detail bar and the hover
+        # breakdown show the same number: indeterminate sub-steps (prep, GPU
+        # transfer, the resume save) report total<=0 and hold at their slice
+        # start rather than snapping to zero.
+        span = _MAPPING_SUBPHASE_SPANS.get(phase_key)
+        mapping_combined: float | None = None
+        if span is not None:
+            lo, hi = span
+            within = min(1.0, current / total) if total > 0 else 0.0
+            combined = 100.0 * (lo + (hi - lo) * within)
+            mapping_combined = max(getattr(self, "_mapping_progress", 0.0), combined)
+            self._mapping_progress = mapping_combined
 
         est = getattr(self, "_eta", None)
         if est is not None and stage_for_phase(phase_key) is not None:
@@ -390,23 +411,22 @@ class ProgressBarsMixin(MixinBase):
             # per-frame stages scale with; capture it for pending predictions.
             if phase_key == "preprocess" and total > 0:
                 est.frames = total
-            est.update(phase_key, current, total, time.monotonic())
+            if mapping_combined is not None:
+                # Feed the estimator the same combined mapping fill the detail bar
+                # shows (0-100), not the raw per-sub-phase fraction. Otherwise the
+                # hover "Mapping" bar snaps to 100% when inference ends and its
+                # remainder reads 0s while align + save still run.
+                est.update(phase_key, int(round(mapping_combined)), 100, now)
+            else:
+                est.update(phase_key, current, total, now)
 
         # The bars carry no text (the stage name is coloured in the status line);
         # they only show fill. Indeterminate for total <= 0. The frame count is
         # kept out of the base text so it can sit on the metrics line.
-        span = _MAPPING_SUBPHASE_SPANS.get(phase_key)
-        if span is not None:
-            # One monotonic 0-100 fill across all of mapping. Indeterminate
-            # sub-steps (prep, GPU transfer, the resume save) report total<=0 and
-            # hold the bar at their slice start rather than snapping it to zero.
-            lo, hi = span
-            within = min(1.0, current / total) if total > 0 else 0.0
-            combined = 100.0 * (lo + (hi - lo) * within)
-            self._mapping_progress = max(getattr(self, "_mapping_progress", 0.0), combined)
+        if mapping_combined is not None:
             if self._progress_bar.minimum() != 0 or self._progress_bar.maximum() != 100:
                 self._progress_bar.setRange(0, 100)
-            self._progress_bar.setValue(int(round(self._mapping_progress)))
+            self._progress_bar.setValue(int(round(mapping_combined)))
             self._status_base_text = label
             # Only the inference windows count meaningfully; align/save report raw
             # point totals that would read as noise.

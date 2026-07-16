@@ -12,6 +12,7 @@ This module is deliberately Qt-free so the logic can be tested without a display
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import dataclass, field
 
 # Cost driver per coarse stage. The reconstruction is a strictly sequential
@@ -108,7 +109,13 @@ def stage_label_for_phase(phase_key: str) -> str | None:
 
 
 def format_duration(seconds: float) -> str:
-    """Render a duration as `37s`, `2m 14s`, or `1h 03m`."""
+    """Render a duration as `<1s`, `37s`, `2m 14s`, or `1h 03m`.
+
+    A genuinely sub-second stage reads `<1s` rather than `0s`, which otherwise
+    looks like a broken or missing figure.
+    """
+    if 0 < seconds < 1:
+        return "<1s"
     secs = int(seconds)
     if secs < 60:
         return f"{secs}s"
@@ -157,7 +164,7 @@ class StageRow:
     key: str
     label: str
     state: str
-    seconds: float
+    seconds: float | None  # None on a pending stage with no basis yet ("estimating…")
     predicted: bool
     remaining: float | None = None  # live remainder for the running stage
     frac: float = 0.0  # 0..1 fill for the hover bar (done=1, running=live, pending=0)
@@ -251,12 +258,32 @@ class RunEtaEstimator:
                 den += spec.weight
         return num / den if den > 0 else None
 
+    def _seconds_per_weight(self, now: float) -> float | None:
+        """A per-weight rate for stages that lack their own driver-based prior.
+
+        Prefer this run's completed stages (measured); before any stage finishes,
+        fall back to the rate implied by the stages that DO carry a stored prior.
+        This keeps a point-driven stage from reading 0 when its own prior or point
+        count is not yet known: it gets a non-zero weight-based over-estimate from
+        the start instead. None only when there is no basis at all (first run).
+        """
+        measured = self._completed_seconds_per_weight(now)
+        if measured is not None:
+            return measured
+        ratios: list[float] = []
+        for spec in STAGES:
+            driver = self._driver_value(spec)
+            const = self.priors.get(spec.key)
+            if const is not None and driver is not None and spec.weight > 0:
+                ratios.append((const * driver) / spec.weight)
+        return statistics.median(ratios) if ratios else None
+
     def _prior_estimate(self, spec: StageSpec, now: float) -> float | None:
         driver = self._driver_value(spec)
         const = self.priors.get(spec.key)
         if const is not None and driver is not None:
             return const * driver
-        spw = self._completed_seconds_per_weight(now)
+        spw = self._seconds_per_weight(now)
         if spw is not None:
             return spw * spec.weight
         return None
@@ -310,6 +337,20 @@ class RunEtaEstimator:
         w = self._live_confidence(spec)
         return w * live + (1.0 - w) * prior
 
+    def running_stage_label(self) -> str | None:
+        """Label of the coarse stage currently running, or None if none is.
+
+        The furthest-along running stage wins. The pipeline is sequential, so if a
+        late fold-back event (a viewer-setup message arriving after the scene-file
+        save started) leaves an earlier stage marked running too, the later one is
+        the true current stage. The status line uses this instead of the
+        last-reported fine phase, which can arrive out of order.
+        """
+        for spec in reversed(STAGES):
+            if self._runs[spec.key].state == "running":
+                return spec.label
+        return None
+
     def current_stage_remaining(self, now: float) -> float | None:
         """Remainder for whichever stage is running, or None with no signal at all.
 
@@ -362,6 +403,8 @@ class RunEtaEstimator:
                     remaining=self._running_remaining(spec, now), frac=run.frac,
                 ))
             else:
+                # None (no basis yet) is preserved, not coerced to 0, so the popup
+                # can render "estimating…" rather than a misleading "0s".
                 est = self._prior_estimate(spec, now)
-                rows.append(StageRow(spec.key, spec.label, "pending", est or 0.0, True))
+                rows.append(StageRow(spec.key, spec.label, "pending", est, True))
         return rows

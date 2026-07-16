@@ -91,17 +91,19 @@ class TimingPopup(QWidget):
             colour = _STATE_COLOUR.get(row.state, TEXT_MUTED)
             remaining_text = ""
             if row.state in ("done", "running"):
-                elapsed_total += row.seconds
-                time_text = format_duration(row.seconds)
+                elapsed_total += row.seconds or 0.0
+                time_text = format_duration(row.seconds or 0.0)
                 # Prior-seeded early in the stage, live-measured later.
                 if row.state == "running" and row.remaining is not None:
                     remaining_text = f"· ~{format_duration(row.remaining)} left"
-            elif has_history:
-                time_text = f"~{format_duration(row.seconds)}" if row.seconds > 0 else "—"
+            elif row.seconds and row.seconds > 0:
+                # A weight- or prior-based over-estimate. Better an approximate
+                # number than a bare 0, so pending point stages never read "0s".
+                time_text = f"~{format_duration(row.seconds)}"
             else:
-                # First run: the pending "estimates" are not yet trustworthy, so
-                # show the stages without inventing times for them.
-                time_text = ""
+                # No basis yet (a true first run, before any stage completes):
+                # say so honestly rather than inventing a time or showing "0s".
+                time_text = "estimating…"
             remaining_cell = (
                 # Fixed-width monospace so the remainder never reflows the popup
                 # as it ticks from ~59s to ~1m 03s to ~3m 16s left.

@@ -1037,7 +1037,13 @@ class ViewerControlsMixin(MixinBase):
                 if self._viewer.is_geometry_mode:
                     self._set_semantic_only_controls_visible(False)
                 self._on_viewer_control_changed()
-            self._apply_progress("viewer_finalise", "Reconstruction complete", 1, 1)
+            # data_ready is the end of a cached-run load, but only the mid-point of
+            # a live reconstruction: the scene-file save still follows, and this
+            # slot can run after that save has started (load_scene_data pumps
+            # events). Only mark "complete" on the load path (no ETA estimator);
+            # a reconstruction's real completion is the mark_outputs branch.
+            if getattr(self, "_eta", None) is None:
+                self._apply_progress("viewer_finalise", "Reconstruction complete", 1, 1)
             ortho_cloud = cast("SemanticPointCloud | None", kwargs.get("ortho_cloud"))
             ortho_grid = cast("OrthoGrid | None", kwargs.get("ortho_grid"))
             # The true point count only exists once the cloud is built; feed it in

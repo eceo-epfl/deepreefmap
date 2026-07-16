@@ -7,6 +7,13 @@ import os
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_run_history(tmp_path, monkeypatch):
+    # The estimator seeds priors from run_timings.json; point it at an empty temp
+    # file so the status assertions don't depend on this machine's real history.
+    monkeypatch.setenv("DEEPREEFMAP_RUN_TIMINGS", str(tmp_path / "run_timings.json"))
+
+
 @pytest.fixture(scope="module")
 def qapp():
     if os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("QT_QPA_PLATFORM"):

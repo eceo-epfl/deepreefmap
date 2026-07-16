@@ -94,6 +94,34 @@ def test_completed_stage_calibrates_pending_via_weights():
     assert rows["cloud"].seconds > 0
 
 
+def test_pending_point_stage_falls_back_to_weight_rate_from_frame_prior():
+    # A point-driven stage with no prior of its own, an unknown N, and nothing
+    # finished yet. It should still show a non-zero over-estimate derived from the
+    # rate implied by the frame-driven prior we do have, not read 0.
+    est = RunEtaEstimator(frames=100, priors={"mapping": 0.5})
+    est.update("preprocess", current=1, total=100, now=0.0)
+    cloud = {r.key: r for r in est.stage_rows(now=1.0)}["cloud"]
+    assert cloud.state == "pending"
+    assert cloud.seconds is not None and cloud.seconds > 0
+
+
+def test_first_run_pending_stage_has_no_estimate():
+    # No priors and nothing finished: no basis at all, so pending stages carry
+    # None and the popup shows "estimating…".
+    est = RunEtaEstimator(frames=100)
+    est.update("preprocess", current=1, total=100, now=0.0)
+    assert {r.key: r for r in est.stage_rows(now=1.0)}["cloud"].seconds is None
+
+
+def test_format_duration_sub_second_reads_lt_1s():
+    from deepreefmap.gui.eta import format_duration
+
+    assert format_duration(0.3) == "<1s"
+    assert format_duration(0.0) == "0s"
+    assert format_duration(1.0) == "1s"
+    assert format_duration(42.0) == "42s"
+
+
 def test_history_prior_used_for_pending_frame_stage():
     est = RunEtaEstimator(frames=200, priors={"mapping": 0.5})
     est.update("preprocess", current=1, total=100, now=0.0)
@@ -113,7 +141,10 @@ def test_expected_points_lets_point_stage_predict_before_mapping_ends():
     cloud_unseeded = {r.key: r for r in unseeded.stage_rows(now=1.0)}["cloud"]
     # 5e6 * log(5e6) * 1e-6 ~= 77s from the point prior, not a weight guess.
     assert cloud_seeded.seconds > 50.0
-    assert cloud_unseeded.seconds == 0.0
+    # Unseeded: the only prior is point-driven and N is unknown, and nothing has
+    # completed, so there is no basis at all. The row carries None → "estimating…"
+    # rather than a misleading 0.
+    assert cloud_unseeded.seconds is None
 
 
 def test_real_points_override_expected_points():
@@ -176,6 +207,21 @@ def test_stage_rows_carry_fill_fraction():
     assert rows["preprocess"].frac == 1.0
     assert abs(rows["mapping"].frac - 0.4) < 1e-6
     assert rows["cloud"].frac == 0.0
+
+
+def test_running_stage_label_is_monotonic():
+    # The status line reads the coarse token from here, not the last fine phase, so
+    # a late earlier-stage event can't regress it once a later stage is running.
+    est = RunEtaEstimator(frames=100)
+    assert est.running_stage_label() is None
+    est.update("mapping", current=1, total=100, now=0.0)
+    assert est.running_stage_label() == "Mapping"
+    est.update("scene_save", current=1, total=10, now=50.0)
+    assert est.running_stage_label() == "Scene file"
+    # A stale viewer-setup event (folds to the finished save_view stage) must not
+    # revive it or move the label backwards.
+    est.update("viewer_finalise", current=1, total=1, now=51.0)
+    assert est.running_stage_label() == "Scene file"
 
 
 def test_stage_label_for_phase():
