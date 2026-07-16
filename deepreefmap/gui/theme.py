@@ -34,6 +34,18 @@ DANGER_BG = "#8a2222"  # filled "Confirm delete?" button; distinct from ERROR te
 BANNER_BG, BANNER_TEXT, BANNER_BORDER = "#1f2a36", "#d8e2ec", "#2f3f50"
 WARN_BG, WARN_TEXT, WARN_BORDER = "#4a3a14", "#ffd98a", "#8a6b1a"
 
+# Shared thin bar look for run-progress and utilisation meters, so every bar in
+# the app reads the same. Height in px; bar_qss colours the fill chunk.
+BAR_HEIGHT = 8
+
+
+def bar_qss(chunk: str) -> str:
+    """Flat GROOVE track with a rounded, coloured fill chunk."""
+    return (
+        f"QProgressBar {{ background:{GROOVE}; border:none; border-radius:3px; }}"
+        f" QProgressBar::chunk {{ background:{chunk}; border-radius:3px; }}"
+    )
+
 # Layered on top of Fusion + the palette for the few things the palette alone
 # doesn't make consistent. Additive: existing per-widget stylesheets still
 # cascade over this and win on conflicts.

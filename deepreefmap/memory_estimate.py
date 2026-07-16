@@ -111,17 +111,6 @@ def _bytes_per_frame(width: int, height: int) -> int:
     )
 
 
-def max_frames_for_ram(available_bytes: int, width: int, height: int, *, margin_bytes: int = _WARN_HEADROOM) -> int:
-    """Rough analytic ceiling on frames that fit in RAM at a resolution.
-
-    The inverse of the analytic RAM model, used by the System-tab benchmark to
-    answer "how much can this machine take?" with no video loaded. Conservative:
-    it keeps `margin_bytes` spare.
-    """
-    budget = available_bytes - _BASELINE_APP_BYTES - margin_bytes
-    return max(0, int(budget / (_bytes_per_frame(width, height) * _OVERHEAD)))
-
-
 def preflight_check(profile: SystemProfile, est: MemoryEstimate) -> Verdict:
     """Grade a run against the machine: ok (silent), warn, block (likely crash).
 
@@ -149,44 +138,40 @@ def preflight_check(profile: SystemProfile, est: MemoryEstimate) -> Verdict:
         budget_word = "free"
     swap = profile.free_swap_bytes
     headroom = budget - ram_need
+    pct = 100.0 * ram_need / budget if budget else 0.0
 
-    qualifier = " (estimated, no history yet)" if est.source == "analytic" else ""
+    tag = " (estimated)" if est.source == "analytic" else ""
     if ram_need > budget + swap - _BLOCK_HEADROOM:
         level = "block"
-        swap_note = f" plus {format_bytes(swap)} swap" if swap else ""
+        swap_note = f" + {format_bytes(swap)} swap" if swap else ""
         message = (
-            f"This run is expected to reach about {format_bytes(ram_need)} of RAM, but the "
-            f"machine has {format_bytes(budget)} {budget_word}{swap_note}{qualifier}. It will "
-            f"very likely run out of memory and crash. Reduce the fps or the processing "
-            f"resolution before running."
+            f"~{format_bytes(ram_need)} needed, over {format_bytes(budget)} {budget_word}"
+            f"{swap_note}{tag}. Likely to crash. Lower the fps or resolution."
         )
     elif headroom < 0:
-        # Fits only by spilling into swap: it will complete, but slowly.
+        # Fits only by spilling into swap: it completes, but thrashes.
         level = "warn"
         message = (
-            f"This run is expected to reach about {format_bytes(ram_need)} of RAM, more than the "
-            f"{format_bytes(budget)} {budget_word}{qualifier}. It will spill into swap and run "
-            f"very slowly. A lower fps or resolution avoids the slowdown."
+            f"~{format_bytes(ram_need)} needed: runs in RAM + swap (~{pct:.0f}% of RAM){tag}, "
+            f"slowly. Lower the fps or resolution."
         )
     elif headroom < _WARN_HEADROOM:
         level = "warn"
         message = (
-            f"This run is expected to reach about {format_bytes(ram_need)} of RAM, leaving only "
-            f"{format_bytes(headroom)} spare{qualifier}. It may run out of memory. "
-            f"Consider a lower fps or resolution."
+            f"~{format_bytes(ram_need)} needed, {format_bytes(headroom)} spare{tag}. "
+            f"May run out of memory. Lower the fps or resolution."
         )
     else:
         level = "ok"
-        message = f"Estimated peak RAM about {format_bytes(ram_need)}, comfortably within memory."
+        message = f"Peak ~{format_bytes(ram_need)}, within memory."
 
     # Discrete-GPU VRAM: a shortfall is recoverable, so at most warn.
     if profile.gpu.kind == GPU_CUDA and est.vram_bytes and profile.gpu.free_vram_bytes is not None:
         if est.vram_bytes > profile.gpu.free_vram_bytes and level == "ok":
             level = "warn"
             message = (
-                f"Estimated VRAM about {format_bytes(est.vram_bytes)} exceeds the "
-                f"{format_bytes(profile.gpu.free_vram_bytes)} free on the GPU. The run may fail "
-                f"with an out-of-memory error; a lower resolution or window size helps."
+                f"~{format_bytes(est.vram_bytes)} VRAM needed, over {format_bytes(profile.gpu.free_vram_bytes)} "
+                f"free on the GPU. May hit a VRAM out-of-memory error. Lower the resolution or window size."
             )
 
     return Verdict(level, ram_need, budget, headroom, message)
@@ -202,21 +187,24 @@ class Risk:
     colour: str  # hex for the UI
 
 
-# Crash-risk bands on peak-RAM-as-a-share-of-total. The metric is the memory
-# high-water mark relative to physical RAM: standard practice for OOM risk, since
-# the kernel starts reclaiming and (on Linux) OOM-killing as usage nears 100%.
-# Below ~75% there is comfortable headroom; 75-90% is a working margin; past ~90%
-# a run is riding the edge (a small overshoot tips it over); at/over 100% it can
-# only proceed by paging into swap, which thrashes, and over RAM+swap it crashes.
-def memory_risk(peak_used_bytes: int, total_ram_bytes: int, total_swap_bytes: int = 0) -> Risk:
-    """Band a measured peak against total RAM, folding swap into the worst case."""
-    pct = 100.0 * peak_used_bytes / total_ram_bytes if total_ram_bytes else 0.0
-    if total_ram_bytes and peak_used_bytes > total_ram_bytes + total_swap_bytes:
-        return Risk("severe", "Exceeds RAM and swap — would crash", pct, "#e05050")
-    if pct >= 100.0:
-        return Risk("severe", "Over RAM — spills into swap", pct, "#e05050")
+# Crash-risk bands on committed-memory (RAM + swap) as a share of physical RAM.
+# The metric is the memory high-water mark relative to RAM: standard OOM-risk
+# practice, since the kernel reclaims and (on Linux) OOM-kills as usage nears 100%.
+# Below ~75% is comfortable; 75-90% a working margin; past ~90% headroom is thin;
+# once committed exceeds RAM the run pages into swap and slows sharply; over
+# RAM+swap it crashes. peak_swap_bytes folds a run's measured spill into the total.
+def memory_risk(
+    peak_ram_bytes: int, total_ram_bytes: int, total_swap_bytes: int = 0, peak_swap_bytes: int = 0
+) -> Risk:
+    """Band a measured peak against total RAM, counting swap as secondary RAM."""
+    committed = peak_ram_bytes + peak_swap_bytes
+    pct = 100.0 * committed / total_ram_bytes if total_ram_bytes else 0.0
+    if total_ram_bytes and committed > total_ram_bytes + total_swap_bytes:
+        return Risk("severe", "Exceeds RAM + swap", pct, "#e05050")
+    if total_ram_bytes and committed > total_ram_bytes:
+        return Risk("severe", f"In swap (+{format_bytes(committed - total_ram_bytes)})", pct, "#e05050")
     if pct >= 90.0:
-        return Risk("high", "High — ran on the edge of RAM", pct, "#e07030")
+        return Risk("high", "Near RAM limit", pct, "#e07030")
     if pct >= 75.0:
-        return Risk("moderate", "Moderate headroom", pct, "#e0a030")
-    return Risk("safe", "Comfortable headroom", pct, "#4caf7d")
+        return Risk("moderate", "Moderate", pct, "#e0a030")
+    return Risk("safe", "Comfortable", pct, "#4caf7d")

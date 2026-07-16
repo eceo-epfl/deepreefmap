@@ -22,6 +22,7 @@ class ResourceSample:
     t: float  # time.monotonic() timestamp, comparable to the orchestrator's stage marks
     ram_bytes: int
     vram_bytes: int | None
+    swap_bytes: int = 0  # system swap in use; secondary RAM once physical RAM fills
 
 
 class ResourceSampler:
@@ -53,7 +54,11 @@ class ResourceSampler:
         while not self._stop.is_set():
             try:
                 util = sample_utilisation()
-                self.samples.append(ResourceSample(time.monotonic(), util.ram_used_bytes, util.vram_used_bytes))
+                self.samples.append(
+                    ResourceSample(
+                        time.monotonic(), util.ram_used_bytes, util.vram_used_bytes, util.swap_used_bytes
+                    )
+                )
             except Exception:
                 pass
             # Interruptible sleep: stop() returns promptly instead of waiting a full interval.
@@ -65,7 +70,11 @@ def peaks_from_marks(
     spans: tuple[tuple[str, str, str], ...],
     marks: dict[str, float],
 ) -> dict[str, dict[str, int | None]]:
-    """Peak RAM/VRAM within each stage span, keyed like `_durations_from_marks`.
+    """Peak RAM/VRAM/swap within each stage span, keyed like `_durations_from_marks`.
+
+    Swap is captured alongside RAM because a run that fills physical RAM spills into
+    swap: RAM then pins near 100% while the real demand shows up as swap in use, so
+    the true peak memory of a stage is RAM plus swap.
 
     A stage is reported only when both its marks were reached and at least one
     sample landed inside the window, so a geometry-only run omits stages it never
@@ -83,5 +92,6 @@ def peaks_from_marks(
         peaks[stage] = {
             "ram_bytes": max(s.ram_bytes for s in window),
             "vram_bytes": max(vrams) if vrams else None,
+            "swap_bytes": max(s.swap_bytes for s in window),
         }
     return peaks

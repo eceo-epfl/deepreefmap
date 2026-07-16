@@ -15,16 +15,16 @@ _SPANS = (
 def test_peaks_are_the_max_within_each_stage_window():
     marks = {"start": 0.0, "preprocess": 10.0, "mapping": 20.0, "cloud": 30.0}
     samples = [
-        ResourceSample(1.0, 5, 1),      # startup
-        ResourceSample(9.0, 7, 2),      # startup (peak)
-        ResourceSample(15.0, 40, 9),    # preprocess (peak)
-        ResourceSample(25.0, 34, 8),    # mapping
-        ResourceSample(29.0, 30, 7),    # mapping
+        ResourceSample(1.0, 5, 1, 0),      # startup
+        ResourceSample(9.0, 7, 2, 0),      # startup (peak)
+        ResourceSample(15.0, 40, 9, 1),    # preprocess (peak)
+        ResourceSample(25.0, 34, 8, 6),    # mapping (swap peak — thrashing)
+        ResourceSample(29.0, 30, 7, 4),    # mapping
     ]
     peaks = peaks_from_marks(samples, _SPANS, marks)
-    assert peaks["startup"] == {"ram_bytes": 7, "vram_bytes": 2}
-    assert peaks["preprocess"] == {"ram_bytes": 40, "vram_bytes": 9}
-    assert peaks["mapping"] == {"ram_bytes": 34, "vram_bytes": 8}
+    assert peaks["startup"] == {"ram_bytes": 7, "vram_bytes": 2, "swap_bytes": 0}
+    assert peaks["preprocess"] == {"ram_bytes": 40, "vram_bytes": 9, "swap_bytes": 1}
+    assert peaks["mapping"] == {"ram_bytes": 34, "vram_bytes": 8, "swap_bytes": 6}
 
 
 def test_stage_without_samples_or_marks_is_omitted():
@@ -40,7 +40,7 @@ def test_vram_none_when_no_sample_reported_it():
     marks = {"start": 0.0, "preprocess": 10.0}
     samples = [ResourceSample(1.0, 5, None), ResourceSample(2.0, 8, None)]
     peaks = peaks_from_marks(samples, _SPANS, marks)
-    assert peaks["startup"] == {"ram_bytes": 8, "vram_bytes": None}
+    assert peaks["startup"] == {"ram_bytes": 8, "vram_bytes": None, "swap_bytes": 0}
 
 
 def test_sampler_collects_samples_then_stops(monkeypatch):

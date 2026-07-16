@@ -42,7 +42,7 @@ from deepreefmap.gui.progress import (
     ProgressModel,
 )
 from deepreefmap.gui.version import _current_version, _pyapp_binary_path
-from deepreefmap.gui.theme import GROOVE, TEXT_MUTED, WARN_BG, WARN_BORDER, WARN_TEXT
+from deepreefmap.gui.theme import BAR_HEIGHT, TEXT_MUTED, WARN_BG, WARN_BORDER, WARN_TEXT, bar_qss
 from deepreefmap.gui.spinner import SpinnerStopButton
 from deepreefmap.gui.sunburst_widget import SunburstWidget
 from deepreefmap.gui.timing_popup import HoverColumn
@@ -681,21 +681,15 @@ class FormPanelMixin(MixinBase):
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
         self._progress_bar.setTextVisible(False)
-        self._progress_bar.setFixedHeight(8)
-        self._progress_bar.setStyleSheet(
-            f"QProgressBar {{ background:{GROOVE}; border:none; border-radius:3px; }}"
-            f" QProgressBar::chunk {{ background:{_STAGE_CHUNK}; border-radius:3px; }}"
-        )
+        self._progress_bar.setFixedHeight(BAR_HEIGHT)
+        self._progress_bar.setStyleSheet(bar_qss(_STAGE_CHUNK))
 
         self._total_progress_bar = QProgressBar()
         self._total_progress_bar.setRange(0, 100)
         self._total_progress_bar.setValue(0)
         self._total_progress_bar.setTextVisible(False)
-        self._total_progress_bar.setFixedHeight(8)
-        self._total_progress_bar.setStyleSheet(
-            f"QProgressBar {{ background:{GROOVE}; border:none; border-radius:3px; }}"
-            f" QProgressBar::chunk {{ background:{_TOTAL_CHUNK}; border-radius:3px; }}"
-        )
+        self._total_progress_bar.setFixedHeight(BAR_HEIGHT)
+        self._total_progress_bar.setStyleSheet(bar_qss(_TOTAL_CHUNK))
 
         self._progress_stack = HoverColumn()
         self._progress_stack.setFixedWidth(150)

@@ -27,6 +27,21 @@ def _make_window(qapp):
     return DeepReefMapWindow(load_classes(), None)
 
 
+def _recorded_runs_text(window) -> str:
+    """Caption + every child label text + every meter bar stylesheet, concatenated.
+
+    The recorded-run meters are real QProgressBar widgets now, so assertions look
+    across the caption, the header/value labels, and the bars' risk-coloured
+    stylesheets rather than one label's rich text.
+    """
+    from PySide6.QtWidgets import QLabel, QProgressBar
+
+    parts = [window._recorded_runs_caption.text()]
+    parts += [w.text() for w in window._recorded_runs_container.findChildren(QLabel)]
+    parts += [w.styleSheet() for w in window._recorded_runs_container.findChildren(QProgressBar)]
+    return " ".join(parts)
+
+
 def test_system_tab_is_registered(qapp):
     window = _make_window(qapp)
     assert window._sidebar_tabs.tabText(window._TAB_SYSTEM) == "System"
@@ -64,7 +79,7 @@ def test_gauges_reflect_a_sampled_utilisation(qapp, monkeypatch):
     assert "2.0 GB" in swap_label.text()
 
 
-def test_benchmark_button_fills_the_readout(qapp, monkeypatch):
+def test_machine_specs_line_reports_gpu_and_cores(qapp, monkeypatch):
     import deepreefmap.system_probe as probe
 
     window = _make_window(qapp)
@@ -78,10 +93,12 @@ def test_benchmark_button_fills_the_readout(qapp, monkeypatch):
             disk_total_bytes=1000 * 1024**3, disk_free_bytes=400 * 1024**3, disk_path="/",
         ),
     )
-    window._on_benchmark_clicked()
-    text = window._benchmark_output.text()
+    window._refresh_disk_gauge()  # also populates the static specs line
+    text = window._machine_specs_label.text()
     assert "RTX 4090" in text
-    assert "should handle about" in text
+    assert "16 logical / 8 physical" in text
+    # No inferred capacity claim: we report hardware, we do not benchmark.
+    assert "should handle" not in text
 
 
 def _low_ram_profile(probe):
@@ -159,25 +176,77 @@ def test_recorded_runs_summary_shows_peak_and_risk(qapp, monkeypatch):
         lambda *a, **k: [{
             "key": "loger_star|seg|1376x768|3fps",
             "params": {"fps": 3, "processing_width": 1376, "processing_height": 768,
-                       "mapping_backend": "loger_star"},
+                       "mapping_backend": "loger_star", "segmentation_model": "coralscapes-vit-b-dpt"},
             "frames": 1134, "points": 14_000_000,
-            "peak_ram_bytes": 30 * 1024**3, "peak_vram_bytes": 17 * 1024**3,
-            "total_ram_bytes": 32 * 1024**3, "total_swap_bytes": 0,
+            "peak_ram_bytes": 30 * 1024**3, "peak_swap_bytes": 0, "swap_recorded": False,
+            "peak_vram_bytes": 17 * 1024**3,
+            "total_ram_bytes": 32 * 1024**3, "total_swap_bytes": 32 * 1024**3,
             "gpu_name": "RTX 4090", "gpu_total_vram_bytes": 24 * 1024**3,
         }],
     )
     window._refresh_recorded_runs()
-    text = window._recorded_runs_label.text()
+    text = _recorded_runs_text(window)
     assert "1134 frames" in text
     assert "loger_star" in text
-    # 30/32 GB = ~94% -> the high-risk colour, not a bare number.
-    assert "#e07030" in text
+    # The segmentation model is now shown alongside the mapping backend.
+    assert "coralscapes-vit-b-dpt" in text
+    # Separate meters for RAM, swap and VRAM are rendered.
+    assert "RAM" in text and "Swap" in text and "VRAM" in text
+    # Swap predates capture on this run -> shown as "not recorded", not a fake 0%.
+    assert "not recorded" in text
+    # 30/32 GB = ~94% -> the RAM meter is coloured red, no separate text label.
+    assert "#e05050" in text
+
+
+def test_recorded_runs_summary_shows_swap_spill(qapp, monkeypatch):
+    import deepreefmap.gui.run_history as history
+
+    window = _make_window(qapp)
+    monkeypatch.setattr(
+        history, "summarise_recorded_runs",
+        lambda *a, **k: [{
+            "key": "loger_star|seg|1376x768|5fps",
+            "params": {"fps": 5, "processing_width": 1376, "processing_height": 768,
+                       "mapping_backend": "loger_star"},
+            "frames": 1890, "points": 30_000_000,
+            "peak_ram_bytes": 31 * 1024**3, "peak_swap_bytes": 8 * 1024**3, "swap_recorded": True,
+            "peak_vram_bytes": 17 * 1024**3,
+            "total_ram_bytes": 32 * 1024**3, "total_swap_bytes": 32 * 1024**3,
+            "gpu_name": "RTX 4090", "gpu_total_vram_bytes": 24 * 1024**3,
+        }],
+    )
+    window._refresh_recorded_runs()
+    text = _recorded_runs_text(window)
+    # Committed 39 GB > 32 GB RAM: the swap meter is populated and the tag is red.
+    assert "swap" in text.lower()
+    assert "not recorded" not in text
+    assert "#e05050" in text
+
+
+def test_recorded_runs_group_shows_run_count(qapp, monkeypatch):
+    import deepreefmap.gui.run_history as history
+
+    window = _make_window(qapp)
+    monkeypatch.setattr(
+        history, "group_recorded_runs",
+        lambda *a, **k: [{
+            "params": {"fps": 5, "processing_width": 1376, "processing_height": 768,
+                       "mapping_backend": "loger_star", "segmentation_model": "seg"},
+            "frames": 1890, "count": 3,
+            "peak_ram_bytes": 30 * 1024**3, "peak_swap_bytes": 0, "swap_recorded": True,
+            "peak_vram_bytes": 17 * 1024**3,
+            "total_ram_bytes": 32 * 1024**3, "total_swap_bytes": 32 * 1024**3,
+            "gpu_name": "RTX 4090", "gpu_total_vram_bytes": 24 * 1024**3,
+        }],
+    )
+    window._refresh_recorded_runs()
+    assert "3 runs" in _recorded_runs_text(window)
 
 
 def test_recorded_runs_summary_empty_state(qapp, monkeypatch):
     import deepreefmap.gui.run_history as history
 
     window = _make_window(qapp)
-    monkeypatch.setattr(history, "summarise_recorded_runs", lambda *a, **k: [])
+    monkeypatch.setattr(history, "group_recorded_runs", lambda *a, **k: [])
     window._refresh_recorded_runs()
-    assert "None yet" in window._recorded_runs_label.text()
+    assert "None yet" in window._recorded_runs_caption.text()

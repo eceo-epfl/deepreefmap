@@ -173,7 +173,7 @@ if TYPE_CHECKING:
         _run_meta_banner: QLabel
         _memory_notice: QLabel
         _memory_warn_icon: QLabel
-        _recorded_runs_label: QLabel
+        _recorded_runs_caption: QLabel
         _status_label: QLabel
         _update_status_label: QLabel
         _update_version_label: QLabel

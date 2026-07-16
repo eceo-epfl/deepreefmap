@@ -107,3 +107,14 @@ def test_memory_risk_bands():
     # Fits into RAM plus swap: severe (it thrashes) but a distinct label.
     over = memory_risk(36 * _GB, total, total_swap_bytes=16 * _GB)
     assert over.band == "severe" and "swap" in over.label.lower()
+
+
+def test_memory_risk_counts_measured_swap_as_committed():
+    # RAM alone sits at 94% (moderate-to-high), but the run spilled 8 GB into swap,
+    # so committed = 38 GB > 32 GB RAM: it was thrashing, which is the real risk.
+    total = 32 * _GB
+    ram_only = memory_risk(30 * _GB, total, total_swap_bytes=32 * _GB, peak_swap_bytes=0)
+    with_swap = memory_risk(30 * _GB, total, total_swap_bytes=32 * _GB, peak_swap_bytes=8 * _GB)
+    assert ram_only.band == "high"
+    assert with_swap.band == "severe" and "swap" in with_swap.label.lower()
+    assert with_swap.percent > 100.0

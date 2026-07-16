@@ -8,7 +8,7 @@ the numbers the user sees match the numbers the guard decides on.
 from __future__ import annotations
 
 from deepreefmap.gui._window_protocol import MixinBase
-from deepreefmap.gui.theme import TEXT_MUTED
+from deepreefmap.gui.theme import BAR_HEIGHT, TEXT_MUTED, bar_qss
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -16,19 +16,36 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QLabel,
     QProgressBar,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 
-_BAR_CELLS = 12  # width of the crash-risk fill bar, in block glyphs
+def _util_colour(percent: float) -> str:
+    """Green/amber/orange/red banding shared by every utilisation bar."""
+    if percent >= 90.0:
+        return "#e05050"
+    if percent >= 75.0:
+        return "#e07030"
+    if percent >= 50.0:
+        return "#e0a030"
+    return "#4caf7d"
 
 
-def _risk_bar(percent: float) -> str:
-    """A compact filled bar for a peak-RAM percentage, capped at full."""
-    filled = max(0, min(_BAR_CELLS, round(_BAR_CELLS * percent / 100.0)))
-    return "&#9608;" * filled + "&#9617;" * (_BAR_CELLS - filled)
+def _style_meter(bar: QProgressBar, percent: float) -> None:
+    """Give a bar the shared thin look, coloured by utilisation level."""
+    bar.setFixedHeight(BAR_HEIGHT)
+    bar.setStyleSheet(bar_qss(_util_colour(percent)))
+
+
+def _meter_bar(percent: float) -> QProgressBar:
+    """A thin, level-coloured QProgressBar matching the run progress bars."""
+    bar = QProgressBar()
+    bar.setRange(0, 100)
+    bar.setValue(int(round(min(100.0, max(0.0, percent)))))
+    bar.setTextVisible(False)
+    _style_meter(bar, percent)
+    return bar
 
 
 class SystemPanelMixin(MixinBase):
@@ -36,11 +53,7 @@ class SystemPanelMixin(MixinBase):
 
     def _build_system_panel(self, layout: object) -> None:
         assert isinstance(layout, QVBoxLayout)
-        intro = QLabel(
-            "Live system usage. Use it to judge headroom before a long run; the "
-            "pre-run memory check reads the same figures."
-        )
-        intro.setWordWrap(True)
+        intro = QLabel("<b>Live system usage</b>")
         layout.addWidget(intro)
 
         grid = QGridLayout()
@@ -49,33 +62,40 @@ class SystemPanelMixin(MixinBase):
         for row, (key, name) in enumerate(
             (("ram", "RAM"), ("swap", "Swap"), ("vram", "VRAM"), ("cpu", "CPU"), ("disk", "Disk"))
         ):
-            grid.addWidget(QLabel(name), row, 0)
+            gauge_name = QLabel(name)
+            gauge_name.setStyleSheet(f"color: {TEXT_MUTED};")
+            grid.addWidget(gauge_name, row, 0)
             bar = QProgressBar()
             bar.setRange(0, 100)
             bar.setTextVisible(False)
+            bar.setFixedHeight(BAR_HEIGHT)
             grid.addWidget(bar, row, 1)
             value = QLabel("—")
             value.setMinimumWidth(150)
+            value.setStyleSheet(f"color: {TEXT_MUTED};")
             grid.addWidget(value, row, 2)
             self._sys_gauges[key] = (bar, value)
         layout.addLayout(grid)
 
-        self._benchmark_btn = QPushButton("Benchmark this machine")
-        self._benchmark_btn.clicked.connect(self._on_benchmark_clicked)
-        layout.addWidget(self._benchmark_btn)
-
-        self._benchmark_output = QLabel("")
-        self._benchmark_output.setWordWrap(True)
-        self._benchmark_output.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self._benchmark_output)
+        # Static machine specs the gauges don't cover (no benchmark: nothing is
+        # run, so the honest thing is to report the hardware, not infer capacity).
+        self._machine_specs_label = QLabel("")
+        self._machine_specs_label.setTextFormat(Qt.TextFormat.RichText)
+        self._machine_specs_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self._machine_specs_label)
 
         # Recorded-run summary: what past runs actually cost and how close to a
-        # crash each came. Populated from run_timings.json on entering the tab.
-        self._recorded_runs_label = QLabel("")
-        self._recorded_runs_label.setWordWrap(True)
-        self._recorded_runs_label.setTextFormat(Qt.TextFormat.RichText)
-        self._recorded_runs_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self._recorded_runs_label)
+        # crash each came. The caption is static; the per-run meters are real
+        # QProgressBars rebuilt into the container on entering the tab.
+        self._recorded_runs_caption = QLabel("")
+        self._recorded_runs_caption.setWordWrap(True)
+        self._recorded_runs_caption.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._recorded_runs_caption)
+        self._recorded_runs_container = QWidget()
+        self._recorded_runs_layout = QVBoxLayout(self._recorded_runs_container)
+        self._recorded_runs_layout.setContentsMargins(0, 0, 0, 0)
+        self._recorded_runs_layout.setSpacing(0)
+        layout.addWidget(self._recorded_runs_container)
         self._refresh_recorded_runs()
 
         # The updates section (version, install, desktop entry) is appended to
@@ -104,67 +124,89 @@ class SystemPanelMixin(MixinBase):
             self._sys_timer.stop()
 
     def _refresh_recorded_runs(self) -> None:
-        """Render the per-run peak-memory and crash-risk summary from history."""
-        from deepreefmap.gui.run_history import summarise_recorded_runs
-        from deepreefmap.memory_estimate import memory_risk
-        from deepreefmap.system_probe import format_bytes
+        """Rebuild per-config peak RAM / swap / VRAM meters from history."""
+        from deepreefmap.gui.run_history import group_recorded_runs
 
+        self._clear_layout(self._recorded_runs_layout)
         try:
-            runs = summarise_recorded_runs()
+            runs = group_recorded_runs()
         except Exception:
             runs = []
         if not runs:
-            self._recorded_runs_label.setText(
+            self._recorded_runs_caption.setText(
                 "<b>Recorded runs on this machine</b><br>"
-                f"<span style='color:{TEXT_MUTED}'>None yet. After a run completes, its measured "
-                "peak memory and crash-risk appear here and feed the pre-run check.</span>"
+                f"<span style='color:{TEXT_MUTED}'>None yet.</span>"
             )
             return
-
-        blocks = []
+        self._recorded_runs_caption.setText("<b>Recorded runs on this machine</b>")
         for run in runs:
             params = run["params"]
-            meta = [
-                f"{params.get('fps', '?')} fps",
-                f"{params.get('processing_width', '?')}&times;{params.get('processing_height', '?')}",
-                str(params.get("mapping_backend", "?")),
-            ]
-            if run["frames"]:
-                meta.append(f"{run['frames']} frames")
-            if run["points"]:
-                meta.append(f"{run['points'] / 1e6:.1f}M pts")
-            header = f"<b>{' &middot; '.join(meta)}</b>"
-
+            workload = " &middot; ".join(
+                [
+                    f"{params.get('fps', '?')} fps",
+                    f"{params.get('processing_width', '?')}&times;{params.get('processing_height', '?')}",
+                ]
+                + ([f"{run['frames']} frames"] if run["frames"] else [])
+            )
+            if run.get("count", 1) > 1:
+                workload += f" <span style='color:{TEXT_MUTED}'>&times;{run['count']} runs</span>"
+            models = " &middot; ".join(
+                str(params.get(k, "?")) for k in ("mapping_backend", "segmentation_model")
+            )
             ram, total = run["peak_ram_bytes"], run["total_ram_bytes"]
-            if ram and total:
-                risk = memory_risk(ram, total, run["total_swap_bytes"])
-                ram_line = (
-                    f"<span style='color:{risk.colour}'>"
-                    f"<span style='font-family:monospace'>{_risk_bar(risk.percent)}</span> "
-                    f"{risk.percent:.0f}% &middot; RAM {format_bytes(ram)} / {format_bytes(total)} "
-                    f"&middot; {risk.label}</span>"
-                )
-            elif ram:
-                ram_line = f"RAM {format_bytes(ram)}"
-            else:
-                ram_line = ""
-            vram, gpu_vram = run["peak_vram_bytes"], run["gpu_total_vram_bytes"]
-            vram_line = (
-                f"<span style='color:{TEXT_MUTED}'>VRAM {format_bytes(vram)}"
-                f"{f' / {format_bytes(gpu_vram)}' if gpu_vram else ''}</span>"
-                if vram
-                else ""
-            )
-            body = "<br>".join(line for line in (ram_line, vram_line) if line)
-            blocks.append(
-                f"<div style='margin-top:8px'>{header}<br>{body}</div>"
-            )
-        self._recorded_runs_label.setText(
-            "<b>Recorded runs on this machine</b><br>"
-            f"<span style='color:{TEXT_MUTED}'>Peak RAM as a share of total memory is the crash-risk "
-            "signal: past ~90% a run rides the edge, at 100% it spills into swap.</span>"
-            f"{''.join(blocks)}"
-        )
+            swap = run.get("peak_swap_bytes") or 0
+            block = QWidget()
+            vbox = QVBoxLayout(block)
+            vbox.setContentsMargins(0, 10, 0, 0)
+            vbox.setSpacing(1)
+            title = QLabel(f"<b>{workload}</b>")
+            title.setTextFormat(Qt.TextFormat.RichText)
+            vbox.addWidget(title)
+            subtitle = QLabel(f"<span style='color:{TEXT_MUTED}; font-size:11px'>{models}</span>")
+            subtitle.setTextFormat(Qt.TextFormat.RichText)
+            vbox.addWidget(subtitle)
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 3, 0, 0)
+            grid.setHorizontalSpacing(8)
+            grid.setVerticalSpacing(3)
+            grid.setColumnStretch(1, 1)
+            self._add_meter(grid, 0, "RAM", ram, total, True)
+            self._add_meter(grid, 1, "Swap", swap, run["total_swap_bytes"], run.get("swap_recorded", False))
+            self._add_meter(grid, 2, "VRAM", run["peak_vram_bytes"], run["gpu_total_vram_bytes"], True)
+            vbox.addLayout(grid)
+            self._recorded_runs_layout.addWidget(block)
+
+    def _add_meter(
+        self, grid: QGridLayout, row: int, name: str, used: int | None, total: int | None, recorded: bool
+    ) -> None:
+        """Add a `name | bar | value` meter row, or a muted note when there is no data."""
+        from deepreefmap.system_probe import format_bytes
+
+        label = QLabel(name)
+        label.setStyleSheet(f"color: {TEXT_MUTED};")
+        grid.addWidget(label, row, 0)
+        if not recorded or not used or not total:
+            note = QLabel("not recorded" if not recorded else "—")
+            note.setStyleSheet(f"color: {TEXT_MUTED};")
+            grid.addWidget(note, row, 1, 1, 2)
+            return
+        pct = 100.0 * used / total
+        grid.addWidget(_meter_bar(pct), row, 1)
+        value = QLabel(f"{pct:.0f}% · {format_bytes(used)} / {format_bytes(total)}")
+        value.setStyleSheet(f"color: {TEXT_MUTED};")
+        value.setMinimumWidth(140)
+        grid.addWidget(value, row, 2)
+
+    def _clear_layout(self, layout: QVBoxLayout) -> None:
+        """Delete every widget in a layout so it can be rebuilt from scratch."""
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget() if item is not None else None
+            if widget is not None:
+                # Detach now so it leaves the parent's children immediately;
+                # deleteLater alone keeps it findable until the event loop runs.
+                widget.setParent(None)  # type: ignore[call-overload]
+                widget.deleteLater()
 
     def _refresh_system_gauges(self) -> None:
         from deepreefmap.system_probe import format_bytes, sample_utilisation
@@ -201,46 +243,36 @@ class SystemPanelMixin(MixinBase):
         total = profile.disk_total_bytes
         used_pct = 100.0 * (total - profile.disk_free_bytes) / total if total else None
         self._set_gauge("disk", used_pct, f"{format_bytes(profile.disk_free_bytes)} free / {format_bytes(total)}")
+        self._set_machine_specs(profile)
+
+    def _set_machine_specs(self, profile: object) -> None:
+        """One muted line of static hardware the gauges don't already show."""
+        from deepreefmap.system_probe import GPU_MPS, SystemProfile, format_bytes
+
+        assert isinstance(profile, SystemProfile)
+        gpu = profile.gpu
+        if gpu.has_distinct_vram:
+            gpu_text = f"{gpu.name} · {format_bytes(gpu.total_vram_bytes)}"
+        elif gpu.kind == GPU_MPS:
+            gpu_text = f"{gpu.name} (unified memory)"
+        else:
+            gpu_text = gpu.name
+        cores = f"{profile.cpu_logical} logical / {profile.cpu_physical or '?'} physical cores"
+        self._machine_specs_label.setText(
+            f"<span style='color:{TEXT_MUTED}; font-size:11px'>{gpu_text}<br>"
+            f"{cores} · {profile.os_name} {profile.os_release}</span>"
+        )
 
     def _set_gauge(self, key: str, percent: float | None, text: str) -> None:
         bar, value = self._sys_gauges[key]
         if percent is None:
             bar.setRange(0, 0)  # indeterminate when the figure does not apply
+            bar.setStyleSheet(bar_qss("#4aa3ff"))
         else:
             bar.setRange(0, 100)
             bar.setValue(int(round(max(0.0, min(100.0, percent)))))
+            _style_meter(bar, percent)
         value.setText(text)
-
-    def _on_benchmark_clicked(self) -> None:
-        from deepreefmap.memory_estimate import max_frames_for_ram
-        from deepreefmap.system_probe import GPU_MPS, format_bytes, probe_system
-
-        profile = probe_system()
-        gpu = profile.gpu
-        if gpu.has_distinct_vram:
-            gpu_line = f"{gpu.name} — {format_bytes(gpu.free_vram_bytes)} free / {format_bytes(gpu.total_vram_bytes)}"
-        elif gpu.kind == GPU_MPS:
-            gpu_line = f"{gpu.name} (shares system RAM)"
-        else:
-            gpu_line = gpu.name
-
-        width, height = self._proc_width_spin.value(), self._proc_height_spin.value()
-        fps = max(1, self._fps_spin.value())
-        max_frames = max_frames_for_ram(profile.available_ram_bytes, width, height)
-        minutes = max_frames / fps / 60.0
-        headroom = (
-            f"At {width}×{height} this machine should handle about {max_frames} frames "
-            f"(~{minutes:.0f} min at {fps} fps) before risking memory."
-        )
-        self._benchmark_output.setText(
-            f"OS: {profile.os_name} {profile.os_release}\n"
-            f"CPU: {profile.cpu_logical} logical / {profile.cpu_physical or '?'} physical cores\n"
-            f"RAM: {format_bytes(profile.available_ram_bytes)} free / {format_bytes(profile.total_ram_bytes)}\n"
-            f"Swap: {format_bytes(profile.free_swap_bytes)} free / {format_bytes(profile.total_swap_bytes)}\n"
-            f"GPU: {gpu_line}\n"
-            f"Disk: {format_bytes(profile.disk_free_bytes)} free / {format_bytes(profile.disk_total_bytes)}\n\n"
-            f"{headroom}"
-        )
 
 
 def build_system_tab(parent: QWidget) -> tuple[QWidget, QVBoxLayout]:

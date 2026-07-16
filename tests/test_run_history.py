@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from deepreefmap.gui.run_history import (
     _MAX_RUNS_PER_KEY,
+    group_recorded_runs,
     history_key,
     load_expected_peaks,
     load_expected_points,
@@ -82,11 +83,25 @@ def test_peaks_pool_across_fps_for_the_same_resolution(tmp_path):
     assert got["frames"] == 1134
 
 
+def test_expected_peaks_fold_swap_into_committed(tmp_path):
+    # A thrashing run: RAM pinned at 30 GB, another 8 GB spilled into swap. The
+    # estimate must see the true 38 GB demand, not the 30 GB RAM figure alone.
+    path = tmp_path / "run_timings.json"
+    peaks = {"mapping": {"ram_bytes": 30_000_000_000, "vram_bytes": 8_000_000_000,
+                         "swap_bytes": 8_000_000_000}}
+    record_run(
+        history_key("loger_star", "seg", 1376, 768, 5),
+        {"mapping": 1.0}, frames=1000, points=1, stage_peaks=peaks, path=path,
+    )
+    got = load_expected_peaks(history_key("loger_star", "seg", 1376, 768, 5), path=path)
+    assert got["ram_bytes"] == 38_000_000_000
+
+
 def test_summarise_recorded_runs_reports_peaks_and_machine(tmp_path):
     path = tmp_path / "run_timings.json"
     peaks = {
-        "mapping": {"ram_bytes": 32_000_000_000, "vram_bytes": 17_000_000_000},
-        "cloud": {"ram_bytes": 30_000_000_000, "vram_bytes": 6_000_000_000},
+        "mapping": {"ram_bytes": 32_000_000_000, "vram_bytes": 17_000_000_000, "swap_bytes": 5_000_000_000},
+        "cloud": {"ram_bytes": 30_000_000_000, "vram_bytes": 6_000_000_000, "swap_bytes": 2_000_000_000},
     }
     profile = {"total_ram_bytes": 33_000_000_000, "total_swap_bytes": 34_000_000_000,
                "gpu": {"name": "RTX 4090", "total_vram_bytes": 25_000_000_000}}
@@ -100,6 +115,8 @@ def test_summarise_recorded_runs_reports_peaks_and_machine(tmp_path):
     assert len(rows) == 1
     row = rows[0]
     assert row["peak_ram_bytes"] == 32_000_000_000  # max over stages
+    assert row["peak_swap_bytes"] == 5_000_000_000  # max swap over stages
+    assert row["swap_recorded"] is True
     assert row["peak_vram_bytes"] == 17_000_000_000
     assert row["total_ram_bytes"] == 33_000_000_000
     assert row["frames"] == 1134
@@ -109,6 +126,32 @@ def test_summarise_skips_peakless_runs(tmp_path):
     path = tmp_path / "run_timings.json"
     record_run(history_key("loger", "seg", 1280, 720, 5), {"mapping": 1.0}, frames=100, points=1, path=path)
     assert summarise_recorded_runs(path=path) == []
+
+
+def test_group_recorded_runs_medians_repeat_configs(tmp_path):
+    path = tmp_path / "run_timings.json"
+    key = history_key("loger_star", "seg", 1376, 768, 5)
+    params = {"fps": 5, "mapping_backend": "loger_star", "segmentation_model": "seg",
+              "processing_width": 1376, "processing_height": 768}
+    profile = {"total_ram_bytes": 32_000_000_000, "gpu": {"name": "RTX"}}
+    for ram in (28_000_000_000, 30_000_000_000, 32_000_000_000):
+        record_run(
+            key, {"mapping": 1.0}, frames=1890, points=1, params=params,
+            stage_peaks={"mapping": {"ram_bytes": ram, "vram_bytes": 8_000_000_000, "swap_bytes": 0}},
+            system_profile=profile, path=path,
+        )
+    # A different frame count is a different workload -> its own group.
+    record_run(
+        key, {"mapping": 1.0}, frames=900, points=1, params={**params, "fps": 5},
+        stage_peaks={"mapping": {"ram_bytes": 20_000_000_000, "vram_bytes": 8_000_000_000, "swap_bytes": 0}},
+        system_profile=profile, path=path,
+    )
+    groups = group_recorded_runs(path=path)
+    assert len(groups) == 2
+    big = next(g for g in groups if g["frames"] == 1890)
+    assert big["count"] == 3
+    assert big["peak_ram_bytes"] == 30_000_000_000  # median of 28/30/32
+    assert big["swap_recorded"] is True
 
 
 def test_rolling_cap(tmp_path):

@@ -92,23 +92,28 @@ def load_expected_peaks(key: str, path: Path | None = None) -> dict | None:
     ]
     if not runs:
         return None
-    rams: list[int] = []
+    committed: list[int] = []
     vrams: list[int] = []
     frames: list[int] = []
     for run in runs:
         stages = run["stage_peaks"].values()
-        ram = [s["ram_bytes"] for s in stages if s.get("ram_bytes")]
-        if not ram:
+        # Peak committed memory per stage = RAM plus the swap it spilled into, then
+        # the worst stage. A thrashing run pins RAM near 100% and shows its real
+        # demand as swap, so RAM alone would understate the true peak.
+        per_stage = [
+            s["ram_bytes"] + (s.get("swap_bytes") or 0) for s in stages if s.get("ram_bytes")
+        ]
+        if not per_stage:
             continue
-        rams.append(max(ram))
+        committed.append(max(per_stage))
         vram = [s["vram_bytes"] for s in stages if s.get("vram_bytes")]
         if vram:
             vrams.append(max(vram))
         frames.append(int(run["frames"]))
-    if not rams:
+    if not committed:
         return None
     return {
-        "ram_bytes": int(statistics.median(rams)),
+        "ram_bytes": int(statistics.median(committed)),
         "vram_bytes": int(statistics.median(vrams)) if vrams else None,
         "frames": int(statistics.median(frames)),
     }
@@ -129,6 +134,7 @@ def summarise_recorded_runs(path: Path | None = None) -> list[dict]:
             if not peaks:
                 continue
             rams = [s["ram_bytes"] for s in peaks.values() if s.get("ram_bytes")]
+            swaps = [s["swap_bytes"] for s in peaks.values() if s.get("swap_bytes")]
             vrams = [s["vram_bytes"] for s in peaks.values() if s.get("vram_bytes")]
             profile = entry.get("system_profile") or {}
             gpu = profile.get("gpu") or {}
@@ -139,6 +145,10 @@ def summarise_recorded_runs(path: Path | None = None) -> list[dict]:
                     "frames": entry.get("frames"),
                     "points": entry.get("points"),
                     "peak_ram_bytes": max(rams) if rams else None,
+                    "peak_swap_bytes": max(swaps) if swaps else 0,
+                    # Distinguish "measured 0 swap" from "predates swap capture", so
+                    # the UI can show "not recorded" rather than a misleading 0%.
+                    "swap_recorded": any("swap_bytes" in s for s in peaks.values()),
                     "peak_vram_bytes": max(vrams) if vrams else None,
                     "total_ram_bytes": profile.get("total_ram_bytes"),
                     "total_swap_bytes": profile.get("total_swap_bytes") or 0,
@@ -148,6 +158,49 @@ def summarise_recorded_runs(path: Path | None = None) -> list[dict]:
             )
     rows.reverse()  # newest run first
     return rows
+
+
+def group_recorded_runs(path: Path | None = None) -> list[dict]:
+    """Collapse repeat runs of the same config into one median-averaged entry.
+
+    Runs are grouped by the workload signature (mapping backend, segmentation
+    model, resolution, fps and frame count); within a group the peak RAM/swap/VRAM
+    are the median across runs, and ``count`` records how many were folded in. The
+    median matches load_expected_peaks, so the numbers shown are the ones the
+    pre-run check reasons from. Groups stay newest-first.
+    """
+    groups: dict[tuple, list[dict]] = {}
+    for row in summarise_recorded_runs(path):
+        p = row["params"]
+        signature = (
+            p.get("mapping_backend"), p.get("segmentation_model"),
+            p.get("processing_width"), p.get("processing_height"),
+            p.get("fps"), row["frames"],
+        )
+        groups.setdefault(signature, []).append(row)
+
+    grouped: list[dict] = []
+    for members in groups.values():
+        rep = members[0]  # newest in the group; machine totals are identical
+        rams = [m["peak_ram_bytes"] for m in members if m["peak_ram_bytes"]]
+        swaps = [m["peak_swap_bytes"] for m in members if m.get("swap_recorded")]
+        vrams = [m["peak_vram_bytes"] for m in members if m["peak_vram_bytes"]]
+        grouped.append(
+            {
+                "params": rep["params"],
+                "frames": rep["frames"],
+                "count": len(members),
+                "peak_ram_bytes": int(statistics.median(rams)) if rams else None,
+                "peak_swap_bytes": int(statistics.median(swaps)) if swaps else 0,
+                "swap_recorded": any(m.get("swap_recorded") for m in members),
+                "peak_vram_bytes": int(statistics.median(vrams)) if vrams else None,
+                "total_ram_bytes": rep["total_ram_bytes"],
+                "total_swap_bytes": rep["total_swap_bytes"],
+                "gpu_name": rep["gpu_name"],
+                "gpu_total_vram_bytes": rep["gpu_total_vram_bytes"],
+            }
+        )
+    return grouped
 
 
 def _load_all(path: Path) -> dict[str, list[dict]]:
