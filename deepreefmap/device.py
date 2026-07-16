@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import gc
 import logging
 import os
@@ -41,11 +42,42 @@ def resolve_device() -> torch.device:
     return torch.device("cpu")
 
 
+@functools.lru_cache(maxsize=None)
+def _flash_sdpa_works() -> bool:
+    """True if a bf16 flash-attention SDPA kernel actually runs on this GPU.
+
+    LoGeR forces the flash-only SDPA backend for bfloat16 activations
+    (third_party/LoGeR attention.py), so picking bf16 autocast on a build
+    without flash aborts with "No available kernel". Windows CUDA wheels ship
+    without flash (cu130/sm_120 in particular). A tiny probe beats build
+    flags: a wheel can include flash for other architectures only.
+    """
+    if not torch.cuda.is_available():
+        return False
+    try:
+        q = torch.zeros(1, 1, 8, 64, dtype=torch.bfloat16, device="cuda")
+        with torch.nn.attention.sdpa_kernel(
+            torch.nn.attention.SDPBackend.FLASH_ATTENTION
+        ):
+            torch.nn.functional.scaled_dot_product_attention(q, q, q)
+        return True
+    except Exception:
+        logger.warning(
+            "Flash-attention SDPA unavailable on this torch build/GPU; "
+            "using float16 autocast instead of bfloat16."
+        )
+        return False
+
+
 def get_autocast_dtype(device: torch.device) -> torch.dtype:
     if device.type == "cuda":
         try:
             capability = torch.cuda.get_device_capability(device)[0]
-            return torch.bfloat16 if capability >= 8 else torch.float16
+            return (
+                torch.bfloat16
+                if capability >= 8 and _flash_sdpa_works()
+                else torch.float16
+            )
         except Exception:
             return torch.float16
     if device.type == "mps":
