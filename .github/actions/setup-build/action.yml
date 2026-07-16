@@ -1,0 +1,40 @@
+name: Setup build environment
+description: >
+  Shared post-checkout setup for CI, E2E and release builds: cached uv,
+  optional Linux Qt/OpenGL runtime libraries, optional Rust toolchain with
+  cargo cache.
+inputs:
+  qt-libs:
+    description: Install the Linux Qt/OpenGL runtime libraries (no-op elsewhere)
+    default: "false"
+  rust:
+    description: Install the Rust toolchain and cargo cache
+    default: "false"
+  cache-suffix:
+    description: Cache suffix for setup-uv (e.g. the torch variant)
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Install Qt/OpenGL runtime libraries
+      if: inputs.qt-libs == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libegl1 libgl1 libopengl0 libdbus-1-3 libxkbcommon0 libxcb-cursor0
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        cache-dependency-glob: "uv.lock"
+        cache-suffix: ${{ inputs.cache-suffix }}
+
+    - name: Install Rust toolchain
+      if: inputs.rust == 'true'
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo registry
+      if: inputs.rust == 'true'
+      uses: Swatinem/rust-cache@v2

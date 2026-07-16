@@ -1,0 +1,205 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+# Branch pushes produce downloadable artifacts only; a GitHub Release is cut
+# solely from v* tags (the release job below). Cancel superseded runs on the
+# same ref — a tag has a unique ref, so tag→release builds are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: deepreefmap-linux-x64
+            ext: ""
+            filetype: ELF
+            torch_variant: cu126
+          - os: ubuntu-latest
+            artifact: deepreefmap-linux-x64-cu130
+            ext: ""
+            filetype: ELF
+            torch_variant: cu130
+          - os: ubuntu-latest
+            artifact: deepreefmap-linux-x64-rocm
+            ext: ""
+            filetype: ELF
+            torch_variant: rocm
+          - os: windows-latest
+            artifact: deepreefmap-windows-x64
+            ext: ".exe"
+            filetype: ""
+            torch_variant: cu126
+          - os: windows-latest
+            artifact: deepreefmap-windows-x64-cu130
+            ext: ".exe"
+            filetype: ""
+            torch_variant: cu130
+          - os: macos-latest
+            artifact: deepreefmap-macos-arm64
+            ext: ""
+            filetype: Mach-O
+            torch_variant: default
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          # The build vendors LoGeR's `loger` package from this submodule into
+          # the wheel (see pyproject [tool.setuptools.packages.find]).
+          submodules: recursive
+
+      # On tag builds the artifact is labelled from the tag, but PyApp embeds the
+      # wheel version from pyproject — fail fast if they disagree so a release can't
+      # ship a binary whose internal version differs from its tag.
+      - name: Assert tag matches pyproject version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag_ver="${GITHUB_REF#refs/tags/v}"
+          proj_ver=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ "$tag_ver" != "$proj_ver" ]; then
+            echo "::error::tag v$tag_ver does not match pyproject version $proj_ver"
+            exit 1
+          fi
+
+      - name: Set up build environment
+        uses: ./.github/actions/setup-build
+        with:
+          rust: "true"
+          cache-suffix: ${{ matrix.torch_variant }}
+
+      # `value` labels the artifact file (clean tag, or short SHA for branches).
+      # `version` is what gets stamped into the wheel/binary: the clean tag for a
+      # release, or `<pyproject-version>+g<short-sha>` for a branch build so each
+      # binary keys its own PyApp env and never reuses a stale same-version one.
+      - name: Compute artifact label
+        id: label
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF#refs/tags/v}"
+            echo "value=$tag" >> "$GITHUB_OUTPUT"
+            echo "version=$tag" >> "$GITHUB_OUTPUT"
+          else
+            sha=$(echo "$GITHUB_SHA" | cut -c1-7)
+            proj_ver=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')
+            echo "value=$sha" >> "$GITHUB_OUTPUT"
+            echo "version=${proj_ver}+g${sha}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # build.sh and build.ps1 both take the output artifact name as their first arg.
+      # `shell:` can't reference the matrix context, so the step is split by OS.
+      - name: Build PyApp binary (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          DRM_BUILD_VERSION: ${{ steps.label.outputs.version }}
+        run: bash scripts/build.sh ${{ matrix.artifact }} ${{ matrix.torch_variant }}
+
+      - name: Build PyApp binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TORCH_VARIANT: ${{ matrix.torch_variant }}
+          DRM_BUILD_VERSION: ${{ steps.label.outputs.version }}
+        run: ./scripts/build.ps1 "${{ matrix.artifact }}${{ matrix.ext }}"
+
+      - name: Label binary
+        shell: bash
+        run: |
+          mv "dist/${{ matrix.artifact }}${{ matrix.ext }}" \
+             "dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}${{ matrix.ext }}"
+
+      - name: Verify binary
+        shell: bash
+        run: |
+          f="dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}${{ matrix.ext }}"
+          test -f "$f"
+          # POSIX binaries: assert the executable bit and the expected object format.
+          # Windows (empty filetype) skips this — Git Bash has no reliable `file`.
+          if [ -n "${{ matrix.filetype }}" ]; then
+            test -x "$f"
+            file "$f" | grep -q "${{ matrix.filetype }}"
+          fi
+
+      # The raw binary asset stays on every release — the in-app updater
+      # downloads it to swap the installed binary in place. The installer/dmg
+      # is the first-install path for end users.
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # dist/icon.ico is produced by build.ps1 when it embeds the exe icon.
+          $setupName = "${{ matrix.artifact }}-${{ steps.label.outputs.value }}" -replace '^deepreefmap-', 'deepreefmap-setup-'
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            /DBinaryPath="dist\${{ matrix.artifact }}-${{ steps.label.outputs.value }}.exe" `
+            /DAppVersion="${{ steps.label.outputs.version }}" `
+            /DOutputName="$setupName" `
+            scripts\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      - name: Build macOS app bundle + dmg
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash scripts/make_app_bundle.sh \
+            "dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}" \
+            "${{ steps.label.outputs.version }}" \
+            "dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}.dmg"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}-${{ steps.label.outputs.value }}
+          path: |
+            dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}${{ matrix.ext }}
+            dist/deepreefmap-setup-*-${{ steps.label.outputs.value }}.exe
+            dist/${{ matrix.artifact }}-${{ steps.label.outputs.value }}.dmg
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Resolve version label
+        id: label
+        shell: bash
+        run: echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: deepreefmap-*-${{ steps.label.outputs.value }}
+          merge-multiple: true
+
+      # Glob, not an explicit list: the download step above already filtered to
+      # this tag's artifacts, and a new matrix variant must not be silently
+      # dropped from the release for want of a hand-added line here.
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/deepreefmap-*-${{ steps.label.outputs.value }}*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

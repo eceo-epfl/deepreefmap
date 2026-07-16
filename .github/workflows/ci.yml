@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
     branches: [main]
 
@@ -28,11 +28,10 @@ jobs:
           # extras only, so the submodule is not required here.
           submodules: false
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
+      - name: Set up build environment
+        uses: ./.github/actions/setup-build
         with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          qt-libs: "true"
 
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
@@ -45,3 +44,24 @@ jobs:
 
       - name: Test (pytest)
         run: uv run --python ${{ matrix.python-version }} pytest -q
+
+  typecheck:
+    name: mypy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Set up build environment
+        uses: ./.github/actions/setup-build
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install project (dev extra)
+        run: uv sync --python 3.12 --extra dev
+
+      - name: Type check (mypy)
+        run: uv run --python 3.12 mypy deepreefmap
