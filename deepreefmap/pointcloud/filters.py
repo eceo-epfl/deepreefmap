@@ -291,12 +291,7 @@ def build_semantic_reference_cloud(
         frame_f = np.full(n, int(frame_index), dtype=np.int32)
         return xyz_f, rgb_f, lab_f, frame_f, conf_f, dist_f
 
-    xyz_parts: list[np.ndarray] = []
-    rgb_parts: list[np.ndarray] = []
-    label_parts: list[np.ndarray] = []
-    frame_parts: list[np.ndarray] = []
-    conf_parts: list[np.ndarray] = []
-    dist_parts: list[np.ndarray] = []
+    parts: list[tuple[np.ndarray, ...] | None] = []
 
     work = list(enumerate(mapping.frame_indices.tolist()))
     total = len(work)
@@ -308,30 +303,46 @@ def build_semantic_reference_cloud(
             completed += 1
             if progress_cb is not None:
                 progress_cb(completed, total)
-            if result is None:
-                continue
-            xyz_f, rgb_f, lab_f, frame_f, conf_f, dist_f = result
-            xyz_parts.append(xyz_f)
-            rgb_parts.append(rgb_f)
-            label_parts.append(lab_f)
-            frame_parts.append(frame_f)
-            conf_parts.append(conf_f)
-            dist_parts.append(dist_f)
+            if result is not None:
+                parts.append(result)
 
-    if not xyz_parts:
+    if not parts:
         return SemanticPointCloud.empty()
 
-    # For multi-million-point clouds these six concatenates plus the
-    # replacement-radius lexsort that follows are the silent gap the user
-    # sees after the per-frame loop hits N/N — surface them via stage_cb.
+    # For multi-million-point clouds this fill plus the replacement-radius
+    # lexsort that follows are the silent gap the user sees after the
+    # per-frame loop hits N/N — surface them via stage_cb.
     _emit_stage("concatenating")
+    n_total = sum(part[0].shape[0] for part in parts if part is not None)
+    xyz = np.empty((n_total, 3), dtype=np.float32)
+    rgb = np.empty((n_total, 3), dtype=np.uint8)
+    labels_out = np.empty(n_total, dtype=np.int32)
+    frame_out = np.empty(n_total, dtype=np.int32)
+    conf_out = np.empty(n_total, dtype=np.float32)
+    dist_out = np.empty(n_total, dtype=np.float32)
+    # Filling at a running offset and releasing each part right after keeps
+    # the peak at ~one cloud instead of every part plus six concatenated
+    # copies co-resident. Row order matches the old np.concatenate exactly.
+    offset = 0
+    for i, part in enumerate(parts):
+        assert part is not None
+        xyz_f, rgb_f, lab_f, frame_f, conf_f, dist_f = part
+        stop = offset + xyz_f.shape[0]
+        xyz[offset:stop] = xyz_f
+        rgb[offset:stop] = rgb_f
+        labels_out[offset:stop] = lab_f
+        frame_out[offset:stop] = frame_f
+        conf_out[offset:stop] = conf_f
+        dist_out[offset:stop] = dist_f
+        parts[i] = None
+        offset = stop
     cloud = SemanticPointCloud(
-        xyz=np.concatenate(xyz_parts, axis=0),
-        rgb=np.concatenate(rgb_parts, axis=0),
-        labels=np.concatenate(label_parts, axis=0),
-        frame_indices=np.concatenate(frame_parts, axis=0),
-        confidence=np.concatenate(conf_parts, axis=0),
-        distance_to_camera=np.concatenate(dist_parts, axis=0),
+        xyz=xyz,
+        rgb=rgb,
+        labels=labels_out,
+        frame_indices=frame_out,
+        confidence=conf_out,
+        distance_to_camera=dist_out,
     )
 
     if active_radius is not None:

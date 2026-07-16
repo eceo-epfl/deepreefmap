@@ -57,6 +57,60 @@ def test_build_semantic_reference_cloud_filters_labels_and_confidence():
     assert cloud.xyz.tolist() == [[0.0, 1.0, 2.0], [9.0, 10.0, 11.0]]
 
 
+def test_build_semantic_reference_cloud_matches_concatenate_reference():
+    # Scenario: multi-frame build with unequal per-frame point counts and one
+    # fully filtered frame. Expected behaviour: the offset-filled cloud equals
+    # the per-frame arrays concatenated in completion order (single worker).
+    def _frame(idx, labels):
+        return PreparedFrame(
+            frame_index=idx,
+            image_rgb=np.full((2, 2, 3), 40 + idx, dtype=np.uint8),
+            labels=np.asarray(labels, dtype=np.uint8),
+            keep_mask=np.full((2, 2), 255, dtype=np.uint8),
+        )
+
+    frames = (
+        _frame(0, [[1, 1], [1, 1]]),
+        _frame(1, [[1, 7], [7, 1]]),
+        _frame(2, [[7, 7], [7, 7]]),
+    )
+    world = np.stack(
+        [
+            np.arange(12, dtype=np.float32).reshape(2, 2, 3),
+            np.arange(100, 112, dtype=np.float32).reshape(2, 2, 3),
+            np.arange(200, 212, dtype=np.float32).reshape(2, 2, 3),
+        ]
+    )
+    mapping = MappingSequenceResult(
+        frame_indices=np.array([0, 1, 2], dtype=np.int32),
+        depth_maps=np.ones((3, 2, 2), dtype=np.float32),
+        poses_w_c=np.tile(np.eye(4, dtype=np.float32), (3, 1, 1)),
+        intrinsics=np.eye(3, dtype=np.float32),
+        world_points=world,
+        confidence=np.full((3, 2, 2), 0.9, dtype=np.float32),
+    )
+    batch = FrameBatch(frames=frames, intrinsics=np.eye(3, dtype=np.float32), image_size=(2, 2), clip_counts=(3,))
+
+    cloud = build_semantic_reference_cloud(
+        batch,
+        mapping,
+        _classes(),
+        PointFilterConfig(voxel_size=None, confidence_percentile=None, min_confidence=0.5),
+        max_workers=1,
+    )
+
+    expected_xyz = np.array(
+        [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10, 11], [100, 101, 102], [109, 110, 111]],
+        dtype=np.float32,
+    )
+    assert np.array_equal(cloud.xyz, expected_xyz)
+    assert cloud.labels.tolist() == [1] * 6
+    assert cloud.frame_indices.tolist() == [0, 0, 0, 0, 1, 1]
+    assert np.array_equal(cloud.confidence, np.full(6, 0.9, dtype=np.float32))
+    assert np.array_equal(cloud.distance_to_camera, np.ones(6, dtype=np.float32))
+    assert cloud.rgb.tolist() == [[40, 40, 40]] * 4 + [[41, 41, 41]] * 2
+
+
 def test_replacement_radius_subsamples_without_scaling_xyz() -> None:
     """Larger replacement voxel only drops/merges points; surviving xyz are always from the dense (no-voxel) cloud."""
     rng = np.random.default_rng(42)

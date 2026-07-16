@@ -283,6 +283,7 @@ class LoGeRBackend(MappingBackend):
             if local_points is None and world_points is None:
                 raise RuntimeError("LoGeR output missing both 'local_points' and 'points'")
             if local_points is None:
+                assert world_points is not None  # both-None raised above
                 # Re-anchoring rebases world_points in place, so the fallback
                 # must snapshot the un-anchored values it stands in for.
                 local_points = world_points.copy()
