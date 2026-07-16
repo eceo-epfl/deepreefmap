@@ -29,7 +29,7 @@ from deepreefmap.system_probe import GPU_CUDA, GPU_MPS, SystemProfile, format_by
 #
 # Two independent per-frame terms:
 # - Prepared frames stay in RAM for the whole run at the PROCESSING resolution:
-#   rgb uint8 (3) + labels int32 (4) + keep_mask uint8 (1) = 8 B/px.
+#   rgb uint8 (3) + labels uint8 (1) + keep_mask uint8 (1) = 5 B/px.
 # - Mapping arrays live at LoGeR's own 504x280 inference grid, NOT the
 #   processing resolution. The peak stage is Pi3's CPU window merge, where
 #   the per-window parts (points + local_points f32, 12 each, + conf 4 =
@@ -41,7 +41,7 @@ from deepreefmap.system_probe import GPU_CUDA, GPU_MPS, SystemProfile, format_by
 # point filtering keeps an unusually large cloud; measured peaks catch that
 # case per machine. scsfmlearner maps frame-by-frame and is far lighter, so
 # this model is conservative for it.
-_FRAME_BATCH_BYTES_PER_PIXEL = 8
+_FRAME_BATCH_BYTES_PER_PIXEL = 5
 # LoGeR's default target_resolution (loger_backend.py). If a backend override
 # changes it this drifts, but measured peaks supersede after one recorded run.
 _MAPPING_PIXELS_PER_FRAME = 504 * 280

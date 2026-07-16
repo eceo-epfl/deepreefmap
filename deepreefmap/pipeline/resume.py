@@ -133,7 +133,7 @@ def load_prepared_frames(
             if bgr is None:
                 return None
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            labels = np.load(labels_path).astype(np.int32)
+            labels = np.load(labels_path).astype(np.uint8)
             mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
         except Exception as exc:
             logger.warning("Resume: failed reading preprocess artifact for frame %d: %s", int(idx), exc)

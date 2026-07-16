@@ -113,6 +113,8 @@ def test_load_prepared_frames_roundtrip(tmp_path: Path) -> None:
     assert fb.clip_counts == (3,)
     assert all(f.labels.shape == (4, 6) for f in fb.frames)
     assert all(int(f.labels.max()) == int(f.frame_index) for f in fb.frames)
+    # int32 cache files load into the uint8 in-RAM representation.
+    assert all(f.labels.dtype == np.uint8 for f in fb.frames)
 
 
 def test_load_prepared_frames_returns_none_when_missing(tmp_path: Path) -> None:

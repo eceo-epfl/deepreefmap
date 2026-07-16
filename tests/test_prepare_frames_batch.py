@@ -14,6 +14,8 @@ class _Rectifier:
 
 
 class _ClassesConfig:
+    classes: tuple = ()
+
     def ids_for_role(self, role: str) -> set[int]:
         assert role == "ignore_in_point_cloud"
         return {1}
@@ -57,6 +59,12 @@ def test_prepare_frames_segments_rectified_frames_in_batches(tmp_path, monkeypat
     assert all(frame.image_path is not None and frame.image_path.exists() for frame in batch.frames)
     assert all(frame.labels_path is not None and frame.labels_path.exists() for frame in batch.frames)
     assert all(frame.mask_path is not None and frame.mask_path.exists() for frame in batch.frames)
+    # Labels are uint8 in RAM but the cached artifact stays int32.
+    assert all(frame.labels.dtype == np.uint8 for frame in batch.frames)
+    for frame in batch.frames:
+        saved = np.load(frame.labels_path)
+        assert saved.dtype == np.int32
+        assert np.array_equal(saved, frame.labels)
 
 
 def test_clear_preprocess_artifacts_removes_stale_frame_outputs(tmp_path) -> None:

@@ -750,6 +750,14 @@ def _prepare_frames(
     labels_dir.mkdir(parents=True, exist_ok=True)
     masks_dir.mkdir(parents=True, exist_ok=True)
     ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
+    # Labels are held as uint8 in RAM (a quarter of int32 across a whole run);
+    # the on-disk .npy artifacts stay int32, so ids must fit a byte.
+    max_class_id = max((cls.id for cls in classes_config.classes), default=0)
+    if max_class_id > 255:
+        raise ValueError(
+            f"Class ids up to {max_class_id} do not fit uint8 labels; "
+            "the classes config must use ids below 256."
+        )
     prepared: list[PreparedFrame] = []
     pending: list[tuple[int, np.ndarray]] = []
     batch_size = max(1, int(batch_size))
@@ -772,9 +780,9 @@ def _prepare_frames(
         pending.clear()
         if segmentation is None:
             h0, w0 = batch[0][1].shape[:2]
-            labels_batch = [np.zeros((h0, w0), dtype=np.int32) for _ in batch]
+            labels_batch = [np.zeros((h0, w0), dtype=np.uint8) for _ in batch]
         else:
-            labels_batch = [out.labels.astype(np.int32) for out in segmentation.predict_batch([frame for _, frame in batch])]
+            labels_batch = [np.asarray(out.labels, dtype=np.uint8) for out in segmentation.predict_batch([frame for _, frame in batch])]
         if len(labels_batch) != len(batch):
             raise RuntimeError(f"Segmentation returned {len(labels_batch)} outputs for batch of {len(batch)} frames")
         elapsed = time.monotonic() - t_batch
@@ -792,7 +800,9 @@ def _prepare_frames(
             labels_path = labels_dir / f"{stem}.npy"
             mask_path = masks_dir / f"{stem}.png"
             cv2.imwrite(str(image_path), cv2.cvtColor(rectified, cv2.COLOR_RGB2BGR))
-            np.save(labels_path, labels)
+            # The cached artifact stays int32 so existing run dirs and any
+            # external readers of labels/*.npy see byte-identical files.
+            np.save(labels_path, labels.astype(np.int32))
             cv2.imwrite(str(mask_path), keep_mask)
             prepared.append(
                 PreparedFrame(
