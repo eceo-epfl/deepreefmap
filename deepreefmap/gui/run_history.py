@@ -230,6 +230,20 @@ def group_recorded_runs(path: Path | None = None) -> list[dict]:
     return grouped
 
 
+def distinct_model_combinations(rows: list[dict]) -> list[tuple[str, str]]:
+    """Unique (mapping_backend, segmentation_model) pairs from grouped rows.
+
+    Newest-first, deduplicated by insertion order — `group_recorded_runs` already
+    returns newest-first, so the first pair is the most-recent run's combination.
+    Feeds the System tab's model-combination filter dropdown.
+    """
+    seen: dict[tuple[str, str], None] = {}
+    for row in rows:
+        p = row["params"]
+        seen.setdefault((p.get("mapping_backend"), p.get("segmentation_model")), None)
+    return list(seen)
+
+
 def _load_all(path: Path) -> dict[str, list[dict]]:
     try:
         return json.loads(path.read_text())

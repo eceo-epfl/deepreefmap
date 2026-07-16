@@ -12,8 +12,10 @@ from deepreefmap.gui.theme import BAR_HEIGHT, TEXT_MUTED, bar_qss
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QComboBox,
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QProgressBar,
     QVBoxLayout,
@@ -85,17 +87,41 @@ class SystemPanelMixin(MixinBase):
         layout.addWidget(self._machine_specs_label)
 
         # Recorded-run summary: what past runs actually cost and how close to a
-        # crash each came. The caption is static; the per-run meters are real
+        # crash each came. A divider plus larger caption make this a section
+        # heading of its own, so the per-group workload titles below read as its
+        # children rather than siblings. The per-run meters are real
         # QProgressBars rebuilt into the container on entering the tab.
+        runs_divider = QFrame()
+        runs_divider.setFrameShape(QFrame.Shape.HLine)
+        runs_divider.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(runs_divider)
         self._recorded_runs_caption = QLabel("")
         self._recorded_runs_caption.setWordWrap(True)
         self._recorded_runs_caption.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self._recorded_runs_caption)
+
+        # Model-combination filter: history fills up fast, so default to the most
+        # recent run's mapping+segmentation pairing and let the user widen to all.
+        self._recorded_runs_filter_row = QWidget()
+        filter_layout = QHBoxLayout(self._recorded_runs_filter_row)
+        filter_layout.setContentsMargins(0, 3, 0, 0)
+        filter_label = QLabel("Model combination")
+        filter_label.setStyleSheet(f"color: {TEXT_MUTED};")
+        filter_layout.addWidget(filter_label)
+        self._recorded_runs_filter_combo = QComboBox()
+        self._recorded_runs_filter_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContents
+        )
+        self._recorded_runs_filter_combo.currentIndexChanged.connect(self._render_recorded_runs)
+        filter_layout.addWidget(self._recorded_runs_filter_combo, 1)
+        layout.addWidget(self._recorded_runs_filter_row)
+
         self._recorded_runs_container = QWidget()
         self._recorded_runs_layout = QVBoxLayout(self._recorded_runs_container)
         self._recorded_runs_layout.setContentsMargins(0, 0, 0, 0)
         self._recorded_runs_layout.setSpacing(0)
         layout.addWidget(self._recorded_runs_container)
+        self._recorded_run_groups: list[dict] = []
         self._refresh_recorded_runs()
 
         # The updates section (version, install, desktop entry) is appended to
@@ -123,24 +149,63 @@ class SystemPanelMixin(MixinBase):
         else:
             self._sys_timer.stop()
 
-    def _refresh_recorded_runs(self) -> None:
-        """Rebuild per-config peak RAM / swap / VRAM meters from history."""
-        from deepreefmap.gui.run_history import group_recorded_runs
+    _RECORDED_RUNS_HEADING = "<span style='font-size:15px'><b>Recorded runs on this machine</b></span>"
 
-        self._clear_layout(self._recorded_runs_layout)
+    def _refresh_recorded_runs(self) -> None:
+        """Reload history, repopulate the model-combination filter, then render.
+
+        Called on tab entry, so it re-reads run_timings.json and rebuilds the
+        filter's item list. The combo change signal is blocked while repopulating
+        so it doesn't render mid-rebuild — _render_recorded_runs runs once at the
+        end (and again on every user selection).
+        """
+        from deepreefmap.gui.run_history import distinct_model_combinations, group_recorded_runs
+
         try:
-            runs = group_recorded_runs()
+            self._recorded_run_groups = group_recorded_runs()
         except Exception:
-            runs = []
-        if not runs:
+            self._recorded_run_groups = []
+        if not self._recorded_run_groups:
+            self._clear_layout(self._recorded_runs_layout)
             self._recorded_runs_caption.setText(
-                "<b>Recorded runs on this machine</b><br>"
+                f"{self._RECORDED_RUNS_HEADING}<br>"
                 f"<span style='color:{TEXT_MUTED}'>None yet.</span>"
             )
+            self._recorded_runs_filter_row.hide()
             return
-        self._recorded_runs_caption.setText("<b>Recorded runs on this machine</b>")
-        for run in runs:
+        self._recorded_runs_caption.setText(self._RECORDED_RUNS_HEADING)
+        self._recorded_runs_filter_row.show()
+
+        combo = self._recorded_runs_filter_combo
+        had_selection = combo.count() > 0
+        prior = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("All combinations", None)
+        for mapping, segmentation in distinct_model_combinations(self._recorded_run_groups):
+            combo.addItem(f"{mapping} · {segmentation}", (mapping, segmentation))
+        # Preserve the user's selection across reloads: "All" stays "All", a
+        # specific combination stays if still present. First build (no prior
+        # items) defaults to the most-recent combination (index 1, after "All").
+        if not had_selection:
+            combo.setCurrentIndex(1)
+        elif prior is None:
+            combo.setCurrentIndex(0)
+        else:
+            index = next((i for i in range(combo.count()) if combo.itemData(i) == prior), 1)
+            combo.setCurrentIndex(index)
+        combo.blockSignals(False)
+        self._render_recorded_runs()
+
+    def _render_recorded_runs(self) -> None:
+        """Rebuild per-config peak RAM / swap / VRAM meters for the filtered groups."""
+        self._clear_layout(self._recorded_runs_layout)
+        selected = self._recorded_runs_filter_combo.currentData()
+        for run in self._recorded_run_groups:
             params = run["params"]
+            combo = (params.get("mapping_backend"), params.get("segmentation_model"))
+            if selected is not None and combo != selected:
+                continue
             workload = " &middot; ".join(
                 [
                     f"{params.get('fps', '?')} fps",
@@ -150,9 +215,6 @@ class SystemPanelMixin(MixinBase):
             )
             if run.get("count", 1) > 1:
                 workload += f" <span style='color:{TEXT_MUTED}'>&times;{run['count']} runs</span>"
-            models = " &middot; ".join(
-                str(params.get(k, "?")) for k in ("mapping_backend", "segmentation_model")
-            )
             ram, total = run["peak_ram_bytes"], run["total_ram_bytes"]
             swap = run.get("peak_swap_bytes") or 0
             block = QWidget()
@@ -162,9 +224,15 @@ class SystemPanelMixin(MixinBase):
             title = QLabel(f"<b>{workload}</b>")
             title.setTextFormat(Qt.TextFormat.RichText)
             vbox.addWidget(title)
-            subtitle = QLabel(f"<span style='color:{TEXT_MUTED}; font-size:11px'>{models}</span>")
-            subtitle.setTextFormat(Qt.TextFormat.RichText)
-            vbox.addWidget(subtitle)
+            # Under a specific combination every group shares it, so the model
+            # subtitle is redundant with the dropdown. Only show it under "All".
+            if selected is None:
+                models = " &middot; ".join(
+                    str(params.get(k, "?")) for k in ("mapping_backend", "segmentation_model")
+                )
+                subtitle = QLabel(f"<span style='color:{TEXT_MUTED}; font-size:11px'>{models}</span>")
+                subtitle.setTextFormat(Qt.TextFormat.RichText)
+                vbox.addWidget(subtitle)
             grid = QGridLayout()
             grid.setContentsMargins(0, 3, 0, 0)
             grid.setHorizontalSpacing(8)

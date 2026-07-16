@@ -36,7 +36,9 @@ def _recorded_runs_text(window) -> str:
     """
     from PySide6.QtWidgets import QLabel, QProgressBar
 
+    combo = window._recorded_runs_filter_combo
     parts = [window._recorded_runs_caption.text()]
+    parts += [combo.itemText(i) for i in range(combo.count())]
     parts += [w.text() for w in window._recorded_runs_container.findChildren(QLabel)]
     parts += [w.styleSheet() for w in window._recorded_runs_container.findChildren(QProgressBar)]
     return " ".join(parts)
@@ -253,3 +255,65 @@ def test_recorded_runs_summary_empty_state(qapp, monkeypatch):
     monkeypatch.setattr(history, "group_recorded_runs", lambda *a, **k: [])
     window._refresh_recorded_runs()
     assert "None yet" in window._recorded_runs_caption.text()
+    assert window._recorded_runs_filter_row.isHidden()
+
+
+def _group(mapping, seg, fps, frames):
+    return {
+        "params": {"fps": fps, "processing_width": 1376, "processing_height": 768,
+                   "mapping_backend": mapping, "segmentation_model": seg},
+        "frames": frames, "count": 1, "run_seconds": 100, "seconds_per_frame": 0.1,
+        "peak_ram_bytes": 20 * 1024**3, "peak_swap_bytes": 0, "swap_recorded": True,
+        "peak_vram_bytes": 10 * 1024**3,
+        "total_ram_bytes": 32 * 1024**3, "total_swap_bytes": 32 * 1024**3,
+        "gpu_name": "RTX 4090", "gpu_total_vram_bytes": 24 * 1024**3,
+    }
+
+
+def _group_titles(window):
+    from PySide6.QtWidgets import QLabel
+
+    return [w.text() for w in window._recorded_runs_container.findChildren(QLabel)]
+
+
+def test_recorded_runs_filter_defaults_to_most_recent_combination(qapp, monkeypatch):
+    import deepreefmap.gui.run_history as history
+
+    # Patch before building: the window populates the filter from real machine
+    # history during construction, and a later reload preserves that selection.
+    monkeypatch.setattr(
+        history, "group_recorded_runs",
+        lambda *a, **k: [
+            _group("loger_star", "coralscapes-vit-b-dpt", 1, 378),
+            _group("scsfmlearner", "coralscapes-vit-b-dpt", 3, 785),
+        ],
+    )
+    window = _make_window(qapp)
+
+    # Default selection is the newest combination; only its group renders and the
+    # redundant per-group model subtitle is dropped.
+    assert window._recorded_runs_filter_combo.currentData() == ("loger_star", "coralscapes-vit-b-dpt")
+    titles = " ".join(_group_titles(window))
+    assert "378 frames" in titles
+    assert "785 frames" not in titles
+    assert "scsfmlearner" not in titles
+
+
+def test_recorded_runs_filter_all_shows_every_group_with_subtitle(qapp, monkeypatch):
+    import deepreefmap.gui.run_history as history
+
+    window = _make_window(qapp)
+    monkeypatch.setattr(
+        history, "group_recorded_runs",
+        lambda *a, **k: [
+            _group("loger_star", "coralscapes-vit-b-dpt", 1, 378),
+            _group("scsfmlearner", "coralscapes-vit-b-dpt", 3, 785),
+        ],
+    )
+    window._refresh_recorded_runs()
+    window._recorded_runs_filter_combo.setCurrentIndex(0)  # "All combinations"
+
+    titles = " ".join(_group_titles(window))
+    assert "378 frames" in titles and "785 frames" in titles
+    # Under "All" the model subtitle returns so groups stay distinguishable.
+    assert "scsfmlearner" in titles
