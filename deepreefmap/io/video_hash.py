@@ -9,6 +9,7 @@ same clip, not for integrity verification.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from imohash import hashfile
@@ -31,3 +32,24 @@ def hash_video(path: Path) -> str | None:
 def hash_videos(paths: list[Path]) -> list[str | None]:
     """Hashes parallel to ``paths`` (None entries for unhashable files)."""
     return [hash_video(p) for p in paths]
+
+
+def describe_video(path: Path) -> dict[str, object]:
+    """Identity + display metadata for one clip: hash, size_bytes, mtime.
+
+    mtime is UTC ISO-8601 (a GoPro's mtime is the recording end time, which is
+    what a diver recognises a clip by). Values are None where unavailable.
+    """
+    info: dict[str, object] = {"hash": hash_video(path), "size_bytes": None, "mtime": None}
+    try:
+        st = path.stat()
+        info["size_bytes"] = st.st_size
+        info["mtime"] = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat()
+    except OSError:
+        pass
+    return info
+
+
+def describe_videos(paths: list[Path]) -> list[dict[str, object]]:
+    """Per-clip descriptions parallel to ``paths``."""
+    return [describe_video(p) for p in paths]

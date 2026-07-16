@@ -69,14 +69,46 @@ def _related_run_counts(entries: list[tuple[Path, str, float, dict]]) -> dict[Pa
     return counts
 
 
+def _format_bytes(total: float) -> str:
+    if total >= 1e9:
+        return f"{total / 1e9:.2f} GB"
+    return f"{total / 1e6:.1f} MB"
+
+
 def _format_disk_size(run_dir: Path) -> str | None:
     try:
         total = sum(p.stat().st_size for p in run_dir.rglob("*") if p.is_file())
     except Exception:
         return None
-    if total >= 1e9:
-        return f"{total / 1e9:.2f} GB"
-    return f"{total / 1e6:.1f} MB"
+    return _format_bytes(total)
+
+
+def _video_details(manifest: dict, index: int = 0) -> list[str]:
+    """Short hash, size, and recording date for one input video, where known."""
+    details: list[str] = []
+    hashes = manifest.get("video_hashes") or []
+    sizes = manifest.get("video_sizes") or []
+    mtimes = manifest.get("video_mtimes") or []
+    if index < len(hashes) and hashes[index]:
+        details.append(f"#{str(hashes[index])[:8]}")
+    if index < len(sizes) and sizes[index]:
+        details.append(_format_bytes(float(sizes[index])))
+    if index < len(mtimes) and mtimes[index]:
+        stamp = _format_timestamp(mtimes[index])
+        if stamp:
+            details.append(stamp)
+    return details
+
+
+def _format_trim_range(manifest: dict) -> str | None:
+    """The processed slice of the video, shown only when the run was trimmed."""
+    begin = manifest.get("begin_s")
+    end = manifest.get("end_s")
+    if begin is None and end is None:
+        return None
+    begin_txt = f"{float(begin):.1f}" if begin is not None else "0"
+    end_txt = f"{float(end):.1f}s" if end is not None else "end"
+    return f"{begin_txt}–{end_txt}"
 
 
 class _PastRunCardDelegate(QStyledItemDelegate):
@@ -338,9 +370,13 @@ class PastRunsMixin(MixinBase):
         metric_pts = manifest.get("metric_points")
         if metric_pts:
             lines.append(f"Metric points: {int(metric_pts):,}")
-        videos = manifest.get("input_videos") or []
-        if videos:
-            lines.append(f"Input: {', '.join(Path(v).name for v in videos)}")
+        for i, v in enumerate(manifest.get("input_videos") or []):
+            details = _video_details(manifest, i)
+            suffix = f" ({', '.join(details)})" if details else ""
+            lines.append(f"Input: {Path(v).name}{suffix}")
+        trim = _format_trim_range(manifest)
+        if trim:
+            lines.append(f"Range: {trim}")
         created = _format_timestamp(manifest.get("run_timestamp"))
         if created:
             lines.append(f"Created: {created}")
@@ -379,16 +415,19 @@ class PastRunsMixin(MixinBase):
                 facts.append(f"{n / 1_000:.0f}k pts")
             else:
                 facts.append(f"{n} pts")
+        trim = _format_trim_range(manifest)
+        if trim:
+            facts.append(trim)
         if related_runs:
             facts.append(f"{related_runs} related run{'s' if related_runs > 1 else ''}")
         videos = manifest.get("input_videos") or []
         video_line = ""
         if videos:
             names = [Path(v).name for v in videos]
-            if len(names) == 1:
-                video_line = f"📹 {names[0]}"
-            else:
-                video_line = f"📹 {names[0]} (+ {len(names) - 1} more)"
+            bits = [names[0], *_video_details(manifest)]
+            video_line = f"📹 {'  ·  '.join(bits)}"
+            if len(names) > 1:
+                video_line += f" (+ {len(names) - 1} more)"
         return {
             "title": name,
             "slug": "" if name == run_dir.name else f"({run_dir.name})",

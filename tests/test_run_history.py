@@ -97,6 +97,23 @@ def test_expected_peaks_fold_swap_into_committed(tmp_path):
     assert got["ram_bytes"] == 38_000_000_000
 
 
+def test_expected_peaks_take_the_worst_run_not_the_median(tmp_path):
+    # Same config run four times: three sat near 30 GB, one thrashed to 62 GB
+    # committed when the machine was busy. The pre-run check must reason from the
+    # 62 GB high-water mark (the crash predictor), not the ~30 GB median.
+    path = tmp_path / "run_timings.json"
+    key = history_key("loger_star", "seg", 1376, 768, 5)
+    for ram, swap in [(30, 0), (31, 0), (33, 0), (33, 29)]:
+        record_run(
+            key, {"mapping": 1.0}, frames=1890, points=1,
+            stage_peaks={"cloud": {"ram_bytes": ram * 10**9, "swap_bytes": swap * 10**9}},
+            path=path,
+        )
+    got = load_expected_peaks(key, path=path)
+    assert got["ram_bytes"] == 62 * 10**9  # 33 GB RAM + 29 GB swap, the worst run
+    assert got["frames"] == 1890
+
+
 def test_summarise_recorded_runs_reports_peaks_and_machine(tmp_path):
     path = tmp_path / "run_timings.json"
     peaks = {

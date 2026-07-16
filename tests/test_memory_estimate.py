@@ -52,10 +52,13 @@ def test_m1_8gb_blocks_a_large_run():
 
 
 def test_tight_headroom_warns():
+    # 27 GB peak on 34 GB RAM: within the usable budget but under the warn headroom,
+    # so it warns (low) rather than blocking.
     recorded = {"ram_bytes": 27 * _GB, "vram_bytes": None, "frames": 1000}
     est = estimate_peak_bytes(1000, 1376, 768, "loger_star", "seg", recorded=recorded)
-    verdict = preflight_check(_profile(avail_gb=31, total_gb=32), est)
+    verdict = preflight_check(_profile(avail_gb=33, total_gb=34), est)
     assert verdict.level == "warn"
+    assert verdict.risk == "low"
 
 
 def test_cuda_vram_shortfall_only_warns_never_blocks_on_ram():
@@ -68,13 +71,28 @@ def test_cuda_vram_shortfall_only_warns_never_blocks_on_ram():
     assert "vram" in verdict.message.lower()
 
 
-def test_exceeding_ram_but_fitting_swap_warns_not_blocks():
-    # 40 GB run, 30 GB free RAM but 20 GB swap: it thrashes, it does not crash.
+def test_exceeding_ram_but_fitting_swap_warns_high_not_blocks():
+    # 40 GB run on 32 GB RAM with 40 GB swap: it fits in RAM + swap so it does not
+    # hard-block, but it overruns the RAM the run can actually claim, so it thrashes
+    # swap and is a HIGH warning, not the old reassuring "runs slowly".
     recorded = {"ram_bytes": 40 * _GB, "vram_bytes": None, "frames": 1000}
     est = estimate_peak_bytes(1000, 1376, 768, "loger_star", "seg", recorded=recorded)
-    verdict = preflight_check(_profile(avail_gb=30, total_gb=32, swap_gb=20), est)
+    verdict = preflight_check(_profile(avail_gb=30, total_gb=32, swap_gb=40), est)
     assert verdict.level == "warn"
+    assert verdict.risk == "high"
     assert "swap" in verdict.message.lower()
+
+
+def test_os_reserve_flips_a_near_full_run_from_low_to_high():
+    # 30 GB peak on a 33 GB machine: naively 3 GB "spare", so the old model called
+    # it low risk. But the OS and other apps hold several GB the run can never take,
+    # so the real budget is under 30 GB and the run spills into swap -> high.
+    recorded = {"ram_bytes": 30 * _GB, "vram_bytes": None, "frames": 1000}
+    est = estimate_peak_bytes(1000, 1376, 768, "loger_star", "seg", recorded=recorded)
+    verdict = preflight_check(_profile(avail_gb=28, total_gb=33, swap_gb=32), est)
+    assert verdict.level == "warn"
+    assert verdict.risk == "high"
+    assert verdict.ram_need_bytes > verdict.ram_available_bytes  # over the usable budget
 
 
 def test_exceeding_ram_and_swap_blocks():
@@ -86,14 +104,16 @@ def test_exceeding_ram_and_swap_blocks():
 
 def test_measured_peak_is_graded_against_total_not_free():
     # A measured peak is an absolute system-wide high-water mark: it already
-    # includes the resident baseline, so it must be judged against total RAM. The
-    # 20 GB peak fits the 32 GB machine even though only 10 GB is momentarily free.
+    # includes the resident baseline, so it is judged against total RAM (minus the
+    # OS/other-apps floor), not the 10 GB momentarily free. The 20 GB peak still
+    # fits the 32 GB machine comfortably.
     recorded = {"ram_bytes": 20 * _GB, "vram_bytes": None, "frames": 1000}
     est = estimate_peak_bytes(1000, 1376, 768, "loger_star", "seg", recorded=recorded)
     assert est.source == "measured"
     verdict = preflight_check(_profile(avail_gb=10, total_gb=32), est)
     assert verdict.level == "ok"
-    assert verdict.ram_available_bytes == 32 * _GB  # graded against total, not free
+    # Budget is total minus the OS reserve: well above the 10 GB free, below 32 GB.
+    assert 10 * _GB < verdict.ram_available_bytes < 32 * _GB
 
 
 def test_memory_risk_bands():

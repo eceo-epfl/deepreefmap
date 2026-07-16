@@ -49,3 +49,36 @@ def test_card_meta_includes_related_count_only_when_positive() -> None:
 
     meta = PastRunsMixin._build_past_run_card_meta({}, Path("run_a"))
     assert "related" not in meta["facts"]
+
+
+def test_card_video_line_shows_hash_size_and_date() -> None:
+    manifest = {
+        "input_videos": ["/data/GX_VIDEO.MP4"],
+        "video_hashes": ["deadbeefdeadbeefdeadbeefdeadbeef"],
+        "video_sizes": [3_800_000_000],
+        "video_mtimes": ["2026-07-12T14:03:00+00:00"],
+    }
+    meta = PastRunsMixin._build_past_run_card_meta(manifest, Path("run_a"))
+    assert "GX_VIDEO.MP4" in meta["video"]
+    assert "#deadbeef" in meta["video"]
+    assert "3.80 GB" in meta["video"]
+    assert "2026-07-12" in meta["video"]
+
+
+def test_card_video_line_degrades_without_new_fields() -> None:
+    meta = PastRunsMixin._build_past_run_card_meta(
+        {"input_videos": ["/data/old.mp4"]}, Path("run_a")
+    )
+    assert meta["video"] == "📹 old.mp4"
+
+
+def test_card_facts_show_trim_range_only_when_trimmed() -> None:
+    meta = PastRunsMixin._build_past_run_card_meta(
+        {"begin_s": 61.95, "end_s": 336.31}, Path("run_a")
+    )
+    assert "62.0–336.3s" in meta["facts"]
+
+    meta = PastRunsMixin._build_past_run_card_meta(
+        {"begin_s": None, "end_s": None}, Path("run_a")
+    )
+    assert "–" not in meta["facts"]

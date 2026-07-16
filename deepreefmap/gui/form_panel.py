@@ -1375,16 +1375,14 @@ class FormPanelMixin(MixinBase):
             return
 
         colour = "#e05050" if verdict.level == "block" else "#e0a030"
-        headline = "Potential to crash" if verdict.level == "block" else "Memory may be tight"
-        swap_txt = (
-            f" +{format_bytes(profile.free_swap_bytes)} swap" if profile.free_swap_bytes else ""
-        )
+        headline = f"Crash risk: {verdict.risk}"
+        cap_word = "RAM + swap" if profile.free_swap_bytes else "RAM"
 
         # Inline notice: concise, always-visible indicator in the form.
         notice.setStyleSheet(f"color: {colour}; font-size: 11px; margin: 2px 0 4px 0;")
         notice.setText(
-            f"{headline}: peaks ~{format_bytes(verdict.ram_need_bytes)} RAM vs "
-            f"{format_bytes(verdict.ram_available_bytes)} available{swap_txt}. "
+            f"{headline}: ~{format_bytes(verdict.ram_need_bytes)} "
+            f"({verdict.percent:.0f}% of {cap_word}). "
             f'<a href="#system" style="color:{colour};">System tab</a>'
         )
         notice.setVisible(True)

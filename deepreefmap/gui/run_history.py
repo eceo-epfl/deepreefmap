@@ -70,11 +70,19 @@ def _strip_fps(key: str) -> str:
 
 
 def load_expected_peaks(key: str, path: Path | None = None) -> dict | None:
-    """Median measured peak RAM/VRAM (over all stages) and frame count for `key`.
+    """Worst recent measured peak RAM/VRAM (over all stages) and its frame count.
 
     Returned as `{ram_bytes, vram_bytes|None, frames}` so the pre-run memory check
     can scale a real peak by this run's frame count. None when no comparable run
     has recorded peaks yet, so the caller falls back to the analytic estimate.
+
+    This is a **crash-avoidance** figure, so it takes the worst recent run, not the
+    median: a config's memory demand swings with how loaded the machine was, and the
+    high-water run is the one that predicts a crash on a busier machine. The median
+    (shown per-config on the System tab) would hide it. `ram_bytes` is that run's
+    peak committed memory (RAM plus any swap it spilled into); `frames` is that same
+    run's frame count so the caller scales from a self-consistent point. VRAM is the
+    worst seen across the pool.
 
     Peaks are pooled across every recorded fps at this backend/model/resolution,
     not just the exact key: peak memory tracks the frame count, which the estimate
@@ -92,9 +100,9 @@ def load_expected_peaks(key: str, path: Path | None = None) -> dict | None:
     ]
     if not runs:
         return None
-    committed: list[int] = []
+    worst_committed = 0
+    worst_frames = 0
     vrams: list[int] = []
-    frames: list[int] = []
     for run in runs:
         stages = run["stage_peaks"].values()
         # Peak committed memory per stage = RAM plus the swap it spilled into, then
@@ -105,17 +113,19 @@ def load_expected_peaks(key: str, path: Path | None = None) -> dict | None:
         ]
         if not per_stage:
             continue
-        committed.append(max(per_stage))
+        committed = max(per_stage)
         vram = [s["vram_bytes"] for s in stages if s.get("vram_bytes")]
         if vram:
             vrams.append(max(vram))
-        frames.append(int(run["frames"]))
-    if not committed:
+        if committed > worst_committed:
+            worst_committed = committed
+            worst_frames = int(run["frames"])
+    if not worst_committed:
         return None
     return {
-        "ram_bytes": int(statistics.median(committed)),
-        "vram_bytes": int(statistics.median(vrams)) if vrams else None,
-        "frames": int(statistics.median(frames)),
+        "ram_bytes": worst_committed,
+        "vram_bytes": max(vrams) if vrams else None,
+        "frames": worst_frames,
     }
 
 
@@ -170,9 +180,10 @@ def group_recorded_runs(path: Path | None = None) -> list[dict]:
 
     Runs are grouped by the workload signature (mapping backend, segmentation
     model, resolution, fps and frame count); within a group the peak RAM/swap/VRAM
-    are the median across runs, and ``count`` records how many were folded in. The
-    median matches load_expected_peaks, so the numbers shown are the ones the
-    pre-run check reasons from. Groups stay newest-first.
+    are the median across runs, and ``count`` records how many were folded in. This
+    is the typical-cost view for the System tab; the pre-run check instead reasons
+    from the worst recent run (load_expected_peaks), which is the crash predictor.
+    Groups stay newest-first.
     """
     groups: dict[tuple, list[dict]] = {}
     for row in summarise_recorded_runs(path):

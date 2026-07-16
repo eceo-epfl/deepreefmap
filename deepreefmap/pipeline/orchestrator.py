@@ -20,7 +20,7 @@ from deepreefmap.camera.rectification import Rectifier
 from deepreefmap.config.classes import ClassConfig, load_classes
 from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_semantic_cloud
 from deepreefmap.io.video import _first_sample_time, iter_video_frames, selected_local_indices_for_clip
-from deepreefmap.io.video_hash import hash_videos
+from deepreefmap.io.video_hash import describe_videos
 from deepreefmap.mapping.registry import create_mapping_backend
 from deepreefmap.perf_sampler import ResourceSampler, peaks_from_marks
 from deepreefmap.pipeline import resume as resume_mod
@@ -132,9 +132,9 @@ def run_reconstruction(
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     run_started_at = datetime.now(timezone.utc).isoformat()
-    # Sampled imohash, sub-ms even on multi-GB clips. Captured up front so the
-    # manifest identity matches the files as they were read.
-    video_hashes = hash_videos([Path(p) for p in video_paths])
+    # Sampled imohash + size + mtime, sub-ms even on multi-GB clips. Captured
+    # up front so the manifest identity matches the files as they were read.
+    video_meta = describe_videos([Path(p) for p in video_paths])
     # Wall-clock marks at each coarse stage boundary, turned into per-stage
     # durations for the manifest (and thence the machine's timing profile).
     stage_marks: dict[str, float] = {"start": time.monotonic()}
@@ -504,7 +504,7 @@ def run_reconstruction(
                 mode="geometry_only",
                 run_name=run_name,
                 input_videos=video_paths,
-                video_hashes=video_hashes,
+                video_meta=video_meta,
                 run_params={
                     **run_params,
                     "transect": {
@@ -673,7 +673,7 @@ def run_reconstruction(
             mode="semantic",
             run_name=run_name,
             input_videos=video_paths,
-            video_hashes=video_hashes,
+            video_meta=video_meta,
             run_params={
                 **run_params,
                 "transect": {
@@ -1213,7 +1213,7 @@ def _build_manifest(
     mode: str,
     run_name: str | None = None,
     input_videos: list[str] | None = None,
-    video_hashes: list[str | None] | None = None,
+    video_meta: list[dict[str, object]] | None = None,
     run_params: dict[str, object] | None = None,
     stage_durations: dict[str, float] | None = None,
     stage_peaks: dict[str, dict[str, int | None]] | None = None,
@@ -1223,8 +1223,10 @@ def _build_manifest(
         "schema_version": 4,
         "name": run_name,
         "input_videos": list(input_videos) if input_videos else [],
-        # Parallel to input_videos; None entries for files that failed to hash.
-        "video_hashes": list(video_hashes) if video_hashes else [],
+        # Parallel to input_videos; None entries where hashing/stat failed.
+        "video_hashes": [m.get("hash") for m in video_meta] if video_meta else [],
+        "video_sizes": [m.get("size_bytes") for m in video_meta] if video_meta else [],
+        "video_mtimes": [m.get("mtime") for m in video_meta] if video_meta else [],
         "mode": mode,
         "frames_processed": frames_processed,
         "segmentation_model": segmentation_name,
