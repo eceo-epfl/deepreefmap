@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from deepreefmap.config.classes import ClassConfig, SemanticClass
@@ -11,9 +12,11 @@ from deepreefmap.io.scene_file import (
     SCENE_FILE_SUFFIX,
     LazyFrameBatch,
     LazyPreparedFrame,
+    RunDirFrameAccessor,
     compute_source_fingerprint,
     find_scene_file,
     fingerprint_matches,
+    lazy_frame_batch_from_run_dir,
     load_scene_file,
     save_scene_file,
     scene_file_name,
@@ -368,3 +371,74 @@ class TestAtomicWrite:
         tmp_file = tmp_path / (sfn + ".tmp")
         assert not tmp_file.exists()
         assert scene_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# Run-dir lazy backend
+# ---------------------------------------------------------------------------
+
+def _write_run_dir(run_dir: Path, frame_batch: FrameBatch) -> None:
+    """Lay out frames/labels/masks PNGs exactly as _prepare_frames does."""
+    frames_dir = run_dir / "frames"
+    labels_dir = run_dir / "labels"
+    masks_dir = run_dir / "masks"
+    for d in (frames_dir, labels_dir, masks_dir):
+        d.mkdir(parents=True, exist_ok=True)
+    for frame in frame_batch.frames:
+        stem = f"{frame.frame_index:08d}"
+        cv2.imwrite(str(frames_dir / f"{stem}.png"), cv2.cvtColor(frame.image_rgb, cv2.COLOR_RGB2BGR))
+        cv2.imwrite(str(labels_dir / f"{stem}.png"), frame.labels)
+        cv2.imwrite(str(masks_dir / f"{stem}.png"), frame.keep_mask)
+
+
+def _make_uint8_frames(n: int = 4, h: int = 16, w: int = 24) -> FrameBatch:
+    frames = [
+        PreparedFrame(
+            frame_index=i * 3,
+            image_rgb=np.random.randint(0, 256, (h, w, 3), dtype=np.uint8),
+            labels=np.random.randint(0, 5, (h, w), dtype=np.uint8),
+            keep_mask=(np.random.rand(h, w) > 0.5).astype(np.uint8) * 255,
+        )
+        for i in range(n)
+    ]
+    return FrameBatch(
+        frames=tuple(frames),
+        intrinsics=np.eye(3, dtype=np.float64) * 2.0,
+        image_size=(w, h),
+        clip_counts=(n,),
+        gravity_vectors=np.array([[0.0, 9.8, 0.0]], dtype=np.float64),
+    )
+
+
+class TestRunDirFrameAccessor:
+    """Lossless PNG caches make a lazy reload identical to the eager arrays."""
+
+    def test_accessor_reproduces_arrays(self, tmp_path: Path) -> None:
+        fb = _make_uint8_frames()
+        _write_run_dir(tmp_path, fb)
+
+        accessor = RunDirFrameAccessor(tmp_path, fb.frame_indices, fb.clip_counts, fb.image_size)
+
+        assert accessor.n_frames == len(fb.frames)
+        assert accessor.image_size == fb.image_size
+        assert accessor.clip_counts == fb.clip_counts
+        for i, frame in enumerate(fb.frames):
+            np.testing.assert_array_equal(accessor.get_image(i), frame.image_rgb)
+            np.testing.assert_array_equal(accessor.get_labels(i), frame.labels)
+            np.testing.assert_array_equal(accessor.get_mask(i), frame.keep_mask)
+
+    def test_lazy_batch_matches_eager(self, tmp_path: Path) -> None:
+        fb = _make_uint8_frames()
+        _write_run_dir(tmp_path, fb)
+
+        lazy = lazy_frame_batch_from_run_dir(tmp_path, fb)
+
+        assert lazy.frame_indices == [f.frame_index for f in fb.frames]
+        assert lazy.image_size == fb.image_size
+        assert lazy.clip_counts == fb.clip_counts
+        np.testing.assert_array_equal(lazy.intrinsics, fb.intrinsics)
+        np.testing.assert_array_equal(lazy.gravity_vectors, fb.gravity_vectors)
+        for lazy_frame, eager_frame in zip(lazy.frames, fb.frames, strict=True):
+            np.testing.assert_array_equal(lazy_frame.image_rgb, eager_frame.image_rgb)
+            np.testing.assert_array_equal(lazy_frame.labels, eager_frame.labels)
+            np.testing.assert_array_equal(lazy_frame.keep_mask, eager_frame.keep_mask)

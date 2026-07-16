@@ -12,10 +12,12 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
+import cv2
 import numpy as np
 
 if TYPE_CHECKING:
@@ -560,16 +562,96 @@ class SceneFrameAccessor:
             pass
 
 
+class RunDirFrameAccessor:
+    """Read prepared frames on demand from a run directory's PNG caches.
+
+    Mirrors ``SceneFrameAccessor`` so a ``LazyFrameBatch`` can back the viewer
+    with the run folder itself, not just a ``.drm`` scene file. Frames, labels
+    and masks are lossless PNG, so a reloaded array equals the one preprocessing
+    held in RAM.
+    """
+
+    def __init__(
+        self,
+        run_dir: Path,
+        frame_indices: Sequence[int],
+        clip_counts: Sequence[int],
+        image_size: tuple[int, int],
+    ) -> None:
+        self._frames_dir = run_dir / "frames"
+        self._labels_dir = run_dir / "labels"
+        self._masks_dir = run_dir / "masks"
+        self._frame_indices = np.asarray(frame_indices, dtype=np.int64)
+        self._clip_counts = tuple(int(c) for c in clip_counts)
+        self._image_size = (int(image_size[0]), int(image_size[1]))
+
+    @property
+    def n_frames(self) -> int:
+        return int(self._frame_indices.shape[0])
+
+    @property
+    def frame_indices(self) -> np.ndarray:
+        return self._frame_indices
+
+    @property
+    def clip_counts(self) -> tuple[int, ...]:
+        return self._clip_counts
+
+    @property
+    def image_size(self) -> tuple[int, int]:
+        return self._image_size
+
+    def _stem(self, positional_index: int) -> str:
+        return f"{int(self._frame_indices[positional_index]):08d}"
+
+    def _read(self, path: Path, flags: int) -> np.ndarray:
+        array = cv2.imread(str(path), flags)
+        if array is None:
+            raise FileNotFoundError(f"Prepared frame artifact is missing or unreadable: {path}")
+        return array
+
+    def get_image(self, positional_index: int) -> np.ndarray:
+        # Preprocess wrote RGB through cvtColor(RGB2BGR), so invert on read.
+        bgr = self._read(self._frames_dir / f"{self._stem(positional_index)}.png", cv2.IMREAD_COLOR)
+        return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+    def get_labels(self, positional_index: int) -> np.ndarray:
+        return self._read(self._labels_dir / f"{self._stem(positional_index)}.png", cv2.IMREAD_GRAYSCALE)
+
+    def get_mask(self, positional_index: int) -> np.ndarray:
+        return self._read(self._masks_dir / f"{self._stem(positional_index)}.png", cv2.IMREAD_GRAYSCALE)
+
+    def close(self) -> None:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Lazy FrameBatch / PreparedFrame wrappers
 # ---------------------------------------------------------------------------
 
+class FrameAccessor(Protocol):
+    """Read interface shared by the scene-file and run-dir lazy backends."""
+
+    @property
+    def n_frames(self) -> int: ...
+    @property
+    def frame_indices(self) -> np.ndarray: ...
+    @property
+    def clip_counts(self) -> tuple[int, ...]: ...
+    @property
+    def image_size(self) -> tuple[int, int]: ...
+    def get_image(self, positional_index: int) -> np.ndarray: ...
+    def get_labels(self, positional_index: int) -> np.ndarray: ...
+    def get_mask(self, positional_index: int) -> np.ndarray: ...
+    def close(self) -> None: ...
+
+
 class LazyPreparedFrame:
-    """Duck-typed PreparedFrame that reads from a SceneFrameAccessor on access."""
+    """Duck-typed PreparedFrame that reads from a FrameAccessor on access."""
 
     __slots__ = ("_accessor", "_pos", "frame_index", "image_path", "labels_path", "mask_path")
 
-    def __init__(self, accessor: SceneFrameAccessor, positional_index: int, frame_index: int) -> None:
+    def __init__(self, accessor: FrameAccessor, positional_index: int, frame_index: int) -> None:
         self._accessor = accessor
         self._pos = positional_index
         self.frame_index = frame_index
@@ -591,14 +673,14 @@ class LazyPreparedFrame:
 
 
 class LazyFrameBatch:
-    """Duck-typed FrameBatch backed by a SceneFrameAccessor."""
+    """Duck-typed FrameBatch backed by a FrameAccessor."""
 
-    def __init__(self, accessor: SceneFrameAccessor, intrinsics: np.ndarray) -> None:
+    def __init__(self, accessor: FrameAccessor, intrinsics: np.ndarray) -> None:
         self._accessor = accessor
         self.intrinsics = intrinsics
         self.image_size = accessor.image_size
         self.clip_counts = accessor.clip_counts
-        self.gravity_vectors = None
+        self.gravity_vectors: np.ndarray | None = None
         self.frames = tuple(
             LazyPreparedFrame(accessor, i, int(accessor.frame_indices[i]))
             for i in range(accessor.n_frames)
@@ -619,6 +701,25 @@ class LazyFrameBatch:
     @property
     def masks(self) -> list[np.ndarray]:
         return [f.keep_mask for f in self.frames]
+
+
+def lazy_frame_batch_from_run_dir(run_dir: Path, frame_batch: FrameBatch) -> LazyFrameBatch:
+    """Re-express an eager FrameBatch as a lazy one reading the run's PNGs.
+
+    The run keeps using the eager batch for mapping and cloud work. Only the
+    viewer handoff swaps to this, so the ~9 GiB decoded frame stack is freed
+    once the run scope exits instead of staying pinned for the life of the
+    window.
+    """
+    accessor = RunDirFrameAccessor(
+        run_dir,
+        frame_batch.frame_indices,
+        frame_batch.clip_counts,
+        frame_batch.image_size,
+    )
+    lazy = LazyFrameBatch(accessor, frame_batch.intrinsics)
+    lazy.gravity_vectors = frame_batch.gravity_vectors
+    return lazy
 
 
 # ---------------------------------------------------------------------------

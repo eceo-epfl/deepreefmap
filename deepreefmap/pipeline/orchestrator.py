@@ -518,8 +518,11 @@ def run_reconstruction(
                 system_profile=system_profile,
             ))
             if viewer is not None:
+                # Lazy batch over the run's PNGs so the viewer holds handles,
+                # not the decoded frame stack, once the run scope exits.
+                from deepreefmap.io.scene_file import lazy_frame_batch_from_run_dir
                 viewer.set_data(
-                    frame_batch=frame_batch,
+                    frame_batch=lazy_frame_batch_from_run_dir(output_dir, frame_batch),
                     mapping_result=mapping_result,
                     geometry_xyz=geometry_xyz,
                     geometry_rgb=geometry_rgb,
@@ -622,8 +625,11 @@ def run_reconstruction(
         stage_marks["save"] = time.monotonic()
 
         if viewer is not None:
+            # Hand the viewer a lazy batch over the run's PNGs so it does not
+            # pin the decoded frame stack for the life of the window.
+            from deepreefmap.io.scene_file import lazy_frame_batch_from_run_dir
             viewer.set_data(
-                frame_batch=frame_batch,
+                frame_batch=lazy_frame_batch_from_run_dir(output_dir, frame_batch),
                 mapping_result=mapping_result,
                 reference_cloud=reference_cloud,
                 classes_config=classes_config,
