@@ -120,6 +120,7 @@ def test_summarise_recorded_runs_reports_peaks_and_machine(tmp_path):
     assert row["peak_vram_bytes"] == 17_000_000_000
     assert row["total_ram_bytes"] == 33_000_000_000
     assert row["frames"] == 1134
+    assert row["run_seconds"] == 1.0  # sum of the timed stages
 
 
 def test_summarise_skips_peakless_runs(tmp_path):
@@ -134,9 +135,9 @@ def test_group_recorded_runs_medians_repeat_configs(tmp_path):
     params = {"fps": 5, "mapping_backend": "loger_star", "segmentation_model": "seg",
               "processing_width": 1376, "processing_height": 768}
     profile = {"total_ram_bytes": 32_000_000_000, "gpu": {"name": "RTX"}}
-    for ram in (28_000_000_000, 30_000_000_000, 32_000_000_000):
+    for ram, dur in zip((28_000_000_000, 30_000_000_000, 32_000_000_000), (600.0, 900.0, 1200.0)):
         record_run(
-            key, {"mapping": 1.0}, frames=1890, points=1, params=params,
+            key, {"preprocess": dur / 2, "mapping": dur / 2}, frames=1890, points=1, params=params,
             stage_peaks={"mapping": {"ram_bytes": ram, "vram_bytes": 8_000_000_000, "swap_bytes": 0}},
             system_profile=profile, path=path,
         )
@@ -152,6 +153,10 @@ def test_group_recorded_runs_medians_repeat_configs(tmp_path):
     assert big["count"] == 3
     assert big["peak_ram_bytes"] == 30_000_000_000  # median of 28/30/32
     assert big["swap_recorded"] is True
+    # Time is the median total wall-clock over the group (600/900/1200 -> 900),
+    # averaged over runs rather than one, and normalised per frame.
+    assert big["run_seconds"] == 900
+    assert abs(big["seconds_per_frame"] - 900 / 1890) < 1e-9
 
 
 def test_rolling_cap(tmp_path):

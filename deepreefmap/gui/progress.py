@@ -94,26 +94,42 @@ _RECON_PHASES: list[tuple[str, float]] = [
     ("scene_save", 8.0),
 ]
 
-# Mapping is reported as three phases (window inference, pose re-anchor, resume
-# save) but must read as one continuous 0-100 "Mapping" detail bar, not three
-# resets. Each sub-phase drives a slice of the bar sized by the same weights the
-# total bar uses, so the fill flows straight through inference -> align -> save.
+# Some coarse stages are reported as several sub-phases but must read as one
+# continuous 0-100 detail bar (and one estimator fraction), not several resets or
+# a pin at 100%. Each sub-phase drives a slice sized by the same weights the total
+# bar uses, so the fill flows straight through, and an indeterminate tail step
+# holds at its slice start instead of leaving the stage stuck "done" while it runs.
+
+# Mapping: window inference, pose re-anchor, resume save.
 _MAPPING_PHASE_KEYS: tuple[str, ...] = ("mapping", "mapping_align", "mapping_save")
 
+# Cloud: the per-frame unprojection loop (reported as "outputs") then the tail —
+# concatenate, replacement-radius lexsort, voxel reduce. Without this split the
+# cheap per-frame loop drove the stage to 100% and the long lexsort read "~0s
+# left"; the tail owns most of the weight, matching where the wall time goes.
+_CLOUD_PHASE_KEYS: tuple[str, ...] = ("outputs", "cloud_concat", "cloud_replace", "cloud_voxel")
 
-def _mapping_subphase_spans() -> dict[str, tuple[float, float]]:
+# The per-item loop that legitimately carries a `cur/tot`; the other sub-phases
+# report raw point totals or nothing and would read as noise on the status line.
+_COUNTED_SUBPHASES: frozenset[str] = frozenset({"mapping", "outputs"})
+
+
+def _subphase_spans(keys: tuple[str, ...]) -> dict[str, tuple[float, float]]:
     weights = dict(_RECON_PHASES)
-    total = sum(weights[k] for k in _MAPPING_PHASE_KEYS) or 1.0
+    total = sum(weights[k] for k in keys) or 1.0
     spans: dict[str, tuple[float, float]] = {}
     acc = 0.0
-    for key in _MAPPING_PHASE_KEYS:
+    for key in keys:
         share = weights[key] / total
         spans[key] = (acc, acc + share)
         acc += share
     return spans
 
 
-_MAPPING_SUBPHASE_SPANS = _mapping_subphase_spans()
+_MAPPING_SUBPHASE_SPANS = _subphase_spans(_MAPPING_PHASE_KEYS)
+_CLOUD_SUBPHASE_SPANS = _subphase_spans(_CLOUD_PHASE_KEYS)
+# One lookup over every fine phase shown as part of a continuous stage fill.
+_SUBPHASE_SPANS = {**_MAPPING_SUBPHASE_SPANS, **_CLOUD_SUBPHASE_SPANS}
 
 
 # cloud_concat / cloud_replace / cloud_voxel are the silent post-frame steps
@@ -250,7 +266,7 @@ class ProgressBarsMixin(MixinBase):
         self._status_count_text = ""
         self._status_phase_key = None
         self._status_phase_started = time.monotonic()
-        self._mapping_progress = 0.0
+        self._stage_fill: dict[str, float] = {}
         # ETA only applies to a reconstruction; a cached-run load has its own model.
         self._eta = self._new_run_estimator() if model is self._recon_model else None
         self._ensure_status_tick_timer().start()
@@ -295,7 +311,7 @@ class ProgressBarsMixin(MixinBase):
         self._status_base_text = ""
         self._status_count_text = ""
         self._status_phase_key = None
-        self._mapping_progress = 0.0
+        self._stage_fill = {}
 
     def _render_status(self) -> None:
         """Recompose the status label: coloured stage + label, then a metrics line.
@@ -390,20 +406,26 @@ class ProgressBarsMixin(MixinBase):
             self._status_phase_key = phase_key
             self._status_phase_started = now
 
-        # Mapping is three sub-phases (window inference, pose re-anchor, resume
-        # save) folded into one monotonic 0-100 fill sized by their weights.
-        # Compute that combined value once so the detail bar and the hover
-        # breakdown show the same number: indeterminate sub-steps (prep, GPU
-        # transfer, the resume save) report total<=0 and hold at their slice
-        # start rather than snapping to zero.
-        span = _MAPPING_SUBPHASE_SPANS.get(phase_key)
-        mapping_combined: float | None = None
+        # Mapping and cloud are each several sub-phases folded into one monotonic
+        # 0-100 fill sized by their weights. Compute that combined value once so the
+        # detail bar and the hover breakdown show the same number, and so an
+        # indeterminate tail step (GPU transfer, the resume save, the cloud lexsort)
+        # holds at its slice start rather than pinning the stage at 100% (which read
+        # as "~0s left" while it was still working). Accumulate per coarse stage so
+        # cloud does not inherit mapping's finished fill.
+        span = _SUBPHASE_SPANS.get(phase_key)
+        stage_combined: float | None = None
         if span is not None:
+            coarse = stage_for_phase(phase_key) or phase_key
             lo, hi = span
             within = min(1.0, current / total) if total > 0 else 0.0
             combined = 100.0 * (lo + (hi - lo) * within)
-            mapping_combined = max(getattr(self, "_mapping_progress", 0.0), combined)
-            self._mapping_progress = mapping_combined
+            fills = getattr(self, "_stage_fill", None)
+            if fills is None:
+                fills = {}
+                self._stage_fill = fills
+            stage_combined = max(fills.get(coarse, 0.0), combined)
+            fills[coarse] = stage_combined
 
         est = getattr(self, "_eta", None)
         if est is not None and stage_for_phase(phase_key) is not None:
@@ -411,26 +433,28 @@ class ProgressBarsMixin(MixinBase):
             # per-frame stages scale with; capture it for pending predictions.
             if phase_key == "preprocess" and total > 0:
                 est.frames = total
-            if mapping_combined is not None:
-                # Feed the estimator the same combined mapping fill the detail bar
-                # shows (0-100), not the raw per-sub-phase fraction. Otherwise the
-                # hover "Mapping" bar snaps to 100% when inference ends and its
-                # remainder reads 0s while align + save still run.
-                est.update(phase_key, int(round(mapping_combined)), 100, now)
+            if stage_combined is not None:
+                # Feed the estimator the same combined fill the detail bar shows
+                # (0-100), not the raw per-sub-phase fraction. Otherwise the hover
+                # bar snaps to 100% when the determinate loop ends and its remainder
+                # reads 0s while the indeterminate tail still runs.
+                est.update(phase_key, int(round(stage_combined)), 100, now)
             else:
                 est.update(phase_key, current, total, now)
 
         # The bars carry no text (the stage name is coloured in the status line);
         # they only show fill. Indeterminate for total <= 0. The frame count is
         # kept out of the base text so it can sit on the metrics line.
-        if mapping_combined is not None:
+        if stage_combined is not None:
             if self._progress_bar.minimum() != 0 or self._progress_bar.maximum() != 100:
                 self._progress_bar.setRange(0, 100)
-            self._progress_bar.setValue(int(round(mapping_combined)))
+            self._progress_bar.setValue(int(round(stage_combined)))
             self._status_base_text = label
-            # Only the inference windows count meaningfully; align/save report raw
-            # point totals that would read as noise.
-            self._status_count_text = f"{current}/{total}" if phase_key == "mapping" and total > 1 else ""
+            # Only the per-item loop carries a meaningful count; the tail sub-phases
+            # report raw point totals or nothing and would read as noise.
+            self._status_count_text = (
+                f"{current}/{total}" if phase_key in _COUNTED_SUBPHASES and total > 1 else ""
+            )
         elif total > 1:
             if self._progress_bar.minimum() != 0 or self._progress_bar.maximum() != total:
                 self._progress_bar.setRange(0, total)

@@ -177,7 +177,7 @@ def test_recorded_runs_summary_shows_peak_and_risk(qapp, monkeypatch):
             "key": "loger_star|seg|1376x768|3fps",
             "params": {"fps": 3, "processing_width": 1376, "processing_height": 768,
                        "mapping_backend": "loger_star", "segmentation_model": "coralscapes-vit-b-dpt"},
-            "frames": 1134, "points": 14_000_000,
+            "frames": 1134, "points": 14_000_000, "run_seconds": 430.0,
             "peak_ram_bytes": 30 * 1024**3, "peak_swap_bytes": 0, "swap_recorded": False,
             "peak_vram_bytes": 17 * 1024**3,
             "total_ram_bytes": 32 * 1024**3, "total_swap_bytes": 32 * 1024**3,
@@ -208,7 +208,7 @@ def test_recorded_runs_summary_shows_swap_spill(qapp, monkeypatch):
             "key": "loger_star|seg|1376x768|5fps",
             "params": {"fps": 5, "processing_width": 1376, "processing_height": 768,
                        "mapping_backend": "loger_star"},
-            "frames": 1890, "points": 30_000_000,
+            "frames": 1890, "points": 30_000_000, "run_seconds": 905.0,
             "peak_ram_bytes": 31 * 1024**3, "peak_swap_bytes": 8 * 1024**3, "swap_recorded": True,
             "peak_vram_bytes": 17 * 1024**3,
             "total_ram_bytes": 32 * 1024**3, "total_swap_bytes": 32 * 1024**3,
@@ -221,6 +221,9 @@ def test_recorded_runs_summary_shows_swap_spill(qapp, monkeypatch):
     assert "swap" in text.lower()
     assert "not recorded" not in text
     assert "#e05050" in text
+    # The median wall-clock and its per-frame throughput are shown.
+    assert "Time" in text
+    assert "s/frame" in text
 
 
 def test_recorded_runs_group_shows_run_count(qapp, monkeypatch):
@@ -232,7 +235,7 @@ def test_recorded_runs_group_shows_run_count(qapp, monkeypatch):
         lambda *a, **k: [{
             "params": {"fps": 5, "processing_width": 1376, "processing_height": 768,
                        "mapping_backend": "loger_star", "segmentation_model": "seg"},
-            "frames": 1890, "count": 3,
+            "frames": 1890, "count": 3, "run_seconds": 905, "seconds_per_frame": 905 / 1890,
             "peak_ram_bytes": 30 * 1024**3, "peak_swap_bytes": 0, "swap_recorded": True,
             "peak_vram_bytes": 17 * 1024**3,
             "total_ram_bytes": 32 * 1024**3, "total_swap_bytes": 32 * 1024**3,

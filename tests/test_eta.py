@@ -169,6 +169,22 @@ def test_point_stage_waits_for_known_n_before_using_point_prior():
     assert before != after
 
 
+def test_cloud_remainder_survives_indeterminate_tail():
+    # The cloud per-frame loop fills only part of the stage; the replacement-radius
+    # lexsort that follows is indeterminate and reports no fraction. Fed the
+    # combined fill held mid-stage, the cloud remainder must stay non-zero instead
+    # of collapsing to "~0s left" while the lexsort runs for minutes.
+    est = RunEtaEstimator(frames=100, priors={"cloud": 1e-7}, expected_points=10_000_000)
+    est.update("preprocess", current=1, total=100, now=0.0)
+    est.update("mapping", current=1, total=100, now=1.0)
+    est.update("outputs", current=13, total=100, now=40.0)  # per-frame slice done
+    est.update("cloud_replace", current=27, total=100, now=41.0)  # held during lexsort
+    row = {r.key: r for r in est.stage_rows(now=120.0)}["cloud"]
+    assert row.state == "running"
+    assert row.remaining is not None and row.remaining > 0
+    assert est.current_stage_remaining(now=120.0) > 0
+
+
 def test_current_stage_remaining_is_measured_without_history():
     est = RunEtaEstimator(frames=100)
     assert est.current_stage_remaining(now=0.0) is None

@@ -173,6 +173,7 @@ class SystemPanelMixin(MixinBase):
             self._add_meter(grid, 0, "RAM", ram, total, True)
             self._add_meter(grid, 1, "Swap", swap, run["total_swap_bytes"], run.get("swap_recorded", False))
             self._add_meter(grid, 2, "VRAM", run["peak_vram_bytes"], run["gpu_total_vram_bytes"], True)
+            self._add_time_row(grid, 3, run.get("run_seconds"), run.get("seconds_per_frame"))
             vbox.addLayout(grid)
             self._recorded_runs_layout.addWidget(block)
 
@@ -196,6 +197,27 @@ class SystemPanelMixin(MixinBase):
         value.setStyleSheet(f"color: {TEXT_MUTED};")
         value.setMinimumWidth(140)
         grid.addWidget(value, row, 2)
+
+    def _add_time_row(
+        self, grid: QGridLayout, row: int, run_seconds: float | None, seconds_per_frame: float | None
+    ) -> None:
+        """Add a `Time | median wall-clock · s/frame` row (no bar — time has no ceiling)."""
+        from deepreefmap.gui.eta import format_duration
+
+        label = QLabel("Time")
+        label.setStyleSheet(f"color: {TEXT_MUTED};")
+        grid.addWidget(label, row, 0)
+        if not run_seconds:
+            note = QLabel("not recorded")
+            note.setStyleSheet(f"color: {TEXT_MUTED};")
+            grid.addWidget(note, row, 1, 1, 2)
+            return
+        text = format_duration(run_seconds)
+        if seconds_per_frame:
+            text += f" · {seconds_per_frame:.2f} s/frame"
+        value = QLabel(text)
+        value.setStyleSheet(f"color: {TEXT_MUTED};")
+        grid.addWidget(value, row, 1, 1, 2)
 
     def _clear_layout(self, layout: QVBoxLayout) -> None:
         """Delete every widget in a layout so it can be rebuilt from scratch."""

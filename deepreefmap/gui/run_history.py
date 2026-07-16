@@ -138,12 +138,17 @@ def summarise_recorded_runs(path: Path | None = None) -> list[dict]:
             vrams = [s["vram_bytes"] for s in peaks.values() if s.get("vram_bytes")]
             profile = entry.get("system_profile") or {}
             gpu = profile.get("gpu") or {}
+            durations = entry.get("stage_durations") or {}
+            # Sum of the timed stages = wall-clock cost of the run, the figure the
+            # System tab reports and normalises per frame across configs.
+            run_seconds = sum(float(v) for v in durations.values()) if durations else None
             rows.append(
                 {
                     "key": key,
                     "params": entry.get("params") or {},
                     "frames": entry.get("frames"),
                     "points": entry.get("points"),
+                    "run_seconds": run_seconds,
                     "peak_ram_bytes": max(rams) if rams else None,
                     "peak_swap_bytes": max(swaps) if swaps else 0,
                     # Distinguish "measured 0 swap" from "predates swap capture", so
@@ -185,11 +190,22 @@ def group_recorded_runs(path: Path | None = None) -> list[dict]:
         rams = [m["peak_ram_bytes"] for m in members if m["peak_ram_bytes"]]
         swaps = [m["peak_swap_bytes"] for m in members if m.get("swap_recorded")]
         vrams = [m["peak_vram_bytes"] for m in members if m["peak_vram_bytes"]]
+        secs = [m["run_seconds"] for m in members if m.get("run_seconds")]
+        # Median over the group's runs, not one run — the count is shown alongside.
+        # A group is one exact config (fps and frame count are both in the signature),
+        # so this time is never pooled across fps, whose memory regime differs.
+        run_seconds = int(statistics.median(secs)) if secs else None
+        frames = rep["frames"]
         grouped.append(
             {
                 "params": rep["params"],
-                "frames": rep["frames"],
+                "frames": frames,
                 "count": len(members),
+                "run_seconds": run_seconds,
+                # A per-frame throughput hint for eyeballing between cards. Rough
+                # only: fps and scene complexity change per-frame cost, so it is not
+                # an apples-to-apples figure across different fps.
+                "seconds_per_frame": (run_seconds / frames) if run_seconds and frames else None,
                 "peak_ram_bytes": int(statistics.median(rams)) if rams else None,
                 "peak_swap_bytes": int(statistics.median(swaps)) if swaps else 0,
                 "swap_recorded": any(m.get("swap_recorded") for m in members),

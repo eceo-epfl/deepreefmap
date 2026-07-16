@@ -115,12 +115,13 @@ def test_status_ticker_resets_per_stage(qapp, monkeypatch):
 def test_update_progress_zero_total_is_indeterminate(qapp):
     window = _make_window(qapp)
     window._begin_progress(window._recon_model)
-    # Non-mapping stages keep the barber-pole for a zero (indeterminate) total.
+    # A stage outside the continuous-fill set (here an ortho step) keeps the
+    # barber-pole for a zero (indeterminate) total.
     window._on_viewer_status(
-        "update_progress", stage="outputs", current=0, total=0, message="Generating outputs"
+        "update_progress", stage="outputs", current=0, total=0, message="Computing PCA projection"
     )
     assert window._progress_bar.maximum() == 0
-    assert "Generating outputs" in window._status_label.text()
+    assert "Computing PCA projection" in window._status_label.text()
 
 
 def test_mapping_zero_total_holds_the_continuous_bar(qapp):
@@ -133,6 +134,26 @@ def test_mapping_zero_total_holds_the_continuous_bar(qapp):
     )
     assert window._progress_bar.maximum() == 100
     assert "LoGeR inference" in window._status_label.text()
+
+
+def test_cloud_subphases_hold_one_continuous_bar(qapp):
+    window = _make_window(qapp)
+    window._begin_progress(window._recon_model)
+    # The per-frame semantic-cloud loop only fills its slice of the Cloud stage,
+    # not the whole bar — the replacement-radius tail owns most of the weight.
+    window._on_viewer_status(
+        "update_progress", stage="outputs", current=10, total=10, message="Building semantic cloud"
+    )
+    assert window._progress_bar.maximum() == 100
+    filled = window._progress_bar.value()
+    assert 0 < filled < 100  # not pinned at 100 when the cheap loop ends
+    # The indeterminate lexsort holds a determinate bar advanced to its slice, so
+    # the stage never reads as finished while it is still working.
+    window._on_viewer_status(
+        "set_stage", stage="outputs", status="running", message="Applying replacement radius"
+    )
+    assert window._progress_bar.maximum() == 100
+    assert window._progress_bar.value() >= filled
 
 
 def test_start_button_disabled_when_form_invalid(qapp):
