@@ -1,8 +1,9 @@
 """Scrub-to-trim dialog: pick the processing time range on a video preview.
 
-Two time-based sliders (Begin / End) over a live frame preview. The preview
-always shows the frame at whichever handle moved last, seeks are coalesced so
-dragging stays responsive, and the chosen range is read back via time_range().
+One dual-handle range slider (begin can never cross end) over a live frame
+preview. The preview always shows the frame at whichever handle moved last,
+seeks are coalesced so dragging stays responsive, and the chosen range is
+read back via time_range().
 """
 
 from __future__ import annotations
@@ -11,14 +12,14 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtCore import QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPaintEvent, QPen, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
-    QGridLayout,
+    QHBoxLayout,
     QLabel,
-    QSlider,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -26,37 +27,116 @@ from PySide6.QtWidgets import (
 # 10 ms ticks: fine enough to trim by eye, coarse enough for int slider ranges.
 _TICKS_PER_S = 100
 
-_SLIDER_STYLE = """
-QSlider::groove:horizontal {
-    height: 10px;
-    background: #3a3a3a;
-    border: 1px solid #555;
-    border-radius: 5px;
-}
-QSlider::sub-page:horizontal {
-    background: #4aa3ff;
-    border: 1px solid #2a78c8;
-    border-radius: 5px;
-}
-QSlider::add-page:horizontal {
-    background: #2a2a2a;
-    border: 1px solid #555;
-    border-radius: 5px;
-}
-QSlider::handle:horizontal {
-    background: #f0f0f0;
-    border: 2px solid #2a78c8;
-    width: 18px;
-    height: 26px;
-    margin: -10px 0;
-    border-radius: 4px;
-}
-QSlider::handle:horizontal:hover { background: #ffffff; }
-"""
-
 
 def _format_time(seconds: float) -> str:
     return f"{int(seconds // 60)}:{seconds % 60:05.2f}"
+
+
+class RangeSlider(QWidget):
+    """Two handles on one groove; begin and end clamp against each other."""
+
+    beginChanged = Signal(int)
+    endChanged = Signal(int)
+
+    _HANDLE_W = 18
+    _HANDLE_H = 26
+    _GROOVE_H = 10
+
+    def __init__(self, maximum: int, begin: int, end: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._max = max(1, maximum)
+        self._begin = max(0, min(begin, self._max))
+        self._end = max(self._begin, min(end, self._max))
+        self._active: str | None = None
+        self.setMinimumHeight(34)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def maximum(self) -> int:
+        return self._max
+
+    def begin(self) -> int:
+        return self._begin
+
+    def end(self) -> int:
+        return self._end
+
+    def setBegin(self, tick: int) -> None:
+        tick = max(0, min(int(tick), self._end))
+        if tick != self._begin:
+            self._begin = tick
+            self.update()
+            self.beginChanged.emit(tick)
+
+    def setEnd(self, tick: int) -> None:
+        tick = min(self._max, max(int(tick), self._begin))
+        if tick != self._end:
+            self._end = tick
+            self.update()
+            self.endChanged.emit(tick)
+
+    def _tick_to_x(self, tick: int) -> float:
+        x0 = self._HANDLE_W / 2
+        span = self.width() - self._HANDLE_W
+        return x0 + span * tick / self._max
+
+    def _x_to_tick(self, x: float) -> int:
+        span = max(1.0, self.width() - self._HANDLE_W)
+        return round(self._max * (x - self._HANDLE_W / 2) / span)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        x = event.position().x()
+        d_begin = abs(x - self._tick_to_x(self._begin))
+        d_end = abs(x - self._tick_to_x(self._end))
+        # On a tie (overlapping handles) the click side picks the handle, so
+        # a collapsed range can still be reopened in either direction.
+        if d_begin == d_end:
+            self._active = "begin" if x < self._tick_to_x(self._begin) else "end"
+        else:
+            self._active = "begin" if d_begin < d_end else "end"
+        self._drag_to(x)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._active is not None:
+            self._drag_to(event.position().x())
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        self._active = None
+
+    def _drag_to(self, x: float) -> None:
+        tick = self._x_to_tick(x)
+        if self._active == "begin":
+            self.setBegin(tick)
+        elif self._active == "end":
+            self.setEnd(tick)
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        cy = self.height() / 2
+        x0 = self._HANDLE_W / 2
+        x1 = self.width() - self._HANDLE_W / 2
+        radius = self._GROOVE_H / 2
+
+        groove = QRectF(x0, cy - radius, x1 - x0, self._GROOVE_H)
+        painter.setPen(QPen(QColor("#555555")))
+        painter.setBrush(QColor("#2a2a2a"))
+        painter.drawRoundedRect(groove, radius, radius)
+
+        bx = self._tick_to_x(self._begin)
+        ex = self._tick_to_x(self._end)
+        selected = QRectF(bx, cy - radius, ex - bx, self._GROOVE_H)
+        painter.setPen(QPen(QColor("#2a78c8")))
+        painter.setBrush(QColor("#4aa3ff"))
+        painter.drawRoundedRect(selected, radius, radius)
+
+        painter.setPen(QPen(QColor("#2a78c8"), 2))
+        painter.setBrush(QColor("#f0f0f0"))
+        for x in (bx, ex):
+            handle = QRectF(x - self._HANDLE_W / 2, cy - self._HANDLE_H / 2,
+                            self._HANDLE_W, self._HANDLE_H)
+            painter.drawRoundedRect(handle, 4, 4)
 
 
 class VideoScrubDialog(QDialog):
@@ -98,26 +178,21 @@ class VideoScrubDialog(QDialog):
         if end_s is not None and 0.0 < end_s < self._duration_s:
             end_tick = max(begin_tick, round(end_s * _TICKS_PER_S))
 
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(8)
-        self._begin_slider = self._make_slider(max_tick, begin_tick)
-        self._end_slider = self._make_slider(max_tick, end_tick)
+        row = QHBoxLayout()
+        row.setSpacing(10)
         self._begin_readout = QLabel()
         self._end_readout = QLabel()
         for readout in (self._begin_readout, self._end_readout):
-            readout.setStyleSheet('font-family: "JetBrains Mono"; min-width: 70px;')
-            readout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        grid.addWidget(QLabel("Begin"), 0, 0)
-        grid.addWidget(self._begin_slider, 0, 1)
-        grid.addWidget(self._begin_readout, 0, 2)
-        grid.addWidget(QLabel("End"), 1, 0)
-        grid.addWidget(self._end_slider, 1, 1)
-        grid.addWidget(self._end_readout, 1, 2)
-        grid.setColumnStretch(1, 1)
-        layout.addLayout(grid)
+            readout.setStyleSheet('font-family: "JetBrains Mono"; min-width: 96px;')
+        self._begin_readout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._range_slider = RangeSlider(max_tick, begin_tick, end_tick)
+        row.addWidget(self._begin_readout)
+        row.addWidget(self._range_slider, 1)
+        row.addWidget(self._end_readout)
+        layout.addLayout(row)
 
-        self._begin_slider.valueChanged.connect(self._on_begin_moved)
-        self._end_slider.valueChanged.connect(self._on_end_moved)
+        self._range_slider.beginChanged.connect(self._on_begin_changed)
+        self._range_slider.endChanged.connect(self._on_end_changed)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -126,7 +201,7 @@ class VideoScrubDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-        self.resize(720, 520)
+        self.resize(720, 480)
         self._update_readouts()
         self._request_preview(begin_tick / _TICKS_PER_S)
 
@@ -137,40 +212,23 @@ class VideoScrubDialog(QDialog):
         only treats the end as "full length" when it matches the probed
         duration, which keeps ffmpeg trusted for untrimmed runs.
         """
-        begin = self._begin_slider.value() / _TICKS_PER_S
-        if self._end_slider.value() >= self._end_slider.maximum():
+        begin = self._range_slider.begin() / _TICKS_PER_S
+        if self._range_slider.end() >= self._range_slider.maximum():
             return begin, self._duration_s
-        return begin, self._end_slider.value() / _TICKS_PER_S
+        return begin, self._range_slider.end() / _TICKS_PER_S
 
-    @staticmethod
-    def _make_slider(max_tick: int, value: int) -> QSlider:
-        slider = QSlider(Qt.Orientation.Horizontal)
-        slider.setRange(0, max_tick)
-        slider.setValue(value)
-        slider.setMinimumHeight(34)
-        slider.setStyleSheet(_SLIDER_STYLE)
-        return slider
-
-    def _on_begin_moved(self, tick: int) -> None:
-        if tick > self._end_slider.value():
-            self._end_slider.blockSignals(True)
-            self._end_slider.setValue(tick)
-            self._end_slider.blockSignals(False)
+    def _on_begin_changed(self, tick: int) -> None:
         self._update_readouts()
         self._request_preview(tick / _TICKS_PER_S)
 
-    def _on_end_moved(self, tick: int) -> None:
-        if tick < self._begin_slider.value():
-            self._begin_slider.blockSignals(True)
-            self._begin_slider.setValue(tick)
-            self._begin_slider.blockSignals(False)
+    def _on_end_changed(self, tick: int) -> None:
         self._update_readouts()
         self._request_preview(tick / _TICKS_PER_S)
 
     def _update_readouts(self) -> None:
         begin, end = self.time_range()
-        self._begin_readout.setText(_format_time(begin))
-        self._end_readout.setText(_format_time(end))
+        self._begin_readout.setText(f"Begin {_format_time(begin)}")
+        self._end_readout.setText(f"End {_format_time(end)}")
 
     def _request_preview(self, t_s: float) -> None:
         self._pending_s = t_s

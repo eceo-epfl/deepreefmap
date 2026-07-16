@@ -300,7 +300,9 @@ class FormPanelMixin(MixinBase):
             self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
         ))
         self._scrub_btn.setIconSize(QSize(18, 18))
-        self._scrub_btn.setFixedSize(28, 28)
+        # Square, exactly the spinbox height, so the row reads as one unit.
+        side = self._end_spin.sizeHint().height()
+        self._scrub_btn.setFixedSize(side, side)
         self._scrub_btn.setToolTip("Preview the video and drag handles to set Begin/End")
         self._scrub_btn.setEnabled(False)
         self._scrub_btn.clicked.connect(self._open_scrub_dialog)

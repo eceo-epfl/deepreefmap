@@ -47,32 +47,45 @@ def test_end_at_slider_max_returns_exact_duration(qapp, tiny_video):
     path, _ = tiny_video
     duration = 2.0004999
     dialog = VideoScrubDialog(path, duration)
-    dialog._end_slider.setValue(dialog._end_slider.maximum())
+    dialog._range_slider.setEnd(dialog._range_slider.maximum())
     assert dialog.time_range()[1] == duration
     dialog.reject()
 
 
-def test_sliders_map_ticks_to_seconds(qapp, tiny_video):
+def test_slider_maps_ticks_to_seconds(qapp, tiny_video):
     from deepreefmap.gui.video_scrub_dialog import VideoScrubDialog
 
     path, duration = tiny_video
     dialog = VideoScrubDialog(path, duration, begin_s=0.5, end_s=1.5)
     assert dialog.time_range() == (0.5, 1.5)
-    dialog._begin_slider.setValue(80)
+    dialog._range_slider.setBegin(80)
     assert dialog.time_range()[0] == 0.8
     dialog.reject()
 
 
-def test_handles_clamp_each_other(qapp, tiny_video):
+def test_handles_cannot_cross(qapp, tiny_video):
     from deepreefmap.gui.video_scrub_dialog import VideoScrubDialog
 
     path, duration = tiny_video
     dialog = VideoScrubDialog(path, duration, begin_s=0.5, end_s=1.0)
-    dialog._begin_slider.setValue(150)
-    assert dialog._end_slider.value() == 150
+    dialog._range_slider.setBegin(150)
+    assert dialog._range_slider.begin() == 100
 
-    dialog._end_slider.setValue(30)
-    assert dialog._begin_slider.value() == 30
+    dialog._range_slider.setEnd(30)
+    assert dialog._range_slider.end() == 100
+    dialog.reject()
+
+
+def test_collapsed_range_can_reopen(qapp, tiny_video):
+    from deepreefmap.gui.video_scrub_dialog import VideoScrubDialog
+
+    path, duration = tiny_video
+    dialog = VideoScrubDialog(path, duration, begin_s=1.0, end_s=1.0)
+    slider = dialog._range_slider
+    assert slider.begin() == slider.end() == 100
+    slider.setEnd(150)
+    slider.setBegin(50)
+    assert (slider.begin(), slider.end()) == (50, 150)
     dialog.reject()
 
 
