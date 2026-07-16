@@ -50,36 +50,75 @@ At a high level, a run does four things:
 3. Runs semantic segmentation and depth/pose reconstruction.
 4. Exports point clouds, ortho products, and reports.
 
+## Install the desktop app
+
+CI builds packages for every release. Grab yours from the [releases page](https://github.com/eceo-epfl/deepreefmap/releases).
+
+| Platform | File | Variants |
+|---|---|---|
+| Windows | `deepreefmap-setup-windows-x64-<version>.exe` | `-cu130` for RTX 50-series |
+| macOS (Apple Silicon) | `deepreefmap-macos-arm64-<version>.dmg` | |
+| Linux | `deepreefmap-linux-x64-<version>` | `-cu130` for RTX 50-series, `-rocm` for AMD |
+
+On Windows, run the installer. It installs per-user (no admin needed) and adds a Start Menu entry plus an uninstaller. Uninstalling keeps your outputs in `Documents\DeepReefMap` and asks before deleting downloaded models.
+
+On macOS, open the dmg and drag DeepReefMap to Applications. The app is not signed yet, so the first launch needs System Settings > Privacy & Security > "Open Anyway".
+
+On Linux, `chmod +x` the binary and run it. Use "Add to applications menu" in the Updates tab to register it in your launcher.
+
+The first launch installs a private Python environment (several GB, takes a few minutes). After that, install newer versions or roll back from the Updates tab; the binary is swapped in place, so shortcuts keep working. The plain `deepreefmap-windows-x64-*.exe` binaries on the release page are what the updater downloads, and also run standalone without the installer. The installed binary exposes the full CLI (ie. `deepreefmap.exe reconstruct --help`).
+
+Everything below covers development from source.
+
 ## Requirements
 
 - Python 3.10, 3.11, or 3.12
 - `[uv](https://docs.astral.sh/uv/)` for dependency management
 - FFmpeg (pulled in via `imageio[ffmpeg]`)
-- **GPU**: strongly recommended. CPU-only runs work with `scsfmlearner` but are slow. The `loger` / `loger_star` backends require CUDA.
+- **GPU**: strongly recommended. NVIDIA (CUDA), AMD (ROCm), and Apple Silicon (MPS) are supported. CPU-only runs work with `scsfmlearner` but are slow.
 
 ## Installation
+
+### NVIDIA
+
+```bash
+uv sync --extra cu126   # most cards, up to RTX 40-series
+uv sync --extra cu130   # RTX 50-series (Blackwell)
+```
+
+### AMD ROCm
+
+```bash
+uv sync --extra rocm   # Linux only
+```
+
+> **Experimental.** ROCm support is experimental. The app auto-enables AOTriton flash/mem-efficient attention (`TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`) on ROCm so LoGeR can run on RDNA3 (e.g. gfx1100); set that variable to `0` to disable. Run ROCm from a venv synced with `--extra rocm` (don't layer it onto a base/CUDA sync), or a stray `triton` wheel can shadow `pytorch-triton-rocm`.
+
+### macOS (Apple Silicon)
 
 ```bash
 uv sync
 ```
 
-Optional extras:
+### Optional extras
 
 ```bash
 uv sync --extra gopro --extra train
 ```
 
+Extras can be combined (eg. `uv sync --extra rocm --extra gopro --extra loger`).
+
 ### Choose a reconstruction backend
 
 To run `deepreefmap reconstruct`, you need at least one reconstruction backend:
 
-- `scsfmlearner`: easiest to start with, no LoGeR checkpoint setup, but poorer reconstruction quality.
-- `loger` (or `loger_star`): higher quality reconstruction, but requires CUDA + GPU and checkpoint download.
+- `scsfmlearner`: easiest to start with, no LoGeR checkpoint setup, but lower reconstruction quality.
+- `loger` (or `loger_star`): higher quality reconstruction, requires a GPU and checkpoint download.
 
-Important performance note:
+Performance notes:
 
 - Without a GPU, all reconstruction backends will be slow.
-- LoGeR specifically requires CUDA and a compatible GPU.
+- LoGeR requires a GPU (CUDA, ROCm, or MPS). On MPS, unsupported operations fall back to CPU automatically.
 
 ### SC-SfMLearner path (simplest)
 
@@ -242,6 +281,20 @@ Useful `reconstruct` flags:
 - `--preprocess-batch-size`: segmentation batch size during frame preparation.
 - `--transect-length` and `--transect-crop-width`: crop outputs around dominant transect.
 - `--skip-segmentation`: geometry-only run (no semantics).
+
+### Environment variables
+
+Development and test overrides. None are needed for normal use.
+
+| Variable | Effect |
+| --- | --- |
+| `DEEPREEFMAP_MOCK_VERSIONS` | Comma-separated versions the update check returns instead of querying GitHub. Empty string reads as a fetch failure. |
+| `DEEPREEFMAP_MOCK_PYAPP` | Pretend to run from a packaged binary so the Updates tab shows install controls. |
+| `DEEPREEFMAP_GH_REPO` | `owner/repo` the release check queries (default `eceo-epfl/deepreefmap`). |
+| `DEEPREEFMAP_GH_API_URL` | Full releases-API URL override, eg. a local server (`tests/e2e/update_e2e.sh --interactive`). |
+| `DEEPREEFMAP_RUN_TIMINGS` | Path of the per-machine timing/peak profile (default in the user data dir). |
+| `DEEPREEFMAP_LOGER_CKPTS` | Directory holding LoGeR checkpoints, eg. an existing `third_party/LoGeR/ckpts`. |
+| `DEEPREEFMAP_SELF_HEAL_ATTEMPTED` | Internal guard set by bootstrap so a failed self-heal cannot re-exec in a loop. Never set by hand. |
 
 ## Reconstruction outputs
 
