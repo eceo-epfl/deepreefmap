@@ -90,14 +90,16 @@ def test_sidecar_roundtrip(tmp_path: Path) -> None:
     assert resume_mod.read_sidecar(tmp_path, "preprocess") is None
 
 
-def _write_prepared_frame(output_dir: Path, idx: int, h: int = 4, w: int = 6) -> None:
+def _write_prepared_frame(
+    output_dir: Path, idx: int, h: int = 4, w: int = 6, labels_dtype: type = np.uint8
+) -> None:
     stem = f"{idx:08d}"
     (output_dir / "frames").mkdir(parents=True, exist_ok=True)
     (output_dir / "labels").mkdir(parents=True, exist_ok=True)
     (output_dir / "masks").mkdir(parents=True, exist_ok=True)
     rgb = np.full((h, w, 3), idx % 250, dtype=np.uint8)
     cv2.imwrite(str(output_dir / "frames" / f"{stem}.png"), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
-    np.save(output_dir / "labels" / f"{stem}.npy", np.full((h, w), idx, dtype=np.int32))
+    np.save(output_dir / "labels" / f"{stem}.npy", np.full((h, w), idx, dtype=labels_dtype))
     cv2.imwrite(str(output_dir / "masks" / f"{stem}.png"), np.full((h, w), 255, dtype=np.uint8))
 
 
@@ -113,8 +115,17 @@ def test_load_prepared_frames_roundtrip(tmp_path: Path) -> None:
     assert fb.clip_counts == (3,)
     assert all(f.labels.shape == (4, 6) for f in fb.frames)
     assert all(int(f.labels.max()) == int(f.frame_index) for f in fb.frames)
-    # int32 cache files load into the uint8 in-RAM representation.
     assert all(f.labels.dtype == np.uint8 for f in fb.frames)
+
+
+def test_load_prepared_frames_accepts_legacy_int32_label_caches(tmp_path: Path) -> None:
+    for idx in (0, 1):
+        _write_prepared_frame(tmp_path, idx, labels_dtype=np.int32)
+    sidecar = {"key": "k", "frame_indices": [0, 1], "clip_counts": [2]}
+    fb = resume_mod.load_prepared_frames(tmp_path, sidecar, np.eye(3))
+    assert fb is not None
+    assert all(f.labels.dtype == np.uint8 for f in fb.frames)
+    assert all(int(f.labels.max()) == int(f.frame_index) for f in fb.frames)
 
 
 def test_load_prepared_frames_returns_none_when_missing(tmp_path: Path) -> None:

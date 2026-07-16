@@ -750,8 +750,9 @@ def _prepare_frames(
     labels_dir.mkdir(parents=True, exist_ok=True)
     masks_dir.mkdir(parents=True, exist_ok=True)
     ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
-    # Labels are held as uint8 in RAM (a quarter of int32 across a whole run);
-    # the on-disk .npy artifacts stay int32, so ids must fit a byte.
+    # Labels are uint8 in RAM and on disk (a quarter of the old int32 across
+    # a whole run), so ids must fit a byte. int32 caches from older runs
+    # still load (resume downcasts).
     max_class_id = max((cls.id for cls in classes_config.classes), default=0)
     if max_class_id > 255:
         raise ValueError(
@@ -800,9 +801,7 @@ def _prepare_frames(
             labels_path = labels_dir / f"{stem}.npy"
             mask_path = masks_dir / f"{stem}.png"
             cv2.imwrite(str(image_path), cv2.cvtColor(rectified, cv2.COLOR_RGB2BGR))
-            # The cached artifact stays int32 so existing run dirs and any
-            # external readers of labels/*.npy see byte-identical files.
-            np.save(labels_path, labels.astype(np.int32))
+            np.save(labels_path, labels)
             cv2.imwrite(str(mask_path), keep_mask)
             prepared.append(
                 PreparedFrame(
