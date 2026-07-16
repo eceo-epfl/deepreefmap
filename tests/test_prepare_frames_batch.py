@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 
 from deepreefmap.pipeline import orchestrator
@@ -61,7 +62,7 @@ def test_prepare_frames_segments_rectified_frames_in_batches(tmp_path, monkeypat
     assert all(frame.mask_path is not None and frame.mask_path.exists() for frame in batch.frames)
     assert all(frame.labels.dtype == np.uint8 for frame in batch.frames)
     for frame in batch.frames:
-        saved = np.load(frame.labels_path)
+        saved = cv2.imread(str(frame.labels_path), cv2.IMREAD_GRAYSCALE)
         assert saved.dtype == np.uint8
         assert np.array_equal(saved, frame.labels)
 

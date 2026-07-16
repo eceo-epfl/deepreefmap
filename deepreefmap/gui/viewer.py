@@ -2497,7 +2497,7 @@ class QtPointCloudViewer(QWidget):
             return
         stem = f"{frame_index:08d}"
         frame_path = self._output_dir / "frames" / f"{stem}.png"
-        labels_path = self._output_dir / "labels" / f"{stem}.npy"
+        labels_path = self._output_dir / "labels" / f"{stem}.png"
         if not frame_path.exists():
             return
         rgb = cv2.imread(str(frame_path))
@@ -2506,7 +2506,9 @@ class QtPointCloudViewer(QWidget):
         rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
         self._paint_label(self._rgb_label, rgb)
         if labels_path.exists():
-            labels = np.load(str(labels_path))
+            labels = cv2.imread(str(labels_path), cv2.IMREAD_GRAYSCALE)
+            if labels is None:
+                return
             h, w = rgb.shape[:2]
             seg_color = _colorize_seg(
                 cv2.resize(labels, (w, h), interpolation=cv2.INTER_NEAREST),

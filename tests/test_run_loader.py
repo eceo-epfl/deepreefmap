@@ -30,7 +30,7 @@ def _write_cached_frame(run_dir: Path, idx: int) -> None:
     (run_dir / "labels").mkdir(parents=True, exist_ok=True)
     (run_dir / "masks").mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(run_dir / "frames" / f"{stem}.png"), np.zeros((2, 2, 3), dtype=np.uint8))
-    np.save(run_dir / "labels" / f"{stem}.npy", np.ones((2, 2), dtype=np.int32))
+    cv2.imwrite(str(run_dir / "labels" / f"{stem}.png"), np.ones((2, 2), dtype=np.uint8))
     cv2.imwrite(str(run_dir / "masks" / f"{stem}.png"), np.full((2, 2), 255, dtype=np.uint8))
 
 

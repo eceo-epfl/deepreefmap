@@ -28,15 +28,15 @@ def test_render_offline_video_uses_manifest(tmp_path):
     frames.mkdir()
     labels.mkdir()
     frame_path = frames / "00000000.png"
-    labels_path = labels / "00000000.npy"
+    labels_path = labels / "00000000.png"
     cv2.imwrite(str(frame_path), np.zeros((8, 8, 3), dtype=np.uint8))
-    np.save(labels_path, np.ones((8, 8), dtype=np.int32))
+    cv2.imwrite(str(labels_path), np.ones((8, 8), dtype=np.uint8))
     np.savez_compressed(tmp_path / "mapping_outputs.npz", depth=np.ones((1, 8, 8), dtype=np.float32))
     (tmp_path / "run_manifest.json").write_text(
         json.dumps(
             {
                 "frame_paths": ["frames/00000000.png"],
-                "labels_paths": ["labels/00000000.npy"],
+                "labels_paths": ["labels/00000000.png"],
                 "depth_maps": "mapping_outputs.npz",
             }
         )
@@ -63,13 +63,13 @@ def test_render_offline_video_4panel_layout_and_cumulative_ortho(tmp_path):
     labels_paths = []
     for i in range(n_frames):
         fp = frames / f"{i:08d}.png"
-        lp = labels / f"{i:08d}.npy"
+        lp = labels / f"{i:08d}.png"
         rgb = np.full((h, w, 3), i * 40, dtype=np.uint8)
         cv2.imwrite(str(fp), rgb)
-        lab = np.full((h, w), i % 3, dtype=np.int32)
-        np.save(lp, lab)
+        lab = np.full((h, w), i % 3, dtype=np.uint8)
+        cv2.imwrite(str(lp), lab)
         frame_paths.append(f"frames/{i:08d}.png")
-        labels_paths.append(f"labels/{i:08d}.npy")
+        labels_paths.append(f"labels/{i:08d}.png")
 
     depths = np.linspace(0.5, 2.0, n_frames * h * w, dtype=np.float32).reshape(n_frames, h, w)
     np.savez_compressed(

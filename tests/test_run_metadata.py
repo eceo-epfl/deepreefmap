@@ -11,7 +11,7 @@ from deepreefmap.pipeline.run_loader import _world_points_fallback_warning
 def _fake_frame_batch(run_dir: Path) -> SimpleNamespace:
     frame = SimpleNamespace(
         image_path=run_dir / "frames" / "00000000.png",
-        labels_path=run_dir / "labels" / "00000000.npy",
+        labels_path=run_dir / "labels" / "00000000.png",
         mask_path=run_dir / "masks" / "00000000.png",
     )
     return SimpleNamespace(frame_indices=[0], frames=[frame], clip_counts=[1])

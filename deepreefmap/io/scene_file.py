@@ -267,7 +267,7 @@ def _save_frames(root, fb: "FrameBatch", emit: ProgressCB) -> None:
     )
 
     images = g.zeros("images_rgb", shape=(n, h, w, 3), dtype=np.uint8, chunks=(1, h, w, 3), compressor=comp)
-    labels = g.zeros("labels", shape=(n, h, w), dtype=np.int32, chunks=(1, h, w), compressor=comp)
+    labels = g.zeros("labels", shape=(n, h, w), dtype=np.uint8, chunks=(1, h, w), compressor=comp)
     masks = g.zeros("masks", shape=(n, h, w), dtype=np.uint8, chunks=(1, h, w), compressor=comp)
 
     for i, f in enumerate(frames):

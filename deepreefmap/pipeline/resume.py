@@ -17,7 +17,8 @@ from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, Pr
 logger = logging.getLogger(__name__)
 
 CACHE_DIR_NAME = ".cache"
-PREPROCESS_VERSION = 1
+# 2: label caches moved from int32 .npy to grayscale PNG.
+PREPROCESS_VERSION = 2
 MAPPING_VERSION = 2
 
 STAGE_PREPROCESS = "preprocess"
@@ -123,7 +124,7 @@ def load_prepared_frames(
     def _load_one(idx: int) -> PreparedFrame | None:
         stem = f"{int(idx):08d}"
         image_path = frames_dir / f"{stem}.png"
-        labels_path = labels_dir / f"{stem}.npy"
+        labels_path = labels_dir / f"{stem}.png"
         mask_path = masks_dir / f"{stem}.png"
         if not (image_path.exists() and labels_path.exists() and mask_path.exists()):
             logger.warning("Resume: missing preprocess artifact(s) for frame %d", int(idx))
@@ -133,12 +134,12 @@ def load_prepared_frames(
             if bgr is None:
                 return None
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            labels = np.load(labels_path).astype(np.uint8)
+            labels = cv2.imread(str(labels_path), cv2.IMREAD_GRAYSCALE)
             mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
         except Exception as exc:
             logger.warning("Resume: failed reading preprocess artifact for frame %d: %s", int(idx), exc)
             return None
-        if mask is None:
+        if mask is None or labels is None:
             return None
         return PreparedFrame(
             frame_index=int(idx),

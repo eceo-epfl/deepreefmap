@@ -798,10 +798,12 @@ def _prepare_frames(
                 keep_mask = (~np.isin(labels, ignore_list)).astype(np.uint8) * 255
             stem = f"{idx:08d}"
             image_path = frames_dir / f"{stem}.png"
-            labels_path = labels_dir / f"{stem}.npy"
+            labels_path = labels_dir / f"{stem}.png"
             mask_path = masks_dir / f"{stem}.png"
             cv2.imwrite(str(image_path), cv2.cvtColor(rectified, cv2.COLOR_RGB2BGR))
-            np.save(labels_path, labels)
+            # Lossless grayscale PNG: label rasters are flat regions, so this
+            # is ~50x smaller on disk than the raw array.
+            cv2.imwrite(str(labels_path), labels)
             cv2.imwrite(str(mask_path), keep_mask)
             prepared.append(
                 PreparedFrame(

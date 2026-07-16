@@ -175,8 +175,10 @@ def render_offline_video_placeholder(
         depth_blend = np.clip(0.2 * rgb + 0.8 * depth_vis, 0.0, 1.0)
         depth_panel = cv2.cvtColor((depth_blend * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
 
+        labels = None
         if idx < len(labels_paths) and labels_paths[idx].exists():
-            labels = np.load(labels_paths[idx])
+            labels = cv2.imread(str(labels_paths[idx]), cv2.IMREAD_GRAYSCALE)
+        if labels is not None:
             seg_rgb = _colorize_labels_rgb(labels, class_colors, (w, h)).astype(np.float32) / 255.0
         else:
             seg_rgb = np.zeros_like(rgb)
