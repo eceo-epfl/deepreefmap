@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from deepreefmap.profiling.eta import StageRow, format_duration
+from deepreefmap.profiling.eta import StageRow, format_duration, format_remaining
 from deepreefmap.gui.core.theme import BORDER, GROOVE, PRIMARY, SUCCESS, TEXT_MUTED, WINDOW_TEXT
 
 _STATE_COLOR = {"done": SUCCESS, "running": PRIMARY, "pending": TEXT_MUTED}
@@ -85,7 +85,7 @@ class TimingPopup(QWidget):
                 time_text = format_duration(row.seconds or 0.0)
                 # Prior-seeded early in the stage, live-measured later.
                 if row.state == "running" and row.remaining is not None:
-                    remaining_text = f"· ~{format_duration(row.remaining)} left"
+                    remaining_text = f"· {format_remaining(row.remaining)} left"
             elif row.seconds and row.seconds > 0:
                 # A weight- or prior-based over-estimate. Better an approximate
                 # number than a bare 0, so pending point stages never read "0s".
@@ -114,7 +114,7 @@ class TimingPopup(QWidget):
             )
         if has_history:
             tail = (
-                f" · ~{format_duration(total_remaining_s)} remaining"
+                f" · {format_remaining(total_remaining_s)} remaining"
                 if total_remaining_s is not None
                 else " · estimating…"
             )

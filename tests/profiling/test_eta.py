@@ -267,6 +267,67 @@ def test_mapping_substeps_fold_onto_the_one_mapping_stage() -> None:
     assert stage_label_for_phase("mapping_save") == "Mapping"
 
 
+def test_live_remaining_ticks_at_render_time_between_events() -> None:
+    # LoGeR reports one event per window; the countdown must keep moving against
+    # the wall clock between events, not freeze at the last event's figure.
+    est = RunEtaEstimator(frames=100)
+    est.update("mapping", current=1, total=100, now=0.0)
+    est.update("mapping", current=50, total=100, now=30.0)
+    soon = est.current_stage_remaining(now=31.0)
+    later = est.current_stage_remaining(now=90.0)
+    assert soon is not None and later is not None
+    assert later > soon
+    # Average time per earned fraction, scaled by the fraction left.
+    assert abs(later - 90.0 * 0.5 / 0.49) < 1.0
+
+
+def test_stall_grows_the_estimate_instead_of_freezing() -> None:
+    # Fast early windows, then swap-thrash silence: the estimate must balloon
+    # with the stall rather than sit on the optimistic early rate.
+    est = RunEtaEstimator(frames=100)
+    est.update("preprocess", current=1, total=100, now=0.0)
+    est.update("preprocess", current=50, total=100, now=25.0)
+    samples = [est.current_stage_remaining(now=t) for t in (26.0, 100.0, 300.0)]
+    assert all(s is not None for s in samples)
+    assert samples[0] < samples[1] < samples[2]
+
+
+def test_full_fraction_running_stage_hides_the_remainder() -> None:
+    # After the last mapping window the folded tail (align, transfer, save) runs
+    # with the fraction pinned at 1.0. No extrapolation is left, so the remainder
+    # is withheld instead of reading "~0s left" for minutes.
+    est = RunEtaEstimator(frames=100)
+    est.update("mapping", current=1, total=100, now=0.0)
+    est.update("mapping", current=100, total=100, now=50.0)
+    assert est.running_stage_label() == "Mapping"
+    assert est.current_stage_remaining(now=120.0) is None
+    row = {r.key: r for r in est.stage_rows(now=120.0)}["mapping"]
+    assert row.state == "running"
+    assert row.remaining is None
+
+
+def test_prior_overrun_hides_the_falsified_number() -> None:
+    # A prior-seeded countdown with no measurable progress: once the stage has
+    # outlived the prior by the overrun factor, the number is withdrawn rather
+    # than left frozen after being proven wrong.
+    est = RunEtaEstimator(frames=100, priors={"preprocess": 1.0})
+    est.update("preprocess", current=2, total=100, now=0.0)
+    at_prior = est.current_stage_remaining(now=100.0)
+    assert at_prior is not None and 90.0 <= at_prior <= 100.0
+    assert est.current_stage_remaining(now=160.0) is None
+
+
+def test_format_remaining_rounds_up_coarsely() -> None:
+    from deepreefmap.profiling.eta import format_remaining
+
+    assert format_remaining(0.0) == "~5s"
+    assert format_remaining(12.0) == "~15s"
+    assert format_remaining(58.0) == "~1m 00s"
+    assert format_remaining(61.0) == "~1m 30s"
+    assert format_remaining(599.0) == "~10m 00s"
+    assert format_remaining(601.0) == "~11m 00s"
+
+
 def test_mapping_stage_not_marked_done_by_align_or_save() -> None:
     est = RunEtaEstimator(frames=100)
     est.update("mapping", current=1, total=100, now=0.0)

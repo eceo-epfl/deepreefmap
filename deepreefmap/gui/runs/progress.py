@@ -6,6 +6,7 @@ from deepreefmap.gui.core.window_protocol import MixinBase
 from deepreefmap.profiling.eta import (
     RunEtaEstimator,
     format_duration,
+    format_remaining,
     stage_for_phase,
     stage_label_for_phase,
 )
@@ -328,7 +329,7 @@ class ProgressBarsMixin(MixinBase):
         est = getattr(self, "_eta", None)
         stage_left = est.current_stage_remaining(now) if est is not None else None
         if stage_left is not None:
-            parts.append(f"~{format_duration(stage_left)} left")
+            parts.append(f"{format_remaining(stage_left)} left")
         metrics = " · ".join(parts)
         # Color the active coarse stage so the left text names it (and the stage
         # name is dropped from the bars). During a reconstruction take it from the
@@ -354,7 +355,7 @@ class ProgressBarsMixin(MixinBase):
         # Overall estimate shown plainly rather than buried in the hover. None
         # means no trustworthy figure yet (a first run still calibrating).
         self._eta_total_label.setText(
-            f"~{format_duration(visible)} left" if visible is not None else "estimating…"
+            f"{format_remaining(visible)} left" if visible is not None else "estimating…"
         )
         popup = getattr(self, "_timing_popup", None)
         if popup is not None and popup.isVisible():

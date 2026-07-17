@@ -177,6 +177,41 @@ def test_group_recorded_runs_medians_repeat_configs(tmp_path) -> None:
     assert abs(big["seconds_per_frame"] - 900 / 1890) < 1e-9
 
 
+def test_second_run_estimates_are_calibrated_from_first_run(tmp_path) -> None:
+    # Scenario: the first run on a machine was slow (mapping swap-thrashed to
+    # 490s). Expected behaviour: a second run seeded through record_run →
+    # load_priors predicts that measured duration at mapping start, and the
+    # whole-run total becomes visible, where a history-less run shows neither.
+    from deepreefmap.profiling.eta import RunEtaEstimator
+
+    path = tmp_path / "run_timings.json"
+    key = history_key("loger_star", "coralscapes-vit-b-dpt", 1376, 768, 5)
+    durations = {
+        "startup": 0.3, "preprocess": 137.0, "mapping": 490.0,
+        "cloud": 2.9, "ortho": 0.6, "save_view": 0.8, "scene_save": 3.6,
+    }
+    record_run(key, durations, frames=150, points=2_000_000, path=path)
+
+    est = RunEtaEstimator(
+        frames=150,
+        priors=load_priors(key, path=path),
+        expected_points=load_expected_points(key, path=path),
+    )
+    bare = RunEtaEstimator(frames=150)
+    for e in (est, bare):
+        e.update("preprocess", current=1, total=150, now=0.0)
+        e.update("mapping", current=1, total=150, now=137.0)
+
+    mapping_left = est.current_stage_remaining(now=137.0)
+    assert mapping_left is not None
+    assert abs(mapping_left - 490.0) < 490.0 * 0.05
+    total_left = est.visible_remaining(now=137.0)
+    pending_sum = sum(durations[k] for k in ("mapping", "cloud", "ortho", "save_view", "scene_save"))
+    assert total_left is not None
+    assert abs(total_left - pending_sum) < pending_sum * 0.15
+    assert bare.visible_remaining(now=137.0) is None
+
+
 def test_rolling_cap(tmp_path) -> None:
     path = tmp_path / "run_timings.json"
     key = history_key("scsfmlearner", "segformer-b2", 640, 480, 5)

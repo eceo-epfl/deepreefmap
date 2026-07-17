@@ -78,7 +78,13 @@ _MIN_FRAC_FOR_LIVE = 0.08
 # to the stage's own measured rate, so it does not snap (e.g. halve) the instant
 # the library reports its first real numbers.
 _LIVE_HANDOVER_FRAC = 0.4
-_EMA_ALPHA = 0.3
+# A running stage whose fraction is exhausted (the mapping tail after the last
+# window, folded sub-phases pinned at 1.0) has no extrapolation left; showing
+# "~0s left" there is a lie, so the remainder is withheld instead.
+_FRAC_EXHAUSTED = 0.999
+# Once a stage has run this many times longer than its prior predicted with no
+# measurable progress, the prior is falsified and its remainder is withheld.
+_PRIOR_OVERRUN_FACTOR = 1.5
 
 
 def stage_for_phase(phase_key: str) -> str | None:
@@ -102,6 +108,21 @@ def format_duration(seconds: float) -> str:
     if secs < 3600:
         return f"{secs // 60}m {secs % 60:02d}s"
     return f"{secs // 3600}h {(secs % 3600) // 60:02d}m"
+
+
+def format_remaining(seconds: float) -> str:
+    """Render a remainder coarsely, rounded up: `~15s`, `~2m 30s`, `~11m 00s`.
+
+    Estimates carry no second-level precision, so the display shouldn't either;
+    the coarse buckets also stop the figure flapping between renders.
+    """
+    if seconds < 60:
+        step = 5
+    elif seconds < 600:
+        step = 30
+    else:
+        step = 60
+    return f"~{format_duration(max(step, math.ceil(seconds / step) * step))}"
 
 
 def _nlogn(n: float) -> float:
@@ -128,7 +149,7 @@ class _StageRun:
     started_at: float | None = None
     ended_at: float | None = None
     frac: float = 0.0
-    rate: float | None = None  # EMA of frac per second, for smoothing
+    frac0: float | None = None  # fraction at the first determinate event
 
     def elapsed(self, now: float) -> float:
         if self.started_at is None:
@@ -201,10 +222,10 @@ class RunEtaEstimator:
         # must not drag the stage's fraction backwards. Same monotonic fill as
         # the visible mapping bar.
         frac = max(run.frac, current / total)
-        elapsed = run.elapsed(now)
-        if frac > 0 and elapsed > 0:
-            inst = frac / elapsed
-            run.rate = inst if run.rate is None else _EMA_ALPHA * inst + (1 - _EMA_ALPHA) * run.rate
+        if run.frac0 is None:
+            # The extrapolation baseline: only progress earned after this point
+            # counts, so a stage entered mid-slice doesn't divide by unearned frac.
+            run.frac0 = frac
         run.frac = frac
 
     def _driver_value(self, spec: StageSpec) -> float | None:
@@ -249,37 +270,47 @@ class RunEtaEstimator:
             return spw * spec.weight
         return None
 
-    def _live_remaining(self, spec: StageSpec) -> float | None:
+    def _live_remaining(self, spec: StageSpec, now: float) -> float | None:
         """Remainder from this stage's own throughput, or None if not yet reliable.
 
-        Purely measured, so it is safe to show on a first run.
+        Purely measured, so it is safe to show on a first run. Evaluated against
+        the wall clock at query time — average time per unit of earned fraction,
+        scaled by the fraction left — so it counts down between sparse progress
+        events and grows honestly when the stage stalls, instead of freezing at
+        whatever the rate was at the last event.
         """
         run = self._runs[spec.key]
-        if run.frac >= _MIN_FRAC_FOR_LIVE and run.rate:
-            return max(0.0, (1.0 - run.frac) / run.rate)
-        return None
-
-    def _prior_remaining(self, spec: StageSpec, now: float) -> float | None:
-        """The prior stage duration scaled to what is left, for a running stage."""
-        full = self._prior_estimate(spec, now)
-        if full is None:
+        if run.frac0 is None:
             return None
-        return max(0.0, full * (1.0 - self._runs[spec.key].frac))
+        delta = run.frac - run.frac0
+        elapsed = run.elapsed(now)
+        if delta >= _MIN_FRAC_FOR_LIVE and elapsed > 0:
+            return max(0.0, elapsed * (1.0 - run.frac) / delta)
+        return None
 
     def _live_confidence(self, spec: StageSpec) -> float:
         """0 at the live threshold, ramping to 1 by the handover fraction."""
-        frac = self._runs[spec.key].frac
-        if frac <= _MIN_FRAC_FOR_LIVE:
+        run = self._runs[spec.key]
+        delta = run.frac - run.frac0 if run.frac0 is not None else 0.0
+        if delta <= _MIN_FRAC_FOR_LIVE:
             return 0.0
-        if frac >= _LIVE_HANDOVER_FRAC:
+        if delta >= _LIVE_HANDOVER_FRAC:
             return 1.0
-        return (frac - _MIN_FRAC_FOR_LIVE) / (_LIVE_HANDOVER_FRAC - _MIN_FRAC_FOR_LIVE)
+        return (delta - _MIN_FRAC_FOR_LIVE) / (_LIVE_HANDOVER_FRAC - _MIN_FRAC_FOR_LIVE)
 
     def _running_remaining(self, spec: StageSpec, now: float) -> float | None:
         """Remaining for the running stage: prior first, gliding into the live rate."""
-        live = self._live_remaining(spec)
-        prior = self._prior_remaining(spec, now)
+        run = self._runs[spec.key]
+        if run.frac >= _FRAC_EXHAUSTED:
+            # Folded tail work (align, transfer, saves) after the fraction is
+            # spent: no extrapolation left, so no number rather than "~0s left".
+            return None
+        live = self._live_remaining(spec, now)
+        full = self._prior_estimate(spec, now)
+        prior = max(0.0, full * (1.0 - run.frac)) if full is not None else None
         if live is None:
+            if full is not None and run.elapsed(now) > _PRIOR_OVERRUN_FACTOR * full:
+                return None
             return prior
         if prior is None:
             return live
