@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
@@ -61,28 +61,6 @@ class SimplePlanMixin(MixinBase):
         self._plan_map.transect_clicked.connect(self._on_plan_map_transect_clicked)
         self._plan_map.transect_endpoint_moved.connect(self._on_plan_endpoint_moved)
         map_layout.addWidget(self._plan_map, 1)
-        map_row = QHBoxLayout()
-        map_row.addWidget(QLabel("Set on map:"))
-        self._map_start_btn = QToolButton()
-        self._map_start_btn.setText("Start")
-        self._map_start_btn.setCheckable(True)
-        self._map_start_btn.setToolTip(
-            "Click the map to set the start point. "
-            "Drag the selected transect's endpoints to adjust them."
-        )
-        self._map_end_btn = QToolButton()
-        self._map_end_btn.setText("End")
-        self._map_end_btn.setCheckable(True)
-        self._map_end_btn.setToolTip(
-            "Click the map to set the end point. "
-            "Drag the selected transect's endpoints to adjust them."
-        )
-        self._map_start_btn.toggled.connect(self._on_map_start_armed)
-        self._map_end_btn.toggled.connect(self._on_map_end_armed)
-        map_row.addWidget(self._map_start_btn)
-        map_row.addWidget(self._map_end_btn)
-        map_row.addStretch(1)
-        map_layout.addLayout(map_row)
 
         side_pane = QWidget()
         layout = QVBoxLayout(side_pane)
@@ -128,9 +106,13 @@ class SimplePlanMixin(MixinBase):
         grid.addWidget(QLabel("Start"), 2, 0)
         grid.addWidget(self._tr_start_lat, 2, 1)
         grid.addWidget(self._tr_start_lon, 2, 2)
+        grid.addWidget(self._coord_actions("start"), 2, 3)
         grid.addWidget(QLabel("End"), 3, 0)
         grid.addWidget(self._tr_end_lat, 3, 1)
         grid.addWidget(self._tr_end_lon, 3, 2)
+        grid.addWidget(self._coord_actions("end"), 3, 3)
+        self._map_start_btn.toggled.connect(self._on_map_start_armed)
+        self._map_end_btn.toggled.connect(self._on_map_end_armed)
         for edit in (self._tr_start_lat, self._tr_start_lon, self._tr_end_lat, self._tr_end_lon):
             edit.editingFinished.connect(self._on_coords_edited)
 
@@ -417,6 +399,42 @@ class SimplePlanMixin(MixinBase):
         if fit or not self._plan_map_fitted:
             self._plan_map.fit_transects()
             self._plan_map_fitted = bool(overlays)
+
+    def _coord_actions(self, which: str) -> QWidget:
+        """Per-endpoint action pair: arm a map click to set it, copy it."""
+        box = QWidget()
+        row = QHBoxLayout(box)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(2)
+        pick = QToolButton()
+        pick.setText("⌖")
+        pick.setCheckable(True)
+        pick.setToolTip(
+            f"Click the map to set the {which} point. "
+            "Drag the selected transect's endpoints to adjust them."
+        )
+        copy = QToolButton()
+        copy.setText("⎘")
+        copy.setToolTip(f"Copy the {which} coordinates.")
+        copy.clicked.connect(lambda _=False, w=which: self._copy_endpoint(w))
+        row.addWidget(pick)
+        row.addWidget(copy)
+        if which == "start":
+            self._map_start_btn = pick
+        else:
+            self._map_end_btn = pick
+        return box
+
+    def _copy_endpoint(self, which: str) -> None:
+        if which == "start":
+            lat, lon = self._tr_start_lat.text().strip(), self._tr_start_lon.text().strip()
+        else:
+            lat, lon = self._tr_end_lat.text().strip(), self._tr_end_lon.text().strip()
+        if not lat or not lon:
+            self._status_label.setText(f"No {which} point to copy.")
+            return
+        QGuiApplication.clipboard().setText(f"{lat}, {lon}")
+        self._status_label.setText(f"Copied {which} point {lat}, {lon}.")
 
     def _on_map_start_armed(self, on: bool) -> None:
         if on:

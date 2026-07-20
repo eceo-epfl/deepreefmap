@@ -71,6 +71,30 @@ def test_map_buttons_are_mutually_exclusive(plan_window):
     assert not w._map_end_btn.isChecked()
 
 
+def test_copy_endpoint_puts_latlon_on_clipboard(plan_window, monkeypatch):
+    # Stubbed clipboard: the real X11 selection is shared with the desktop and
+    # races with clipboard managers.
+    captured = []
+
+    class _Clipboard:
+        def setText(self, text):
+            captured.append(text)
+
+    class _App:
+        @staticmethod
+        def clipboard():
+            return _Clipboard()
+
+    monkeypatch.setattr("deepreefmap.gui.simple.plan.QGuiApplication", _App)
+    w = plan_window
+    w._tr_start_lat.setText("-17.500000")
+    w._tr_start_lon.setText("177.100000")
+    w._copy_endpoint("start")
+    assert captured == ["-17.500000, 177.100000"]
+    w._copy_endpoint("end")
+    assert "No end point to copy" in w._status_label.text()
+
+
 def test_map_click_without_armed_button_is_ignored(plan_window):
     w = plan_window
     w._plan_map.map_clicked.emit(-17.5, 177.1)
