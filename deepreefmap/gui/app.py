@@ -24,6 +24,7 @@ from deepreefmap.gui.form.batch import BatchMixin
 from deepreefmap.gui.form.panel import FormPanelMixin
 from deepreefmap.gui.models.management import ModelManagementMixin
 from deepreefmap.gui.runs.past_runs import PastRunsMixin
+from deepreefmap.gui.runs.progress_panel import ProgressPanel
 from deepreefmap.gui.runs.results import ResultsMixin
 from deepreefmap.gui.runs.loading import RunLoadingMixin
 from deepreefmap.gui.simple.analysis import SimpleAnalysisMixin
@@ -121,6 +122,8 @@ class DeepReefMapWindow(
             class_names=classes_config.id_to_name,
         )
         self._viewer.set_status_callback(self._on_viewer_status)
+        self._progress_panel = ProgressPanel()
+        self._viewer.set_placeholder_widget(self._progress_panel)
         self._viewer.point_picked.connect(self._on_point_picked)
         self._viewer.point_picked_clear.connect(self._on_point_picked_clear)
         self._viewer.canvas_resized.connect(self._on_canvas_resized)

@@ -5,12 +5,15 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _reset_ui_mode(qapp):
-    """Keep the persisted survey-mode toggle from leaking between tests."""
+    """Keep the persisted mode and preview toggles from leaking between tests."""
     from PySide6.QtCore import QSettings
 
-    QSettings("ECEO", "deepreefmap").remove("ui_mode")
+    settings = QSettings("ECEO", "deepreefmap")
+    for key in ("ui_mode", "preview_3d"):
+        settings.remove(key)
     yield
-    QSettings("ECEO", "deepreefmap").remove("ui_mode")
+    for key in ("ui_mode", "preview_3d"):
+        settings.remove(key)
 
 
 @pytest.fixture(autouse=True)

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QSlider,
     QSplitter,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -181,12 +182,21 @@ class QtPointCloudViewer(ViewerPickingMixin, QWidget):
         self._canvas_container = QWidget()
         self._canvas_layout = QVBoxLayout(self._canvas_container)
         self._canvas_layout.setContentsMargins(0, 0, 0, 0)
-        self._main_splitter.addWidget(self._canvas_container)
+        # The top pane is either the 3D canvas or an injected placeholder (the
+        # progress panel); the preview toggle gates which one shows.
+        self._placeholder_container = QWidget()
+        placeholder_layout = QVBoxLayout(self._placeholder_container)
+        placeholder_layout.setContentsMargins(0, 0, 0, 0)
+        self._canvas_stack = QStackedWidget()
+        self._canvas_stack.addWidget(self._placeholder_container)
+        self._canvas_stack.addWidget(self._canvas_container)
+        self._main_splitter.addWidget(self._canvas_stack)
         self._main_splitter.addWidget(self._frames_panel)
         self._main_splitter.setStretchFactor(0, 3)
         self._main_splitter.setStretchFactor(1, 1)
         self._canvas_revealed = False
-        self._canvas_container.setVisible(False)
+        self._canvas_wanted = False
+        self._canvas_allowed = True
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -469,15 +479,36 @@ class QtPointCloudViewer(ViewerPickingMixin, QWidget):
         """Force a GL re-render; without it the translucent overlay ghosts stale pixels."""
         if self._plotter is None:
             return
+        if self._canvas_stack.currentWidget() is not self._canvas_container:
+            return
         try:
             self._plotter.render()
         except Exception:
             pass
 
+    def set_placeholder_widget(self, widget: QWidget) -> None:
+        """Install the widget shown in place of the 3D canvas while it is off."""
+        layout = self._placeholder_container.layout()
+        assert layout is not None
+        layout.addWidget(widget)
+
+    def set_canvas_allowed(self, allowed: bool) -> None:
+        """Gate the 3D canvas. Scene data keeps flowing while disallowed; allowing
+        mid-run reveals a canvas that has been fed all along."""
+        self._canvas_allowed = allowed
+        if allowed and self._canvas_wanted:
+            self._reveal_canvas()
+        elif not allowed:
+            self._canvas_revealed = False
+            self._canvas_stack.setCurrentWidget(self._placeholder_container)
+
     def _reveal_canvas(self) -> None:
+        self._canvas_wanted = True
+        if not self._canvas_allowed:
+            return
         self._ensure_plotter()
         self._canvas_revealed = True
-        self._canvas_container.setVisible(True)
+        self._canvas_stack.setCurrentWidget(self._canvas_container)
         # Re-apply on every call: an early bail leaves the bottom panel oversized
         # after the second set_data (semantic, following the geometry preview) and
         # after the sidebar switches to Results.
@@ -485,8 +516,9 @@ class QtPointCloudViewer(ViewerPickingMixin, QWidget):
         self._main_splitter.setSizes([int(total * 0.75), int(total * 0.25)])
 
     def _hide_canvas(self) -> None:
+        self._canvas_wanted = False
         self._canvas_revealed = False
-        self._canvas_container.setVisible(False)
+        self._canvas_stack.setCurrentWidget(self._placeholder_container)
 
     @property
     def has_scene_data(self) -> bool:

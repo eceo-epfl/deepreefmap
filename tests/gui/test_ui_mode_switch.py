@@ -36,6 +36,39 @@ def test_collect_and_populate_round_trip(window):
     assert window._collect_preset_from_form() == preset
 
 
+def test_preview_defaults_off_and_gates_canvas(window):
+    viewer = window._viewer
+    assert not window._preview_toggle_btn.isChecked()
+    assert viewer._canvas_stack.currentWidget() is viewer._placeholder_container
+    viewer._reveal_canvas()
+    assert viewer._canvas_wanted
+    assert viewer._canvas_stack.currentWidget() is viewer._placeholder_container
+
+
+def test_allowing_preview_reveals_pending_scene(window, monkeypatch):
+    viewer = window._viewer
+    monkeypatch.setattr(viewer, "_ensure_plotter", lambda: None)
+    viewer._reveal_canvas()
+    window._preview_toggle_btn.setChecked(True)
+    assert viewer._canvas_stack.currentWidget() is viewer._canvas_container
+    window._preview_toggle_btn.setChecked(False)
+    assert viewer._canvas_stack.currentWidget() is viewer._placeholder_container
+    assert viewer._canvas_wanted
+
+
+def test_preview_setting_persists(window, make_window):
+    window._preview_toggle_btn.setChecked(True)
+    other = make_window()
+    assert other._preview_toggle_btn.isChecked()
+
+
+def test_viewing_forces_preview_on(window, monkeypatch):
+    monkeypatch.setattr(window._viewer, "_ensure_plotter", lambda: None)
+    assert not window._preview_toggle_btn.isChecked()
+    window._set_app_mode("VIEWING")
+    assert window._preview_toggle_btn.isChecked()
+
+
 def test_crop_width_zero_means_disabled(window):
     window._crop_width.setValue(0.0)
     assert window._collect_preset_from_form()["transect_crop_width"] is None

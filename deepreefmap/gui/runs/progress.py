@@ -307,6 +307,9 @@ class ProgressBarsMixin(MixinBase):
         self._status_count_text = ""
         self._status_phase_key = None
         self._stage_fill = {}
+        panel = getattr(self, "_progress_panel", None)
+        if panel is not None:
+            panel.set_idle("No run in progress.")
 
     def _render_status(self) -> None:
         """Recompose the status label: colored stage + label, then a metrics line."""
@@ -343,7 +346,11 @@ class ProgressBarsMixin(MixinBase):
             first = f'<b><span style="color:{PRIMARY}">{stage}</span></b> · {base}'
         else:
             first = base
-        self._status_label.setText(f"{first}<br>{metrics}" if metrics else first)
+        text = f"{first}<br>{metrics}" if metrics else first
+        self._status_label.setText(text)
+        panel = getattr(self, "_progress_panel", None)
+        if panel is not None:
+            panel.set_status_html(text)
 
     def _render_eta(self) -> None:
         """Refresh the visible overall-estimate label and the breakdown popup."""
@@ -354,9 +361,11 @@ class ProgressBarsMixin(MixinBase):
         visible = est.visible_remaining(now)
         # Overall estimate shown plainly rather than buried in the hover. None
         # means no trustworthy figure yet (a first run still calibrating).
-        self._eta_total_label.setText(
-            f"{format_remaining(visible)} left" if visible is not None else "estimating…"
-        )
+        eta_text = f"{format_remaining(visible)} left" if visible is not None else "estimating…"
+        self._eta_total_label.setText(eta_text)
+        panel = getattr(self, "_progress_panel", None)
+        if panel is not None:
+            panel.set_eta(eta_text)
         popup = getattr(self, "_timing_popup", None)
         if popup is not None and popup.isVisible():
             popup.set_rows(est.stage_rows(now), est.total_remaining_s(now), est.has_history)
@@ -464,6 +473,9 @@ class ProgressBarsMixin(MixinBase):
             self._total_progress_bar.setRange(0, 100)
             self._total_progress_bar.setValue(pct)
             self._total_progress_bar.setEnabled(True)
+            panel = getattr(self, "_progress_panel", None)
+            if panel is not None:
+                panel.set_percent(pct)
 
         if flush:
             QApplication.processEvents()

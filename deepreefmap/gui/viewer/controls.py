@@ -45,6 +45,10 @@ class ViewerControlsMixin(MixinBase):
         # in unusual ordering); the production path constructs tabs first.
         if hasattr(self, "_sidebar_tabs"):
             self._sidebar_tabs.setCurrentIndex(target_tab)
+        # A loaded run with the canvas gated off would show an idle progress
+        # panel; surface the cloud and let the user toggle it back off.
+        if mode == "VIEWING" and hasattr(self, "_preview_toggle_btn"):
+            self._preview_toggle_btn.setChecked(True)
 
     def _refresh_run_warnings_view(self) -> None:
         """Keep the setup-form warning mirror in sync with the Results-tab one."""

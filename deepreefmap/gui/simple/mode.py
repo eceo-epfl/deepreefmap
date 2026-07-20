@@ -98,6 +98,24 @@ class UiModeMixin(MixinBase):
         self._mode_toggle_btn.toggled.connect(self._on_ui_mode_toggled)
         return self._mode_toggle_btn
 
+    def _build_preview_toggle(self) -> QToolButton:
+        self._preview_toggle_btn = QToolButton()
+        self._preview_toggle_btn.setText("3D preview")
+        self._preview_toggle_btn.setCheckable(True)
+        self._preview_toggle_btn.setToolTip(
+            "Show the live 3D point cloud. When off, run progress and frame "
+            "previews are shown instead."
+        )
+        checked = str(self._settings.value("preview_3d", "false")).lower() == "true"
+        self._preview_toggle_btn.setChecked(checked)
+        self._viewer.set_canvas_allowed(checked)
+        self._preview_toggle_btn.toggled.connect(self._on_preview_toggled)
+        return self._preview_toggle_btn
+
+    def _on_preview_toggled(self, checked: bool) -> None:
+        self._settings.setValue("preview_3d", checked)
+        self._viewer.set_canvas_allowed(checked)
+
     def _init_ui_mode(self) -> None:
         mode = str(self._settings.value("ui_mode", "advanced"))
         if mode not in UI_MODES:

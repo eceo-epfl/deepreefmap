@@ -1232,6 +1232,7 @@ class FormPanelMixin(MixinBase):
         # primary action that resets the workspace for a fresh run.
         h.addWidget(self._new_run_btn)
         h.addWidget(self._build_mode_toggle())
+        h.addWidget(self._build_preview_toggle())
 
         h.addWidget(QLabel("Past runs:"))
         h.addWidget(self._past_runs_combo, 2)
