@@ -1,0 +1,11 @@
+# Run settings used by survey mode. Per-pass values (transect length, time trim)
+# come from the survey database, never from here. To override on one machine,
+# copy this file to <user data dir>/deepreefmap/survey_preset.yaml.
+schema_version: 1
+fps: 5
+segmentation_name: coralscapes-vit-b-dpt
+mapping_name: loger_star
+camera_profile_name: gopro_hero_10
+transect_crop_width: 1.0
+enable_tsdf: false
+skip_segmentation: false

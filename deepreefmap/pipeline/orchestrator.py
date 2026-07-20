@@ -146,6 +146,7 @@ def run_reconstruction(
     run_name: str | None = None,
     cancel_event: threading.Event | None = None,
     pause_event: threading.Event | None = None,
+    manifest_extra: dict[str, object] | None = None,
 ) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -481,6 +482,10 @@ def run_reconstruction(
             "deepreefmap_version": deepreefmap_version,
             "run_timestamp": run_started_at,
         }
+        # Caller-owned metadata (e.g. the survey block linking a run to its pass and
+        # transect); merged into run_params so it lands in both manifest builds.
+        if manifest_extra:
+            run_params.update(manifest_extra)
 
         _check_cancel(cancel_event, pause_event)
         instr.mark("cloud")

@@ -24,6 +24,12 @@ def test_bundled_and_repo_classes_yaml_are_identical() -> None:
     assert repo_path.read_text() == bundled.read_text()
 
 
+def test_bundled_and_repo_survey_preset_are_identical() -> None:
+    repo_path = Path("configs/survey_preset.yaml")
+    bundled = Path("deepreefmap/resources/configs/survey_preset.yaml")
+    assert repo_path.read_text() == bundled.read_text()
+
+
 def test_classes_have_group_fields_for_all_levels() -> None:
     classes = load_classes()
     for cls in classes.classes:

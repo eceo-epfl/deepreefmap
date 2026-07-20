@@ -22,6 +22,11 @@ def loger_ckpts_dir() -> Path:
     return Path(platformdirs.user_data_dir("deepreefmap", appauthor=False)) / "loger_ckpts"
 
 
+def survey_preset_path() -> Path:
+    """User override for the bundled survey-mode run preset."""
+    return Path(platformdirs.user_data_dir("deepreefmap", appauthor=False)) / "survey_preset.yaml"
+
+
 def run_timings_path() -> Path:
     """Local timing/peak profile recorded per run, overridable for tests."""
     override = os.environ.get("DEEPREEFMAP_RUN_TIMINGS")
