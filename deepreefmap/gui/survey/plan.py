@@ -318,4 +318,5 @@ class SurveyPlanMixin(MixinBase):
         self._status_label.setText(f"Exported {len(transects)} transect(s).")
 
     def _survey_data_changed(self) -> None:
-        """Refresh survey views that mirror the store; later tabs extend this."""
+        """Refresh survey views that mirror the store."""
+        self._refresh_survey_transect_combos()

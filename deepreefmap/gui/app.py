@@ -26,6 +26,7 @@ from deepreefmap.gui.models.management import ModelManagementMixin
 from deepreefmap.gui.runs.past_runs import PastRunsMixin
 from deepreefmap.gui.runs.results import ResultsMixin
 from deepreefmap.gui.runs.loading import RunLoadingMixin
+from deepreefmap.gui.survey.batch import SurveyBatchMixin
 from deepreefmap.gui.survey.mode import UiModeMixin
 from deepreefmap.gui.survey.plan import SurveyPlanMixin
 from deepreefmap.gui.system.panel import SystemPanelMixin
@@ -45,6 +46,7 @@ class DeepReefMapWindow(
     ProgressBarsMixin,
     ResultsMixin,
     RunLoadingMixin,
+    SurveyBatchMixin,
     SurveyPlanMixin,
     SystemPanelMixin,
     UiModeMixin,
@@ -65,6 +67,8 @@ class DeepReefMapWindow(
     _sig_qc_render_progress = Signal(int, int)
     _sig_qc_render_done = Signal(bool, str)
     _sig_discovery_done = Signal(object, object)
+    _sig_survey_progress = Signal(int, int, str)
+    _sig_survey_done = Signal(int, int, str)
 
     def __init__(self, classes_config: ClassConfig, classes_path: Path | None) -> None:
         super().__init__()
@@ -86,6 +90,8 @@ class DeepReefMapWindow(
         self._sig_batch_progress.connect(self._on_batch_progress)
         self._sig_batch_done.connect(self._on_batch_done)
         self._sig_discovery_done.connect(self._on_discovery_done)
+        self._sig_survey_progress.connect(self._on_survey_progress)
+        self._sig_survey_done.connect(self._on_survey_done)
 
         self.setWindowTitle("DeepReefMap")
         # Open at ~90% of the available screen, capped at the comfortable

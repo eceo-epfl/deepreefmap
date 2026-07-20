@@ -132,7 +132,7 @@ class FormPanelMixin(MixinBase):
         layout = QVBoxLayout(panel)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        setup_layout, plan_layout, viewer_layout, models_layout, system_layout = (
+        setup_layout, plan_layout, survey_layout, viewer_layout, models_layout, system_layout = (
             self._build_sidebar_tabs(layout)
         )
 
@@ -151,6 +151,7 @@ class FormPanelMixin(MixinBase):
         self._build_models_tab(models_layout)
         self._build_updates_section(system_layout)
         self._build_plan_tab(plan_layout)
+        self._build_survey_batch_tab(survey_layout)
 
         # Start in SETUP, no run loaded yet. The mode flips to RUNNING in
         # _begin_pipeline_run and to VIEWING when a past run is selected or a
@@ -181,7 +182,7 @@ class FormPanelMixin(MixinBase):
 
     def _build_sidebar_tabs(
         self, layout: QVBoxLayout
-    ) -> tuple[QVBoxLayout, QVBoxLayout, QVBoxLayout, QVBoxLayout, QVBoxLayout]:
+    ) -> tuple[QVBoxLayout, QVBoxLayout, QVBoxLayout, QVBoxLayout, QVBoxLayout, QVBoxLayout]:
         # Sidebar tabs: Run (setup form / live log), Plan (survey transects,
         # shown in survey mode only), Results (viewer controls + results panel
         # for a loaded run), Models (HF auth + per-model download/delete),
@@ -189,11 +190,12 @@ class FormPanelMixin(MixinBase):
         # between the expert tabs and the survey tabs.
         self._TAB_RUN = 0
         self._TAB_PLAN = 1
-        self._TAB_RESULTS = 2
-        self._TAB_MODELS = 3
+        self._TAB_SURVEY = 2
+        self._TAB_RESULTS = 3
+        self._TAB_MODELS = 4
         # System hosts both the live machine gauges and the updates section.
-        self._TAB_SYSTEM = 4
-        self._survey_tabs = [self._TAB_PLAN]
+        self._TAB_SYSTEM = 5
+        self._survey_tabs = [self._TAB_PLAN, self._TAB_SURVEY]
         self._sidebar_tabs = QTabWidget()
         # Tabs expand to share the panel width equally so labels of different
         # length (Run / Results / Models / Updates) end up the same visible width.
@@ -209,6 +211,9 @@ class FormPanelMixin(MixinBase):
         plan_layout = QVBoxLayout(self._plan_tab)
         plan_layout.setContentsMargins(4, 6, 4, 4)
         plan_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._survey_tab = QWidget()
+        survey_layout = QVBoxLayout(self._survey_tab)
+        survey_layout.setContentsMargins(4, 6, 4, 4)
         self._viewer_tab = QWidget()
         viewer_layout = QVBoxLayout(self._viewer_tab)
         viewer_layout.setContentsMargins(4, 6, 4, 4)
@@ -224,6 +229,7 @@ class FormPanelMixin(MixinBase):
         self._system_tab, system_layout = build_system_tab(self._sidebar_tabs)
         self._sidebar_tabs.addTab(self._run_tab, "Run")
         self._sidebar_tabs.addTab(self._plan_tab, "Plan")
+        self._sidebar_tabs.addTab(self._survey_tab, "Batch")
         self._sidebar_tabs.addTab(self._viewer_tab, "Results")
         self._sidebar_tabs.addTab(self._models_tab, "Models")
         self._sidebar_tabs.addTab(self._system_tab, "System")
@@ -242,7 +248,7 @@ class FormPanelMixin(MixinBase):
         setup_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         setup_layout.setContentsMargins(0, 0, 0, 0)
         run_layout.addWidget(self._setup_page)
-        return setup_layout, plan_layout, viewer_layout, models_layout, system_layout
+        return setup_layout, plan_layout, survey_layout, viewer_layout, models_layout, system_layout
 
     def _build_deferred_top_bar_widgets(self, setup_layout: QVBoxLayout) -> None:
         # These widgets are owned by the top toolbar but constructed here so

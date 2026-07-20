@@ -56,10 +56,11 @@ class UiModeMixin(MixinBase):
         self._settings.setValue("ui_mode", mode)
         if simple:
             self._refresh_transect_list()
+            self._refresh_survey_batch_tab()
         tabs.setCurrentIndex(self._survey_home_tab() if simple else self._TAB_RUN)
 
     def _survey_home_tab(self) -> int:
-        return self._TAB_PLAN
+        return self._TAB_SURVEY
 
     def _survey_store(self) -> SurveyStore:
         """Store keyed to the current output root; reopened when the root changes."""

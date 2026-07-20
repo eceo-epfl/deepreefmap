@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         QPushButton,
         QSlider,
         QSpinBox,
+        QTableWidget,
         QTabWidget,
         QToolButton,
         QVBoxLayout,
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
     from deepreefmap.pointcloud.grid_ortho import OrthoGrid
     from deepreefmap.gui.viewer.widget import QtPointCloudViewer
     from deepreefmap.gui.runs.sunburst import SunburstWidget
+    from deepreefmap.survey.models import SurveyBatch
     from deepreefmap.survey.store import SurveyStore
 
     # QWidget, not QMainWindow: DeepReefMapWindow lists QMainWindow first among
@@ -66,6 +68,7 @@ if TYPE_CHECKING:
         _results_output_dir: Path | None
         _TAB_RUN: int
         _TAB_PLAN: int
+        _TAB_SURVEY: int
         _TAB_RESULTS: int
         _TAB_SYSTEM: int
         _TAB_MODELS: int
@@ -74,6 +77,12 @@ if TYPE_CHECKING:
         _survey_store_obj: SurveyStore | None
         _transect_form_id: uuid.UUID | None
         _quick_entry_to_end: bool
+        _survey_rows: list
+        _survey_transects: list
+        _survey_batch: SurveyBatch | None
+        _survey_preset: dict | None
+        _survey_cancel_event: threading.Event | None
+        _survey_worker_running: bool
         _downloading: set[str]
         _download_cancel_requested: set[str]
         _download_errors: dict[str, str]
@@ -180,6 +189,11 @@ if TYPE_CHECKING:
 
         # --- survey mode -------------------------------------------------
         _mode_toggle_btn: QToolButton
+        _survey_batch_name: QLineEdit
+        _survey_preset_label: QLabel
+        _survey_pass_table: QTableWidget
+        _survey_start_btn: QPushButton
+        _survey_stop_btn: QPushButton
         _transect_list: QListWidget
         _tr_name_input: QLineEdit
         _tr_quick_input: QLineEdit
@@ -233,6 +247,8 @@ if TYPE_CHECKING:
         _sig_qc_render_progress = Signal(int, int)
         _sig_qc_render_done = Signal(bool, str)
         _sig_discovery_done = Signal(object, object)
+        _sig_survey_progress = Signal(int, int, str)
+        _sig_survey_done = Signal(int, int, str)
 
         # --- cross-mixin methods -----------------------------------------
         def _add_run_warning(self, message: str) -> None: ...
@@ -282,6 +298,13 @@ if TYPE_CHECKING:
         def _survey_store(self) -> SurveyStore: ...
         def _survey_data_changed(self) -> None: ...
         def _refresh_transect_list(self, select_id: uuid.UUID | None = None) -> None: ...
+        def _build_survey_batch_tab(self, layout: QVBoxLayout) -> None: ...
+        def _refresh_survey_batch_tab(self) -> None: ...
+        def _refresh_survey_transect_combos(self) -> None: ...
+        def _refresh_survey_pass_statuses(self) -> None: ...
+        def _recompute_survey_start(self) -> None: ...
+        def _on_survey_progress(self, index: int, total: int, name: str) -> None: ...
+        def _on_survey_done(self, ok: int, total: int, last_error: str) -> None: ...
         def _set_log_panel_visible(self, visible: bool) -> None: ...
         def _set_ortho_sources(
             self,

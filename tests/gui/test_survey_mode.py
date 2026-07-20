@@ -24,9 +24,10 @@ def test_toggle_switches_to_survey_tabs(window):
     window._mode_toggle_btn.setChecked(True)
     assert window._ui_mode == "simple"
     assert tabs.isTabVisible(window._TAB_PLAN)
+    assert tabs.isTabVisible(window._TAB_SURVEY)
     assert not tabs.isTabVisible(window._TAB_RUN)
     assert not tabs.isTabVisible(window._TAB_MODELS)
-    assert tabs.currentIndex() == window._TAB_PLAN
+    assert tabs.currentIndex() == window._survey_home_tab()
     window._mode_toggle_btn.setChecked(False)
     assert window._ui_mode == "advanced"
     assert tabs.currentIndex() == window._TAB_RUN
