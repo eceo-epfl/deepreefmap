@@ -87,7 +87,7 @@ class _SurveyJob:
     dir_name: str
 
 
-class SurveyBatchMixin(MixinBase):
+class SimpleBatchMixin(MixinBase):
     """DeepReefMapWindow methods for the survey batch tab."""
 
     def _build_survey_batch_tab(self, layout: QVBoxLayout) -> None:
@@ -100,7 +100,7 @@ class SurveyBatchMixin(MixinBase):
             self._survey_preset = load_survey_preset()
         except (OSError, ValueError) as exc:
             self._survey_preset = None
-            logger.warning("Survey preset unavailable: %s", exc)
+            logger.warning("Preset unavailable: %s", exc)
 
         header = QHBoxLayout()
         header.addWidget(QLabel("Batch"))
@@ -152,7 +152,7 @@ class SurveyBatchMixin(MixinBase):
 
     def _survey_preset_summary(self) -> str:
         if self._survey_preset is None:
-            return "Survey preset could not be loaded; fix the preset file to run batches."
+            return "The preset could not be loaded; fix the preset file to run batches."
         p = self._survey_preset
         return (
             f"Preset: {p['segmentation_name']} + {p['mapping_name']}"
@@ -481,26 +481,26 @@ class SurveyBatchMixin(MixinBase):
             except ReconstructionCancelled:
                 store.set_run_status(job.run.id, "cancelled")
             except Exception as exc:
-                logger.exception("Survey pass %s failed", job.dir_name)
+                logger.exception("Pass %s failed", job.dir_name)
                 last_error = f"{job.dir_name}: {exc}"
                 store.set_run_status(job.run.id, "failed", error=str(exc)[:300])
         self._sig_survey_done.emit(ok, len(jobs), last_error[:300])
 
     def _on_survey_progress(self, index: int, total: int, name: str) -> None:
-        self._status_label.setText(f"Survey batch: pass {index} of {total}: {name}")
+        self._status_label.setText(f"Batch: pass {index} of {total}: {name}")
         self._refresh_survey_pass_statuses()
 
     def _on_survey_done(self, ok: int, total: int, last_error: str) -> None:
         self._survey_worker_running = False
         self._survey_stop_btn.setEnabled(False)
         if ok == total:
-            self._status_label.setText(f"Survey batch complete: {ok}/{total} pass(es) succeeded.")
+            self._status_label.setText(f"Batch complete: {ok}/{total} pass(es) succeeded.")
         elif last_error:
             self._status_label.setText(
-                f"Survey batch finished: {ok}/{total} succeeded. Last error: {last_error}"
+                f"Batch finished: {ok}/{total} succeeded. Last error: {last_error}"
             )
         else:
-            self._status_label.setText(f"Survey batch finished: {ok}/{total} succeeded.")
+            self._status_label.setText(f"Batch finished: {ok}/{total} succeeded.")
         self._refresh_survey_pass_statuses()
         self._recompute_survey_start()
         self._refresh_past_runs_combo()

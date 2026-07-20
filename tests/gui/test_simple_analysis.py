@@ -47,7 +47,7 @@ def test_analysis_populates_chart_table_and_runs(analysis_window):
 def test_analysis_export_csv(analysis_window, tmp_path, monkeypatch):
     out_path = tmp_path / "repeat.csv"
     monkeypatch.setattr(
-        "deepreefmap.gui.survey.analysis.QFileDialog.getSaveFileName",
+        "deepreefmap.gui.simple.analysis.QFileDialog.getSaveFileName",
         staticmethod(lambda *a, **k: (str(out_path), "")),
     )
     analysis_window._on_analysis_export_csv()

@@ -1,4 +1,4 @@
-"""Simple (survey) / Advanced UI mode switch and the shared survey store accessor."""
+"""Simple / Advanced UI mode switch and the shared survey store accessor."""
 
 from __future__ import annotations
 
@@ -17,16 +17,16 @@ UI_MODES = ("advanced", "simple")
 
 
 class UiModeMixin(MixinBase):
-    """DeepReefMapWindow methods for switching between the survey and expert UIs."""
+    """DeepReefMapWindow methods for switching between the simple and advanced UIs."""
 
     _survey_store_obj: SurveyStore | None = None
 
     def _build_mode_toggle(self) -> QToolButton:
         self._mode_toggle_btn = QToolButton()
-        self._mode_toggle_btn.setText("Survey")
+        self._mode_toggle_btn.setText("Simple")
         self._mode_toggle_btn.setCheckable(True)
         self._mode_toggle_btn.setToolTip(
-            "Survey mode: plan transects, batch a day's videos with preset settings, "
+            "Simple mode: plan transects, batch a day's videos with preset settings, "
             "and compare repeated passes. Uncheck for the full run form."
         )
         self._mode_toggle_btn.toggled.connect(self._on_ui_mode_toggled)

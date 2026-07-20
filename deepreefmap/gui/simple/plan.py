@@ -40,7 +40,7 @@ from deepreefmap.survey.models.importers import (
 logger = logging.getLogger(__name__)
 
 
-class SurveyPlanMixin(MixinBase):
+class SimplePlanMixin(MixinBase):
     """DeepReefMapWindow methods for the transect planning tab."""
 
     _transect_form_id: uuid.UUID | None = None

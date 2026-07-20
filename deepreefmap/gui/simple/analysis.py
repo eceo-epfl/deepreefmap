@@ -27,7 +27,7 @@ from PySide6.QtGui import QColor
 from deepreefmap.config.classes import COVER_LEVELS
 from deepreefmap.gui.map.overlays import OverlayTransect
 from deepreefmap.gui.map.widget import SlippyMapWidget
-from deepreefmap.gui.survey.charts import GroupedBarChart, pass_color
+from deepreefmap.gui.simple.charts import GroupedBarChart, pass_color
 from deepreefmap.survey.analysis import (
     assemble_transect_covers,
     cover_labels,
@@ -53,7 +53,7 @@ def transect_status_color(statuses: list[str]) -> QColor:
     return QColor(220, 160, 40)
 
 
-class SurveyAnalysisMixin(MixinBase):
+class SimpleAnalysisMixin(MixinBase):
     """DeepReefMapWindow methods for the survey analysis tab."""
 
     def _build_survey_analysis_tab(self, layout: QVBoxLayout) -> None:

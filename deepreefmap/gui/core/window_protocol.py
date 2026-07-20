@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from deepreefmap.gui.viewer.widget import QtPointCloudViewer
     from deepreefmap.gui.runs.sunburst import SunburstWidget
     from deepreefmap.gui.map.widget import SlippyMapWidget
-    from deepreefmap.gui.survey.charts import GroupedBarChart
+    from deepreefmap.gui.simple.charts import GroupedBarChart
     from deepreefmap.survey.models import SurveyBatch
     from deepreefmap.survey.store import SurveyStore
 

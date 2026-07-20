@@ -97,7 +97,7 @@ def test_import_csv_skips_existing(plan_window, tmp_path, monkeypatch):
     csv_path = tmp_path / "in.csv"
     save_transects_csv(csv_path, [existing, make_transect("T2")])
     monkeypatch.setattr(
-        "deepreefmap.gui.survey.plan.QFileDialog.getOpenFileName",
+        "deepreefmap.gui.simple.plan.QFileDialog.getOpenFileName",
         staticmethod(lambda *a, **k: (str(csv_path), "")),
     )
     w._on_transects_import()
@@ -111,7 +111,7 @@ def test_export_csv_round_trip(plan_window, tmp_path, monkeypatch):
     w._survey_store().add_transect(make_transect())
     out_path = tmp_path / "out.csv"
     monkeypatch.setattr(
-        "deepreefmap.gui.survey.plan.QFileDialog.getSaveFileName",
+        "deepreefmap.gui.simple.plan.QFileDialog.getSaveFileName",
         staticmethod(lambda *a, **k: (str(out_path), "")),
     )
     w._on_transects_export()
