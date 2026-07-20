@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from deepreefmap.pointcloud.grid_ortho import OrthoGrid
     from deepreefmap.gui.viewer.widget import QtPointCloudViewer
     from deepreefmap.gui.runs.sunburst import SunburstWidget
+    from deepreefmap.gui.map.widget import SlippyMapWidget
     from deepreefmap.gui.survey.charts import GroupedBarChart
     from deepreefmap.survey.models import SurveyBatch
     from deepreefmap.survey.store import SurveyStore
@@ -79,6 +80,7 @@ if TYPE_CHECKING:
         _survey_store_obj: SurveyStore | None
         _transect_form_id: uuid.UUID | None
         _quick_entry_to_end: bool
+        _plan_map_fitted: bool
         _survey_rows: list
         _survey_transects: list
         _survey_batch: SurveyBatch | None
@@ -192,6 +194,9 @@ if TYPE_CHECKING:
 
         # --- survey mode -------------------------------------------------
         _mode_toggle_btn: QToolButton
+        _plan_map: SlippyMapWidget
+        _analysis_map: SlippyMapWidget
+        _map_place_btn: QToolButton
         _survey_batch_name: QLineEdit
         _survey_preset_label: QLabel
         _survey_pass_table: QTableWidget

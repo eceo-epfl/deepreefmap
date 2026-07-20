@@ -27,6 +27,11 @@ def survey_preset_path() -> Path:
     return Path(platformdirs.user_data_dir("deepreefmap", appauthor=False)) / "survey_preset.yaml"
 
 
+def tile_cache_dir() -> Path:
+    """Persistent map tile cache; tiles land here only after being displayed."""
+    return Path(platformdirs.user_cache_dir("deepreefmap", appauthor=False)) / "tiles"
+
+
 def run_timings_path() -> Path:
     """Local timing/peak profile recorded per run, overridable for tests."""
     override = os.environ.get("DEEPREEFMAP_RUN_TIMINGS")

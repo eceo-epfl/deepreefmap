@@ -13,6 +13,16 @@ def _reset_ui_mode(qapp):
     QSettings("ECEO", "deepreefmap").remove("ui_mode")
 
 
+@pytest.fixture(autouse=True)
+def _offline_tiles(qapp):
+    """Map widgets must never fetch tiles during tests."""
+    from deepreefmap.gui.map.tile_cache import shared_tile_cache
+
+    cache = shared_tile_cache()
+    cache.network_enabled = False
+    yield
+
+
 @pytest.fixture
 def make_window(qapp):
     """Factory building a fresh DeepReefMapWindow with the built-in classes.

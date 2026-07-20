@@ -22,7 +22,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from PySide6.QtGui import QColor
+
 from deepreefmap.config.classes import COVER_LEVELS
+from deepreefmap.gui.map.overlays import OverlayTransect
+from deepreefmap.gui.map.widget import SlippyMapWidget
 from deepreefmap.gui.survey.charts import GroupedBarChart, pass_color
 from deepreefmap.survey.analysis import (
     assemble_transect_covers,
@@ -38,11 +42,27 @@ logger = logging.getLogger(__name__)
 _CHART_MIN_FRACTION = 0.005
 
 
+def transect_status_color(statuses: list[str]) -> QColor:
+    """Grey none, red any failure, green all succeeded, amber in between."""
+    if not statuses:
+        return QColor(128, 128, 128)
+    if any(status == "failed" for status in statuses):
+        return QColor(200, 70, 60)
+    if all(status == "succeeded" for status in statuses):
+        return QColor(70, 170, 90)
+    return QColor(220, 160, 40)
+
+
 class SurveyAnalysisMixin(MixinBase):
     """DeepReefMapWindow methods for the survey analysis tab."""
 
     def _build_survey_analysis_tab(self, layout: QVBoxLayout) -> None:
         self._analysis_covers = []
+
+        self._analysis_map = SlippyMapWidget()
+        self._analysis_map.setMinimumHeight(200)
+        self._analysis_map.transect_clicked.connect(self._on_analysis_map_transect_clicked)
+        layout.addWidget(self._analysis_map, 1)
 
         selector = QHBoxLayout()
         selector.addWidget(QLabel("Transect"))
@@ -102,6 +122,7 @@ class SurveyAnalysisMixin(MixinBase):
         combo.blockSignals(False)
 
         transect_id = self._analysis_transect_id()
+        self._refresh_analysis_map(store, transect_id)
         if transect_id is None:
             self._analysis_covers = []
             self._analysis_chart.set_data([], [])
@@ -131,6 +152,27 @@ class SurveyAnalysisMixin(MixinBase):
         self._fill_analysis_stats(covers)
         self._fill_analysis_repro(covers)
         self._fill_analysis_runs(store, out_root, transect_id)
+
+    def _refresh_analysis_map(self, store, selected_id: uuid.UUID | None) -> None:
+        overlays = []
+        for transect in store.list_transects():
+            statuses = [run.status for run in store.runs_for_transect(transect.id)]
+            overlays.append(OverlayTransect(
+                id=str(transect.id),
+                start=(transect.start_lat, transect.start_lon),
+                end=(transect.end_lat, transect.end_lon),
+                color=transect_status_color(statuses),
+                selected=transect.id == selected_id,
+            ))
+        self._analysis_map.set_transects(overlays)
+        self._analysis_map.fit_transects()
+
+    def _on_analysis_map_transect_clicked(self, transect_id: str) -> None:
+        combo = self._analysis_transect_combo
+        for index in range(combo.count()):
+            if combo.itemData(index) == transect_id:
+                combo.setCurrentIndex(index)
+                return
 
     def _fill_analysis_stats(self, covers: list) -> None:
         stats = repeatability_stats(covers)

@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
@@ -21,9 +22,13 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QToolButton,
     QVBoxLayout,
 )
 
+from deepreefmap.gui.core.theme import PRIMARY
+from deepreefmap.gui.map.overlays import OverlayTransect
+from deepreefmap.gui.map.widget import SlippyMapWidget
 from deepreefmap.survey.models import Transect, haversine_m
 from deepreefmap.survey.models.exporters import save_transects_csv
 from deepreefmap.survey.models.importers import (
@@ -40,8 +45,26 @@ class SurveyPlanMixin(MixinBase):
 
     _transect_form_id: uuid.UUID | None = None
     _quick_entry_to_end: bool = False
+    _plan_map_fitted: bool = False
 
     def _build_plan_tab(self, layout: QVBoxLayout) -> None:
+        self._plan_map = SlippyMapWidget()
+        self._plan_map.map_clicked.connect(self._on_plan_map_clicked)
+        self._plan_map.transect_clicked.connect(self._on_plan_map_transect_clicked)
+        self._plan_map.transect_endpoint_moved.connect(self._on_plan_endpoint_moved)
+        layout.addWidget(self._plan_map, 1)
+        map_row = QHBoxLayout()
+        self._map_place_btn = QToolButton()
+        self._map_place_btn.setText("Set on map")
+        self._map_place_btn.setCheckable(True)
+        self._map_place_btn.setToolTip(
+            "Click the map to place the start point, then the end point. "
+            "Drag the selected transect's endpoints to adjust them."
+        )
+        map_row.addWidget(self._map_place_btn)
+        map_row.addStretch(1)
+        layout.addLayout(map_row)
+
         transects_group = QGroupBox("Transects")
         group_layout = QVBoxLayout(transects_group)
         self._transect_list = QListWidget()
@@ -135,6 +158,7 @@ class SurveyPlanMixin(MixinBase):
         self._transect_list.blockSignals(False)
         if selected_row >= 0:
             self._transect_list.setCurrentRow(selected_row)
+        self._refresh_plan_map()
 
     def _selected_transect_id(self) -> uuid.UUID | None:
         item = self._transect_list.currentItem()
@@ -160,6 +184,7 @@ class SurveyPlanMixin(MixinBase):
         self._tr_description.setText(transect.description)
         self._quick_entry_to_end = False
         self._refresh_geodesic_label()
+        self._refresh_plan_map()
 
     # --- Form handling ---
 
@@ -188,6 +213,11 @@ class SurveyPlanMixin(MixinBase):
         except ValueError as exc:
             self._status_label.setText(str(exc))
             return
+        self._apply_endpoint(lat, lon)
+        self._tr_quick_input.clear()
+
+    def _apply_endpoint(self, lat: float, lon: float) -> None:
+        """Fill the start point first, then the end point, alternating."""
         if self._quick_entry_to_end:
             self._tr_end_lat.setText(f"{lat:.6f}")
             self._tr_end_lon.setText(f"{lon:.6f}")
@@ -197,7 +227,6 @@ class SurveyPlanMixin(MixinBase):
             self._tr_start_lon.setText(f"{lon:.6f}")
             self._status_label.setText("Start point set, enter the end point.")
         self._quick_entry_to_end = not self._quick_entry_to_end
-        self._tr_quick_input.clear()
         self._refresh_geodesic_label()
 
     def _form_coordinates(self) -> tuple[float, float, float, float]:
@@ -316,6 +345,47 @@ class SurveyPlanMixin(MixinBase):
         transects = self._survey_store().list_transects()
         save_transects_csv(Path(path_str), transects)
         self._status_label.setText(f"Exported {len(transects)} transect(s).")
+
+    # --- Map ---
+
+    def _refresh_plan_map(self, fit: bool = False) -> None:
+        selected = self._transect_form_id
+        overlays = []
+        for transect in self._survey_store().list_transects():
+            overlays.append(OverlayTransect(
+                id=str(transect.id),
+                start=(transect.start_lat, transect.start_lon),
+                end=(transect.end_lat, transect.end_lon),
+                color=QColor(PRIMARY),
+                selected=transect.id == selected,
+            ))
+        self._plan_map.set_transects(overlays)
+        self._plan_map.set_editable(str(selected) if selected is not None else None)
+        if fit or not self._plan_map_fitted:
+            self._plan_map.fit_transects()
+            self._plan_map_fitted = bool(overlays)
+
+    def _on_plan_map_clicked(self, lat: float, lon: float) -> None:
+        if self._map_place_btn.isChecked():
+            self._apply_endpoint(lat, lon)
+
+    def _on_plan_map_transect_clicked(self, transect_id: str) -> None:
+        for row in range(self._transect_list.count()):
+            item = self._transect_list.item(row)
+            if str(item.data(Qt.ItemDataRole.UserRole)) == transect_id:
+                self._transect_list.setCurrentRow(row)
+                return
+
+    def _on_plan_endpoint_moved(self, transect_id: str, which: str, lat: float, lon: float) -> None:
+        if self._transect_form_id is None or str(self._transect_form_id) != transect_id:
+            return
+        if which == "start":
+            self._tr_start_lat.setText(f"{lat:.6f}")
+            self._tr_start_lon.setText(f"{lon:.6f}")
+        else:
+            self._tr_end_lat.setText(f"{lat:.6f}")
+            self._tr_end_lon.setText(f"{lon:.6f}")
+        self._on_transect_save()
 
     def _survey_data_changed(self) -> None:
         """Refresh survey views that mirror the store."""
