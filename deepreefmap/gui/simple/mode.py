@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QHBoxLayout,
     QLineEdit,
+    QMessageBox,
     QSpinBox,
     QStackedWidget,
     QToolButton,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from deepreefmap.survey.preset import save_user_preset
 from deepreefmap.survey.store import SURVEY_DB_NAME, SurveyStore
 
 logger = logging.getLogger(__name__)
@@ -107,8 +109,40 @@ class UiModeMixin(MixinBase):
         self._request_ui_mode("advanced" if self._ui_mode == "simple" else "simple")
 
     def _request_ui_mode(self, mode: str) -> None:
-        """User-initiated switch; _set_ui_mode applies it unconditionally."""
+        """User-initiated switch, carrying settings between the modes: entering
+        advanced expands the working preset into the run form; returning to
+        simple adopts and persists in-bounds tweaks as the new preset."""
+        if mode == self._ui_mode:
+            return
+        if mode == "simple":
+            offending = self._form_outside_simple_bounds()
+            if offending and not self._confirm_reset_for_simple(offending):
+                return
+            if offending:
+                self._reset_non_preset_fields()
+            preset = self._collect_preset_from_form()
+            self._survey_preset = preset
+            try:
+                save_user_preset(preset)
+            except OSError as exc:
+                logger.warning("Could not save the preset: %s", exc)
+                self._status_label.setText(f"Preset not saved: {exc}")
+            self._survey_preset_label.setText(self._survey_preset_summary())
+        else:
+            if self._survey_preset is not None:
+                self._populate_form_from_preset(self._survey_preset)
         self._set_ui_mode(mode)
+
+    def _confirm_reset_for_simple(self, offending: list[str]) -> bool:
+        listing = "\n".join(f"  {name}" for name in offending)
+        answer = QMessageBox.question(
+            self,
+            "Advanced settings differ",
+            "These settings have no place in simple mode and will be reset to "
+            f"their defaults:\n\n{listing}\n\nSwitch to simple mode?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _build_preview_toggle(self) -> QToolButton:
         self._preview_toggle_btn = QToolButton()
@@ -132,6 +166,9 @@ class UiModeMixin(MixinBase):
         mode = str(self._settings.value("ui_mode", "simple"))
         if mode not in UI_MODES:
             mode = "simple"
+        # Starting in advanced still shows what simple mode would run.
+        if mode == "advanced" and self._survey_preset is not None:
+            self._populate_form_from_preset(self._survey_preset)
         self._set_ui_mode(mode)
 
     def _set_ui_mode(self, mode: str) -> None:
