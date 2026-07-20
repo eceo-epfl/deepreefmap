@@ -62,14 +62,25 @@ class SimplePlanMixin(MixinBase):
         self._plan_map.transect_endpoint_moved.connect(self._on_plan_endpoint_moved)
         map_layout.addWidget(self._plan_map, 1)
         map_row = QHBoxLayout()
-        self._map_place_btn = QToolButton()
-        self._map_place_btn.setText("Set on map")
-        self._map_place_btn.setCheckable(True)
-        self._map_place_btn.setToolTip(
-            "Click the map to place the start point, then the end point. "
+        map_row.addWidget(QLabel("Set on map:"))
+        self._map_start_btn = QToolButton()
+        self._map_start_btn.setText("Start")
+        self._map_start_btn.setCheckable(True)
+        self._map_start_btn.setToolTip(
+            "Click the map to set the start point. "
             "Drag the selected transect's endpoints to adjust them."
         )
-        map_row.addWidget(self._map_place_btn)
+        self._map_end_btn = QToolButton()
+        self._map_end_btn.setText("End")
+        self._map_end_btn.setCheckable(True)
+        self._map_end_btn.setToolTip(
+            "Click the map to set the end point. "
+            "Drag the selected transect's endpoints to adjust them."
+        )
+        self._map_start_btn.toggled.connect(self._on_map_start_armed)
+        self._map_end_btn.toggled.connect(self._on_map_end_armed)
+        map_row.addWidget(self._map_start_btn)
+        map_row.addWidget(self._map_end_btn)
         map_row.addStretch(1)
         map_layout.addLayout(map_row)
 
@@ -121,7 +132,7 @@ class SimplePlanMixin(MixinBase):
         grid.addWidget(self._tr_end_lat, 3, 1)
         grid.addWidget(self._tr_end_lon, 3, 2)
         for edit in (self._tr_start_lat, self._tr_start_lon, self._tr_end_lat, self._tr_end_lon):
-            edit.editingFinished.connect(self._refresh_geodesic_label)
+            edit.editingFinished.connect(self._on_coords_edited)
 
         self._tr_length = QDoubleSpinBox()
         self._tr_length.setRange(0.0, 500.0)
@@ -237,17 +248,21 @@ class SimplePlanMixin(MixinBase):
         self._tr_quick_input.clear()
 
     def _apply_endpoint(self, lat: float, lon: float) -> None:
-        """Fill the start point first, then the end point, alternating."""
-        if self._quick_entry_to_end:
+        """Quick entry fills the start point first, then the end, alternating."""
+        self._set_endpoint("end" if self._quick_entry_to_end else "start", lat, lon)
+        self._quick_entry_to_end = not self._quick_entry_to_end
+
+    def _set_endpoint(self, which: str, lat: float, lon: float) -> None:
+        if which == "start":
+            self._tr_start_lat.setText(f"{lat:.6f}")
+            self._tr_start_lon.setText(f"{lon:.6f}")
+            self._status_label.setText("Start point set.")
+        else:
             self._tr_end_lat.setText(f"{lat:.6f}")
             self._tr_end_lon.setText(f"{lon:.6f}")
             self._status_label.setText("End point set.")
-        else:
-            self._tr_start_lat.setText(f"{lat:.6f}")
-            self._tr_start_lon.setText(f"{lon:.6f}")
-            self._status_label.setText("Start point set, enter the end point.")
-        self._quick_entry_to_end = not self._quick_entry_to_end
         self._refresh_geodesic_label()
+        self._refresh_plan_map()
 
     def _form_coordinates(self) -> tuple[float, float, float, float]:
         values = []
@@ -265,6 +280,10 @@ class SimplePlanMixin(MixinBase):
             except ValueError:
                 raise ValueError(f"Invalid {label}: {text}") from None
         return values[0], values[1], values[2], values[3]
+
+    def _on_coords_edited(self) -> None:
+        self._refresh_geodesic_label()
+        self._refresh_plan_map()
 
     def _refresh_geodesic_label(self) -> None:
         try:
@@ -379,15 +398,41 @@ class SimplePlanMixin(MixinBase):
                 color=QColor(PRIMARY),
                 selected=transect.id == selected,
             ))
+        # An unsaved transect previews as soon as both endpoints are filled.
+        if selected is None:
+            try:
+                lat1, lon1, lat2, lon2 = self._form_coordinates()
+            except ValueError:
+                pass
+            else:
+                overlays.append(OverlayTransect(
+                    id="draft",
+                    start=(lat1, lon1),
+                    end=(lat2, lon2),
+                    color=QColor(PRIMARY),
+                    selected=True,
+                ))
         self._plan_map.set_transects(overlays)
         self._plan_map.set_editable(str(selected) if selected is not None else None)
         if fit or not self._plan_map_fitted:
             self._plan_map.fit_transects()
             self._plan_map_fitted = bool(overlays)
 
+    def _on_map_start_armed(self, on: bool) -> None:
+        if on:
+            self._map_end_btn.setChecked(False)
+
+    def _on_map_end_armed(self, on: bool) -> None:
+        if on:
+            self._map_start_btn.setChecked(False)
+
     def _on_plan_map_clicked(self, lat: float, lon: float) -> None:
-        if self._map_place_btn.isChecked():
-            self._apply_endpoint(lat, lon)
+        if self._map_start_btn.isChecked():
+            self._map_start_btn.setChecked(False)
+            self._set_endpoint("start", lat, lon)
+        elif self._map_end_btn.isChecked():
+            self._map_end_btn.setChecked(False)
+            self._set_endpoint("end", lat, lon)
 
     def _on_plan_map_transect_clicked(self, transect_id: str) -> None:
         for row in range(self._transect_list.count()):

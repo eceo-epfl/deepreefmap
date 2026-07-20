@@ -49,6 +49,49 @@ def test_quick_entry_rejects_garbage(plan_window):
     assert "Expected" in plan_window._status_label.text()
 
 
+def test_map_buttons_set_endpoints_one_shot(plan_window):
+    w = plan_window
+    w._map_start_btn.setChecked(True)
+    w._plan_map.map_clicked.emit(-17.5, 177.1)
+    assert w._tr_start_lat.text() == "-17.500000"
+    assert w._tr_start_lon.text() == "177.100000"
+    assert not w._map_start_btn.isChecked()
+    w._map_end_btn.setChecked(True)
+    w._plan_map.map_clicked.emit(-17.5005, 177.1005)
+    assert w._tr_end_lat.text() == "-17.500500"
+    assert not w._map_end_btn.isChecked()
+
+
+def test_map_buttons_are_mutually_exclusive(plan_window):
+    w = plan_window
+    w._map_start_btn.setChecked(True)
+    w._map_end_btn.setChecked(True)
+    assert not w._map_start_btn.isChecked()
+    w._map_start_btn.setChecked(True)
+    assert not w._map_end_btn.isChecked()
+
+
+def test_map_click_without_armed_button_is_ignored(plan_window):
+    w = plan_window
+    w._plan_map.map_clicked.emit(-17.5, 177.1)
+    assert w._tr_start_lat.text() == ""
+    assert w._tr_end_lat.text() == ""
+
+
+def test_draft_line_appears_once_both_endpoints_set(plan_window):
+    w = plan_window
+    w._map_start_btn.setChecked(True)
+    w._plan_map.map_clicked.emit(-17.5, 177.1)
+    assert not any(t.id == "draft" for t in w._plan_map._transects)
+    w._map_end_btn.setChecked(True)
+    w._plan_map.map_clicked.emit(-17.5005, 177.1005)
+    assert any(t.id == "draft" for t in w._plan_map._transects)
+    w._tr_name_input.setText("T1")
+    w._on_transect_save()
+    assert not any(t.id == "draft" for t in w._plan_map._transects)
+    assert len(w._plan_map._transects) == 1
+
+
 def test_duplicate_name_reports_and_keeps_one(plan_window):
     w = plan_window
     w._survey_store().add_transect(make_transect())

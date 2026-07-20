@@ -196,7 +196,8 @@ if TYPE_CHECKING:
         _preview_toggle_btn: QToolButton
         _plan_map: SlippyMapWidget
         _analysis_map: SlippyMapWidget
-        _map_place_btn: QToolButton
+        _map_start_btn: QToolButton
+        _map_end_btn: QToolButton
         _survey_batch_name: QLineEdit
         _survey_preset_label: QLabel
         _survey_pass_table: QTableWidget
