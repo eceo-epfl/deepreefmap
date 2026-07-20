@@ -1051,7 +1051,13 @@ class ViewerControlsMixin(MixinBase):
             if est is not None and ortho_cloud is not None:
                 est.set_points(len(ortho_cloud))
             cc = cast("ClassConfig", kwargs.get("classes_config") or self._classes_config)
-            if ortho_cloud is not None and len(ortho_cloud) > 1:
+            # The live ortho preview is a per-run nicety; skip the rebuild churn
+            # while a batch marches through passes.
+            if (
+                ortho_cloud is not None
+                and len(ortho_cloud) > 1
+                and not getattr(self, "_survey_worker_running", False)
+            ):
                 try:
                     if ortho_grid is None:
                         from deepreefmap.postproc.ortho_outputs import build_ortho_outputs
@@ -1082,6 +1088,12 @@ class ViewerControlsMixin(MixinBase):
             self._apply_progress(phase_key, message, current, total, flush=True)
         elif event == "mark_outputs":
             output_dir = kwargs.get("output_dir", "")
+            if getattr(self, "_survey_worker_running", False):
+                # Mid-batch pass completion: record it and keep the batch view;
+                # the results/VIEWING transition belongs to single runs.
+                self._status_label.setText(f"Outputs saved to {output_dir}")
+                self._refresh_survey_pass_statuses()
+                return
             self._status_label.setText(f"Outputs saved to {output_dir}")
             self._reset_progress_bars()
             self._set_form_enabled(True)
@@ -1107,6 +1119,11 @@ class ViewerControlsMixin(MixinBase):
         elif event == "fail_run":
             error = kwargs.get("error_message", "unknown error")
             self._status_label.setText(f"Failed: {error}")
+            if getattr(self, "_survey_worker_running", False):
+                # The batch worker records the failure and moves on to the
+                # next pass; do not drop out of RUNNING.
+                self._refresh_survey_pass_statuses()
+                return
             self._reset_progress_bars()
             self._set_form_enabled(True)
             self._end_run_controls()

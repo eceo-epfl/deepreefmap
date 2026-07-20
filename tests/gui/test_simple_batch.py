@@ -90,6 +90,7 @@ def test_run_batch_records_success_and_links_manifest(
 
     assert len(calls) == 1
     kwargs = calls[0]
+    assert kwargs["viewer"] is batch_window._viewer
     assert kwargs["fps"] == 5
     assert kwargs["begin_s"] == 0.0
     assert kwargs["end_s"] == 60.0
@@ -103,6 +104,21 @@ def test_run_batch_records_success_and_links_manifest(
     assert not batch_window._survey_start_btn.isEnabled()
     assert "0" in batch_window._survey_start_btn.text()
     assert batch_window._survey_pass_table.item(0, _COL_STATUS).text() == "succeeded"
+
+
+def test_batch_lands_on_analysis_when_done(batch_window, tmp_path, monkeypatch, qapp):
+    monkeypatch.setattr(
+        "deepreefmap.pipeline.orchestrator.run_reconstruction", lambda **k: None
+    )
+    add_video(batch_window, tmp_path, monkeypatch)
+    assign_transect(batch_window, 0)
+    batch_window._on_survey_start()
+    assert batch_window._app_mode == "RUNNING"
+    assert batch_window._simple_stack.currentIndex() == 1
+    batch_window._pipeline_thread.join(timeout=10)
+    qapp.processEvents()
+    assert batch_window._app_mode == "SETUP"
+    assert batch_window._simple_stack.currentIndex() == 2
 
 
 def test_failed_run_keeps_pass_remaining(batch_window, tmp_path, monkeypatch, qapp):

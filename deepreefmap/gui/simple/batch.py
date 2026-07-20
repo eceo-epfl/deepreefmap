@@ -437,6 +437,7 @@ class SimpleBatchMixin(MixinBase):
         self._survey_start_btn.setEnabled(False)
         self._survey_stop_btn.setEnabled(True)
         self._refresh_survey_pass_statuses()
+        self._set_app_mode("RUNNING")
         out_root = Path(self._out_root_input.text()).expanduser()
         self._pipeline_thread = threading.Thread(
             target=self._run_survey_worker,
@@ -474,7 +475,7 @@ class SimpleBatchMixin(MixinBase):
                     begin_s=job.pass_.begin_s,
                     end_s=job.pass_.end_s,
                     run_name=job.dir_name,
-                    viewer=None,
+                    viewer=self._viewer,
                     cancel_event=cancel_event,
                     manifest_extra={
                         "survey": survey_manifest_block(job.run, job.pass_, job.transect, batch)
@@ -493,11 +494,24 @@ class SimpleBatchMixin(MixinBase):
 
     def _on_survey_progress(self, index: int, total: int, name: str) -> None:
         self._status_label.setText(f"Batch: pass {index} of {total}: {name}")
+        # Fresh estimator per pass so the ETA does not blend across passes.
+        self._begin_progress(self._recon_model)
+        panel = getattr(self, "_progress_panel", None)
+        if panel is not None:
+            panel.set_batch_context(index, total, name)
         self._refresh_survey_pass_statuses()
 
     def _on_survey_done(self, ok: int, total: int, last_error: str) -> None:
         self._survey_worker_running = False
         self._survey_stop_btn.setEnabled(False)
+        self._reset_progress_bars()
+        panel = getattr(self, "_progress_panel", None)
+        if panel is not None:
+            panel.clear_batch_context()
+        self._set_app_mode("SETUP")
+        # A finished batch is best summarised by the analysis section.
+        if self._ui_mode == "simple":
+            self._set_simple_section("analyse")
         if ok == total:
             self._status_label.setText(f"Batch complete: {ok}/{total} pass(es) succeeded.")
         elif last_error:
