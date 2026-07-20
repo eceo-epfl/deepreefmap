@@ -3,6 +3,16 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _reset_ui_mode(qapp):
+    """Keep the persisted survey-mode toggle from leaking between tests."""
+    from PySide6.QtCore import QSettings
+
+    QSettings("ECEO", "deepreefmap").remove("ui_mode")
+    yield
+    QSettings("ECEO", "deepreefmap").remove("ui_mode")
+
+
 @pytest.fixture
 def make_window(qapp):
     """Factory building a fresh DeepReefMapWindow with the built-in classes.

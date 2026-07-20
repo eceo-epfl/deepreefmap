@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import logging
     import threading
+    import uuid
     from pathlib import Path
 
     from PySide6.QtCore import QSettings, QTimer, Signal
@@ -19,12 +20,14 @@ if TYPE_CHECKING:
         QGroupBox,
         QLabel,
         QLineEdit,
+        QListWidget,
         QProgressBar,
         QPushButton,
         QSlider,
         QSpinBox,
         QTabWidget,
         QToolButton,
+        QVBoxLayout,
         QWidget,
     )
 
@@ -40,6 +43,7 @@ if TYPE_CHECKING:
     from deepreefmap.pointcloud.grid_ortho import OrthoGrid
     from deepreefmap.gui.viewer.widget import QtPointCloudViewer
     from deepreefmap.gui.runs.sunburst import SunburstWidget
+    from deepreefmap.survey.store import SurveyStore
 
     # QWidget, not QMainWindow: DeepReefMapWindow lists QMainWindow first among
     # its bases, so a QMainWindow base here breaks C3 linearisation.
@@ -61,8 +65,15 @@ if TYPE_CHECKING:
         _active_run_manifest: dict | None
         _results_output_dir: Path | None
         _TAB_RUN: int
+        _TAB_PLAN: int
         _TAB_RESULTS: int
         _TAB_SYSTEM: int
+        _TAB_MODELS: int
+        _survey_tabs: list[int]
+        _ui_mode: str
+        _survey_store_obj: SurveyStore | None
+        _transect_form_id: uuid.UUID | None
+        _quick_entry_to_end: bool
         _downloading: set[str]
         _download_cancel_requested: set[str]
         _download_errors: dict[str, str]
@@ -167,6 +178,20 @@ if TYPE_CHECKING:
         _warnings_label: QLabel
         _warnings_label_running: QLabel
 
+        # --- survey mode -------------------------------------------------
+        _mode_toggle_btn: QToolButton
+        _transect_list: QListWidget
+        _tr_name_input: QLineEdit
+        _tr_quick_input: QLineEdit
+        _tr_start_lat: QLineEdit
+        _tr_start_lon: QLineEdit
+        _tr_end_lat: QLineEdit
+        _tr_end_lon: QLineEdit
+        _tr_length: QDoubleSpinBox
+        _tr_depth: QDoubleSpinBox
+        _tr_description: QLineEdit
+        _tr_geodesic_label: QLabel
+
         # --- combos / line edits -----------------------------------------
         _map_combo: QComboBox
         _past_runs_combo: QComboBox
@@ -249,6 +274,14 @@ if TYPE_CHECKING:
         def _reveal_legend_overlay(self) -> None: ...
         def _set_app_mode(self, mode: str) -> None: ...
         def _set_form_enabled(self, enabled: bool) -> None: ...
+        def _build_mode_toggle(self) -> QToolButton: ...
+        def _build_plan_tab(self, layout: QVBoxLayout) -> None: ...
+        def _init_ui_mode(self) -> None: ...
+        def _set_ui_mode(self, mode: str) -> None: ...
+        def _survey_home_tab(self) -> int: ...
+        def _survey_store(self) -> SurveyStore: ...
+        def _survey_data_changed(self) -> None: ...
+        def _refresh_transect_list(self, select_id: uuid.UUID | None = None) -> None: ...
         def _set_log_panel_visible(self, visible: bool) -> None: ...
         def _set_ortho_sources(
             self,

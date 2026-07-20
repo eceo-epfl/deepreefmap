@@ -32,10 +32,9 @@ class ViewerControlsMixin(MixinBase):
 
     def _set_app_mode(self, mode: str) -> None:
         """Switch app mode to SETUP / RUNNING / VIEWING."""
-        if mode == "SETUP":
-            target_tab = self._TAB_RUN
-        elif mode == "RUNNING":
-            target_tab = self._TAB_RUN
+        simple = getattr(self, "_ui_mode", "advanced") == "simple"
+        if mode in ("SETUP", "RUNNING"):
+            target_tab = self._survey_home_tab() if simple else self._TAB_RUN
         elif mode == "VIEWING":
             target_tab = self._TAB_RESULTS
         else:
