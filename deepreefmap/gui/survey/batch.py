@@ -504,6 +504,7 @@ class SurveyBatchMixin(MixinBase):
         self._refresh_survey_pass_statuses()
         self._recompute_survey_start()
         self._refresh_past_runs_combo()
+        self._refresh_survey_analysis()
 
     def _on_survey_stop(self) -> None:
         if self._survey_cancel_event is not None:

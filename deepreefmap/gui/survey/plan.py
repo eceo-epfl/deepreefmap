@@ -320,3 +320,4 @@ class SurveyPlanMixin(MixinBase):
     def _survey_data_changed(self) -> None:
         """Refresh survey views that mirror the store."""
         self._refresh_survey_transect_combos()
+        self._refresh_survey_analysis()

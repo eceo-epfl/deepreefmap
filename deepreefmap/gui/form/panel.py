@@ -132,9 +132,15 @@ class FormPanelMixin(MixinBase):
         layout = QVBoxLayout(panel)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        setup_layout, plan_layout, survey_layout, viewer_layout, models_layout, system_layout = (
-            self._build_sidebar_tabs(layout)
-        )
+        (
+            setup_layout,
+            plan_layout,
+            survey_layout,
+            analysis_layout,
+            viewer_layout,
+            models_layout,
+            system_layout,
+        ) = self._build_sidebar_tabs(layout)
 
         self._build_deferred_top_bar_widgets(setup_layout)
         self._build_input_group(setup_layout, profiles)
@@ -152,6 +158,7 @@ class FormPanelMixin(MixinBase):
         self._build_updates_section(system_layout)
         self._build_plan_tab(plan_layout)
         self._build_survey_batch_tab(survey_layout)
+        self._build_survey_analysis_tab(analysis_layout)
 
         # Start in SETUP, no run loaded yet. The mode flips to RUNNING in
         # _begin_pipeline_run and to VIEWING when a past run is selected or a
@@ -180,9 +187,7 @@ class FormPanelMixin(MixinBase):
         self._form_preferred_width = fm.horizontalAdvance("0") * 34 + 150
         return scroll
 
-    def _build_sidebar_tabs(
-        self, layout: QVBoxLayout
-    ) -> tuple[QVBoxLayout, QVBoxLayout, QVBoxLayout, QVBoxLayout, QVBoxLayout, QVBoxLayout]:
+    def _build_sidebar_tabs(self, layout: QVBoxLayout) -> tuple[QVBoxLayout, ...]:
         # Sidebar tabs: Run (setup form / live log), Plan (survey transects,
         # shown in survey mode only), Results (viewer controls + results panel
         # for a loaded run), Models (HF auth + per-model download/delete),
@@ -191,11 +196,12 @@ class FormPanelMixin(MixinBase):
         self._TAB_RUN = 0
         self._TAB_PLAN = 1
         self._TAB_SURVEY = 2
-        self._TAB_RESULTS = 3
-        self._TAB_MODELS = 4
+        self._TAB_ANALYSIS = 3
+        self._TAB_RESULTS = 4
+        self._TAB_MODELS = 5
         # System hosts both the live machine gauges and the updates section.
-        self._TAB_SYSTEM = 5
-        self._survey_tabs = [self._TAB_PLAN, self._TAB_SURVEY]
+        self._TAB_SYSTEM = 6
+        self._survey_tabs = [self._TAB_PLAN, self._TAB_SURVEY, self._TAB_ANALYSIS]
         self._sidebar_tabs = QTabWidget()
         # Tabs expand to share the panel width equally so labels of different
         # length (Run / Results / Models / Updates) end up the same visible width.
@@ -214,6 +220,9 @@ class FormPanelMixin(MixinBase):
         self._survey_tab = QWidget()
         survey_layout = QVBoxLayout(self._survey_tab)
         survey_layout.setContentsMargins(4, 6, 4, 4)
+        self._analysis_tab = QWidget()
+        analysis_layout = QVBoxLayout(self._analysis_tab)
+        analysis_layout.setContentsMargins(4, 6, 4, 4)
         self._viewer_tab = QWidget()
         viewer_layout = QVBoxLayout(self._viewer_tab)
         viewer_layout.setContentsMargins(4, 6, 4, 4)
@@ -230,6 +239,7 @@ class FormPanelMixin(MixinBase):
         self._sidebar_tabs.addTab(self._run_tab, "Run")
         self._sidebar_tabs.addTab(self._plan_tab, "Plan")
         self._sidebar_tabs.addTab(self._survey_tab, "Batch")
+        self._sidebar_tabs.addTab(self._analysis_tab, "Analysis")
         self._sidebar_tabs.addTab(self._viewer_tab, "Results")
         self._sidebar_tabs.addTab(self._models_tab, "Models")
         self._sidebar_tabs.addTab(self._system_tab, "System")
@@ -248,7 +258,15 @@ class FormPanelMixin(MixinBase):
         setup_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         setup_layout.setContentsMargins(0, 0, 0, 0)
         run_layout.addWidget(self._setup_page)
-        return setup_layout, plan_layout, survey_layout, viewer_layout, models_layout, system_layout
+        return (
+            setup_layout,
+            plan_layout,
+            survey_layout,
+            analysis_layout,
+            viewer_layout,
+            models_layout,
+            system_layout,
+        )
 
     def _build_deferred_top_bar_widgets(self, setup_layout: QVBoxLayout) -> None:
         # These widgets are owned by the top toolbar but constructed here so

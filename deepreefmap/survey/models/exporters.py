@@ -42,6 +42,33 @@ def save_transects_csv(path: Path, transects: Iterable[Transect]) -> None:
             ])
 
 
+def save_repeatability_csv(
+    path: Path,
+    labels: list[str],
+    stats: Mapping[str, Mapping[str, float]],
+    covers: list[Any],
+) -> None:
+    """Per-class repeatability stats plus one fraction column per pass."""
+    with path.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            ["class", "mean_fraction", "std", "cv", "range"]
+            + [c.run_dir_name for c in covers]
+        )
+        for label in labels:
+            entry = stats.get(label, {})
+            writer.writerow(
+                [
+                    label,
+                    f"{entry.get('mean', 0.0):.6f}",
+                    f"{entry.get('std', 0.0):.6f}",
+                    f"{entry.get('cv', 0.0):.4f}",
+                    f"{entry.get('range', 0.0):.6f}",
+                ]
+                + [f"{c.cover.get(label, 0.0):.6f}" for c in covers]
+            )
+
+
 def save_survey_json(path: Path, document: Mapping[str, Any]) -> None:
     path.write_text(json.dumps(document, indent=2))
 

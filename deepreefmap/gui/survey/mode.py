@@ -57,6 +57,7 @@ class UiModeMixin(MixinBase):
         if simple:
             self._refresh_transect_list()
             self._refresh_survey_batch_tab()
+            self._refresh_survey_analysis()
         tabs.setCurrentIndex(self._survey_home_tab() if simple else self._TAB_RUN)
 
     def _survey_home_tab(self) -> int:

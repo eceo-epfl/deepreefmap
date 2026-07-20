@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from deepreefmap.pointcloud.grid_ortho import OrthoGrid
     from deepreefmap.gui.viewer.widget import QtPointCloudViewer
     from deepreefmap.gui.runs.sunburst import SunburstWidget
+    from deepreefmap.gui.survey.charts import GroupedBarChart
     from deepreefmap.survey.models import SurveyBatch
     from deepreefmap.survey.store import SurveyStore
 
@@ -69,6 +70,7 @@ if TYPE_CHECKING:
         _TAB_RUN: int
         _TAB_PLAN: int
         _TAB_SURVEY: int
+        _TAB_ANALYSIS: int
         _TAB_RESULTS: int
         _TAB_SYSTEM: int
         _TAB_MODELS: int
@@ -83,6 +85,7 @@ if TYPE_CHECKING:
         _survey_preset: dict | None
         _survey_cancel_event: threading.Event | None
         _survey_worker_running: bool
+        _analysis_covers: list
         _downloading: set[str]
         _download_cancel_requested: set[str]
         _download_errors: dict[str, str]
@@ -194,6 +197,12 @@ if TYPE_CHECKING:
         _survey_pass_table: QTableWidget
         _survey_start_btn: QPushButton
         _survey_stop_btn: QPushButton
+        _analysis_transect_combo: QComboBox
+        _analysis_level_combo: QComboBox
+        _analysis_chart: GroupedBarChart
+        _analysis_stats_table: QTableWidget
+        _analysis_repro_label: QLabel
+        _analysis_runs_list: QListWidget
         _transect_list: QListWidget
         _tr_name_input: QLineEdit
         _tr_quick_input: QLineEdit
@@ -299,6 +308,8 @@ if TYPE_CHECKING:
         def _survey_data_changed(self) -> None: ...
         def _refresh_transect_list(self, select_id: uuid.UUID | None = None) -> None: ...
         def _build_survey_batch_tab(self, layout: QVBoxLayout) -> None: ...
+        def _build_survey_analysis_tab(self, layout: QVBoxLayout) -> None: ...
+        def _refresh_survey_analysis(self) -> None: ...
         def _refresh_survey_batch_tab(self) -> None: ...
         def _refresh_survey_transect_combos(self) -> None: ...
         def _refresh_survey_pass_statuses(self) -> None: ...

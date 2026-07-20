@@ -26,6 +26,7 @@ from deepreefmap.gui.models.management import ModelManagementMixin
 from deepreefmap.gui.runs.past_runs import PastRunsMixin
 from deepreefmap.gui.runs.results import ResultsMixin
 from deepreefmap.gui.runs.loading import RunLoadingMixin
+from deepreefmap.gui.survey.analysis import SurveyAnalysisMixin
 from deepreefmap.gui.survey.batch import SurveyBatchMixin
 from deepreefmap.gui.survey.mode import UiModeMixin
 from deepreefmap.gui.survey.plan import SurveyPlanMixin
@@ -46,6 +47,7 @@ class DeepReefMapWindow(
     ProgressBarsMixin,
     ResultsMixin,
     RunLoadingMixin,
+    SurveyAnalysisMixin,
     SurveyBatchMixin,
     SurveyPlanMixin,
     SystemPanelMixin,
