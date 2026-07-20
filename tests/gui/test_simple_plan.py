@@ -27,21 +27,39 @@ def enter_quick(window, text):
     window._on_quick_entry()
 
 
-def test_save_transect_via_quick_entry(plan_window):
+def test_transect_autosaves_once_complete(plan_window):
     w = plan_window
     w._tr_name_input.setText("T1")
     enter_quick(w, "-17.5 177.1")
+    assert w._survey_store().list_transects() == []
     enter_quick(w, "-17.5005, 177.1005")
-    w._tr_length.setValue(50.0)
-    w._on_transect_save()
     transects = w._survey_store().list_transects()
     assert len(transects) == 1
     assert transects[0].name == "T1"
     assert transects[0].start_lat == -17.5
     assert transects[0].end_lon == 177.1005
-    assert transects[0].length_m == 50.0
+    w._tr_length.setValue(50.0)
+    w._maybe_autosave()
+    assert w._survey_store().list_transects()[0].length_m == 50.0
     assert w._transect_list.count() == 1
     assert "Geodesic" in w._tr_geodesic_label.text()
+
+
+def test_draft_row_tracks_typing_before_save(plan_window):
+    from PySide6.QtCore import Qt
+
+    w = plan_window
+    w._refresh_transect_list()
+    assert w._transect_list.count() == 0
+    w._tr_name_input.setText("Nor")
+    assert w._transect_list.count() == 1
+    item = w._transect_list.item(0)
+    assert item.data(Qt.ItemDataRole.UserRole) == "draft"
+    assert "Nor" in item.text()
+    assert w._transect_list.currentRow() == 0
+    w._tr_name_input.setText("North reef")
+    assert "North reef" in w._transect_list.item(0).text()
+    assert w._survey_store().list_transects() == []
 
 
 def test_quick_entry_rejects_garbage(plan_window):

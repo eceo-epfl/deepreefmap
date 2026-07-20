@@ -137,12 +137,20 @@ class SimplePlanMixin(MixinBase):
 
         self._tr_geodesic_label = QLabel("")
         self._tr_geodesic_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        grid.addWidget(self._tr_geodesic_label, 6, 0, 1, 3)
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(self._on_transect_save)
-        grid.addWidget(save_btn, 6, 3)
+        grid.addWidget(self._tr_geodesic_label, 6, 0, 1, 4)
         layout.addWidget(details)
         layout.addStretch(1)
+
+        # No Save button: a new transect shows as a live draft row in the list
+        # and commits itself the moment name and both endpoints are complete;
+        # later edits commit on field exit.
+        self._tr_name_input.textChanged.connect(self._on_draft_changed)
+        self._tr_name_input.editingFinished.connect(self._maybe_autosave)
+        for edit in (self._tr_start_lat, self._tr_start_lon, self._tr_end_lat, self._tr_end_lon):
+            edit.textChanged.connect(self._on_draft_changed)
+        self._tr_length.editingFinished.connect(self._maybe_autosave)
+        self._tr_depth.editingFinished.connect(self._maybe_autosave)
+        self._tr_description.editingFinished.connect(self._maybe_autosave)
 
         page.addWidget(map_pane)
         page.addWidget(side_pane)
@@ -168,16 +176,59 @@ class SimplePlanMixin(MixinBase):
             self._transect_list.addItem(item)
             if transect.id == select_id:
                 selected_row = row
+        draft_label = self._draft_label()
+        if draft_label is not None:
+            item = QListWidgetItem(draft_label)
+            item.setData(Qt.ItemDataRole.UserRole, "draft")
+            font = item.font()
+            font.setItalic(True)
+            item.setFont(font)
+            self._transect_list.addItem(item)
+            if selected_row < 0:
+                selected_row = self._transect_list.count() - 1
         self._transect_list.blockSignals(False)
         if selected_row >= 0:
             self._transect_list.setCurrentRow(selected_row)
         self._refresh_plan_map()
 
+    def _draft_label(self) -> str | None:
+        """List label for the transect being composed, before it exists in the
+        store; None once saved or while the form is empty."""
+        if self._transect_form_id is not None:
+            return None
+        name = self._tr_name_input.text().strip()
+        lat = self._tr_start_lat.text().strip()
+        lon = self._tr_start_lon.text().strip()
+        if not (name or lat or lon):
+            return None
+        label = name or "New transect"
+        if lat and lon:
+            label += f"  ({lat}, {lon})"
+        return label
+
+    def _on_draft_changed(self) -> None:
+        if self._transect_form_id is None:
+            self._refresh_transect_list()
+
+    def _maybe_autosave(self) -> None:
+        """Commit silently once the form is complete; incomplete forms stay a
+        draft without nagging."""
+        if not self._tr_name_input.text().strip():
+            return
+        try:
+            self._form_coordinates()
+        except ValueError:
+            return
+        self._on_transect_save()
+
     def _selected_transect_id(self) -> uuid.UUID | None:
         item = self._transect_list.currentItem()
         if item is None:
             return None
-        return uuid.UUID(str(item.data(Qt.ItemDataRole.UserRole)))
+        data = str(item.data(Qt.ItemDataRole.UserRole))
+        if data == "draft":
+            return None
+        return uuid.UUID(data)
 
     def _on_transect_selected(self) -> None:
         transect_id = self._selected_transect_id()
@@ -245,6 +296,7 @@ class SimplePlanMixin(MixinBase):
             self._status_label.setText("End point set.")
         self._refresh_geodesic_label()
         self._refresh_plan_map()
+        self._maybe_autosave()
 
     def _form_coordinates(self) -> tuple[float, float, float, float]:
         values = []
@@ -266,6 +318,7 @@ class SimplePlanMixin(MixinBase):
     def _on_coords_edited(self) -> None:
         self._refresh_geodesic_label()
         self._refresh_plan_map()
+        self._maybe_autosave()
 
     def _refresh_geodesic_label(self) -> None:
         try:
