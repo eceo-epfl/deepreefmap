@@ -1,6 +1,21 @@
 import pytest
 
-from deepreefmap.survey.preset import PRESET_KEYS, load_survey_preset, parse_preset
+from deepreefmap.survey.preset import (
+    PRESET_KEYS,
+    load_survey_preset,
+    parse_preset,
+    save_user_preset,
+)
+
+SAMPLE = {
+    "fps": 4,
+    "segmentation_name": "segformer-b2",
+    "mapping_name": "scsfmlearner",
+    "camera_profile_name": "gopro_hero_10",
+    "transect_crop_width": None,
+    "enable_tsdf": False,
+    "skip_segmentation": True,
+}
 
 VALID = """
 schema_version: 1
@@ -38,3 +53,20 @@ def test_parse_rejects_missing_and_unknown_keys():
         parse_preset("schema_version: 1\nfps: 5\n")
     with pytest.raises(ValueError, match="unknown"):
         parse_preset(VALID + "surprise: true\n")
+
+
+def test_save_user_preset_round_trips(tmp_path, monkeypatch):
+    target = tmp_path / "nested" / "survey_preset.yaml"
+    monkeypatch.setattr("deepreefmap.survey.preset.survey_preset_path", lambda: target)
+    monkeypatch.delenv("DEEPREEFMAP_SURVEY_PRESET", raising=False)
+    path = save_user_preset(SAMPLE)
+    assert path == target
+    assert not target.with_name(target.name + ".tmp").exists()
+    assert load_survey_preset() == SAMPLE
+
+
+def test_save_user_preset_rejects_bad_keys():
+    with pytest.raises(ValueError, match="unknown"):
+        save_user_preset({**SAMPLE, "surprise": True})
+    with pytest.raises(ValueError, match="missing"):
+        save_user_preset({k: v for k, v in SAMPLE.items() if k != "fps"})

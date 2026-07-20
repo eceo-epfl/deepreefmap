@@ -133,6 +133,7 @@ class DeepReefMapWindow(
         # Build the form first so widgets it references (status_label, etc.)
         # are constructed before we wire them into the top toolbar.
         form_panel = self._build_form_panel()
+        self._capture_form_defaults()
         top_bar = self._build_top_bar()
         log_panel = self._build_log_panel()
 

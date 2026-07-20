@@ -38,6 +38,23 @@ def load_survey_preset() -> dict[str, Any]:
     return parse_preset(bundled.read_text())
 
 
+def save_user_preset(preset: dict[str, Any]) -> Path:
+    """Write the preset to the per-machine override read back by load_survey_preset."""
+    unknown = set(preset) - PRESET_KEYS
+    if unknown:
+        raise ValueError(f"Survey preset has unknown keys: {', '.join(sorted(unknown))}")
+    missing = PRESET_KEYS - set(preset)
+    if missing:
+        raise ValueError(f"Survey preset is missing keys: {', '.join(sorted(missing))}")
+    path = survey_preset_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = yaml.safe_dump({"schema_version": PRESET_SCHEMA_VERSION, **preset}, sort_keys=False)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+    return path
+
+
 def parse_preset(text: str) -> dict[str, Any]:
     data = yaml.safe_load(text)
     if not isinstance(data, dict):
