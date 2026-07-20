@@ -5,16 +5,21 @@ from __future__ import annotations
 from deepreefmap.gui.core.window_protocol import MixinBase
 
 import logging
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QHBoxLayout,
     QLineEdit,
     QSpinBox,
+    QStackedWidget,
     QToolButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -86,17 +91,24 @@ class UiModeMixin(MixinBase):
 
     _survey_store_obj: SurveyStore | None = None
     _form_defaults: dict[str, Any]
+    _simple_nav_buttons: dict[str, QToolButton]
+    _work_area_state: tuple[bool, bool] | None = None
 
     def _build_mode_toggle(self) -> QToolButton:
+        # Labelled with the mode it switches to, not the current one.
         self._mode_toggle_btn = QToolButton()
-        self._mode_toggle_btn.setText("Simple")
-        self._mode_toggle_btn.setCheckable(True)
         self._mode_toggle_btn.setToolTip(
-            "Simple mode: plan transects, batch a day's videos with preset settings, "
-            "and compare repeated passes. Uncheck for the full run form."
+            "Switch between the simple survey workflow and the full run form."
         )
-        self._mode_toggle_btn.toggled.connect(self._on_ui_mode_toggled)
+        self._mode_toggle_btn.clicked.connect(self._on_mode_toggle_clicked)
         return self._mode_toggle_btn
+
+    def _on_mode_toggle_clicked(self) -> None:
+        self._request_ui_mode("advanced" if self._ui_mode == "simple" else "simple")
+
+    def _request_ui_mode(self, mode: str) -> None:
+        """User-initiated switch; _set_ui_mode applies it unconditionally."""
+        self._set_ui_mode(mode)
 
     def _build_preview_toggle(self) -> QToolButton:
         self._preview_toggle_btn = QToolButton()
@@ -117,35 +129,98 @@ class UiModeMixin(MixinBase):
         self._viewer.set_canvas_allowed(checked)
 
     def _init_ui_mode(self) -> None:
-        mode = str(self._settings.value("ui_mode", "advanced"))
+        mode = str(self._settings.value("ui_mode", "simple"))
         if mode not in UI_MODES:
-            mode = "advanced"
-        # setChecked only fires the toggled slot on a change, so apply directly too.
-        self._mode_toggle_btn.setChecked(mode == "simple")
+            mode = "simple"
         self._set_ui_mode(mode)
-
-    def _on_ui_mode_toggled(self, checked: bool) -> None:
-        self._set_ui_mode("simple" if checked else "advanced")
 
     def _set_ui_mode(self, mode: str) -> None:
         if mode not in UI_MODES:
             raise ValueError(f"Unknown ui mode: {mode!r}")
         self._ui_mode = mode
         simple = mode == "simple"
-        tabs = self._sidebar_tabs
-        tabs.setTabVisible(self._TAB_RUN, not simple)
-        tabs.setTabVisible(self._TAB_MODELS, not simple)
-        for index in self._survey_tabs:
-            tabs.setTabVisible(index, simple)
+        self._left_stack.setCurrentIndex(1 if simple else 0)
+        self._mode_toggle_btn.setText("Advanced" if simple else "Simple")
+        # Advanced run controls have no place in simple mode; batches start
+        # from the Run section.
+        for widget in (self._new_run_btn, self._start_btn, self._pause_btn, self._spinner_stop):
+            widget.setVisible(not simple)
+        if simple:
+            self._memory_warn_icon.setVisible(False)
+        else:
+            self._update_memory_profile_warning()
         self._settings.setValue("ui_mode", mode)
         if simple:
             self._refresh_transect_list()
             self._refresh_survey_batch_tab()
             self._refresh_survey_analysis()
-        tabs.setCurrentIndex(self._survey_home_tab() if simple else self._TAB_RUN)
+        else:
+            viewing = getattr(self, "_app_mode", "SETUP") == "VIEWING"
+            self._sidebar_tabs.setCurrentIndex(self._TAB_RESULTS if viewing else self._TAB_RUN)
+        self._update_work_area()
 
-    def _survey_home_tab(self) -> int:
-        return self._TAB_SURVEY
+    def _build_simple_shell(self) -> QWidget:
+        """Full-page simple mode: a large Plan / Run / Analyse nav over a stack."""
+        shell = QWidget()
+        layout = QVBoxLayout(shell)
+        layout.setContentsMargins(8, 8, 8, 8)
+        nav = QHBoxLayout()
+        nav.setSpacing(6)
+        self._simple_stack = QStackedWidget()
+        self._simple_nav_buttons = {}
+        group = QButtonGroup(shell)
+        group.setExclusive(True)
+        for name, title, page in (
+            ("plan", "Plan", self._build_plan_page()),
+            ("run", "Run", self._build_simple_run_page()),
+            ("analyse", "Analyse", self._build_analysis_page()),
+        ):
+            btn = QToolButton()
+            btn.setText(title)
+            btn.setCheckable(True)
+            btn.setStyleSheet(
+                "QToolButton { font-size: 15px; font-weight: bold; padding: 6px 20px; }"
+            )
+            group.addButton(btn)
+            nav.addWidget(btn)
+            index = self._simple_stack.addWidget(page)
+            btn.toggled.connect(partial(self._on_simple_nav_toggled, index))
+            self._simple_nav_buttons[name] = btn
+        nav.addStretch(1)
+        layout.addLayout(nav)
+        layout.addWidget(self._simple_stack, 1)
+        self._simple_nav_buttons["plan"].setChecked(True)
+        return shell
+
+    def _on_simple_nav_toggled(self, index: int, checked: bool) -> None:
+        if checked:
+            self._simple_stack.setCurrentIndex(index)
+
+    def _set_simple_section(self, name: str) -> None:
+        self._simple_nav_buttons[name].setChecked(True)
+
+    def _update_work_area(self) -> None:
+        """The one place that decides whether the viewer pane shows and how the
+        work splitter divides, from (ui_mode, app_mode)."""
+        if not hasattr(self, "_work_hsplitter"):
+            return
+        simple = getattr(self, "_ui_mode", "advanced") == "simple"
+        app_mode = getattr(self, "_app_mode", "SETUP")
+        show_viewer = not simple or app_mode in ("RUNNING", "VIEWING")
+        state = (simple, show_viewer)
+        if getattr(self, "_work_area_state", None) == state:
+            return
+        self._work_area_state = state
+        self._viewer.setVisible(show_viewer)
+        total = max(self._work_hsplitter.width(), 800)
+        if not show_viewer:
+            self._work_hsplitter.setSizes([total, 0])
+        elif simple:
+            left = int(total * 0.45)
+            self._work_hsplitter.setSizes([left, total - left])
+        else:
+            left = min(self._form_preferred_width, total // 2)
+            self._work_hsplitter.setSizes([left, total - left])
 
     def _capture_form_defaults(self) -> None:
         """Snapshot fresh-window values of the non-preset fields; the simple-mode

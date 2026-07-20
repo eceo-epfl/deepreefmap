@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from deepreefmap.gui.form.video_scrub import VideoScrubDialog
@@ -90,7 +91,11 @@ class _SurveyJob:
 class SimpleBatchMixin(MixinBase):
     """DeepReefMapWindow methods for the survey batch tab."""
 
-    def _build_survey_batch_tab(self, layout: QVBoxLayout) -> None:
+    def _build_simple_run_page(self) -> QWidget:
+        """Full-page Run section: the day's passes and the batch controls."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
         self._survey_rows = []
         self._survey_transects = []
         self._survey_batch = None
@@ -149,6 +154,7 @@ class SimpleBatchMixin(MixinBase):
         run_buttons.addWidget(self._survey_start_btn, 1)
         run_buttons.addWidget(self._survey_stop_btn)
         layout.addLayout(run_buttons)
+        return page
 
     def _survey_preset_summary(self) -> str:
         if self._survey_preset is None:
@@ -400,9 +406,8 @@ class SimpleBatchMixin(MixinBase):
         if missing:
             self._survey_start_btn.setEnabled(False)
             self._status_label.setText(
-                f"Download {', '.join(missing)} in the Models tab before running."
+                f"Download {', '.join(missing)} first: switch to Advanced and open Models."
             )
-            self._sidebar_tabs.setTabVisible(self._TAB_MODELS, True)
             return
         self._survey_start_btn.setEnabled(bool(remaining))
 

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QSplitter,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -140,13 +141,20 @@ class DeepReefMapWindow(
         top_bar = self._build_top_bar()
         log_panel = self._build_log_panel()
 
+        # The left pane is either the advanced sidebar (page 0) or the simple
+        # full-page shell (page 1); _set_ui_mode flips the stack.
+        self._left_stack = QStackedWidget()
+        self._left_stack.addWidget(form_panel)
+        self._left_stack.addWidget(self._build_simple_shell())
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(form_panel)
+        splitter.addWidget(self._left_stack)
         splitter.addWidget(self._viewer)
         # Size the form pane to its DPI-aware content width, clamped to at most
         # half the window so the 3D viewport keeps the majority. Stretch factor
         # 0 then pins that width when the window grows, so the viewer absorbs the
-        # extra space rather than the form.
+        # extra space rather than the form. _update_work_area re-divides the
+        # splitter per mode.
         form_w = getattr(self, "_form_preferred_width", 440)
         form_w = max(360, min(form_w, self.width() // 2))
         splitter.setSizes([form_w, max(400, self.width() - form_w)])
@@ -154,6 +162,7 @@ class DeepReefMapWindow(
         splitter.setStretchFactor(1, 1)
         splitter.setChildrenCollapsible(True)
         splitter.setHandleWidth(6)
+        self._work_hsplitter = splitter
 
         # Vertical splitter places the live log as a togglable section at the
         # bottom of the window, alongside the form + 3D viewer above it. Hidden
@@ -192,6 +201,10 @@ class DeepReefMapWindow(
         central_layout.addWidget(self._run_meta_banner)
         central_layout.addWidget(self._central_vsplitter, 1)
         self.setCentralWidget(central)
+
+        # Apply the saved mode last: it flips the left stack and re-divides the
+        # splitter, so everything above must exist first.
+        self._init_ui_mode()
 
 
 

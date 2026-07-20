@@ -32,23 +32,28 @@ class ViewerControlsMixin(MixinBase):
 
     def _set_app_mode(self, mode: str) -> None:
         """Switch app mode to SETUP / RUNNING / VIEWING."""
-        simple = getattr(self, "_ui_mode", "advanced") == "simple"
-        if mode in ("SETUP", "RUNNING"):
-            target_tab = self._survey_home_tab() if simple else self._TAB_RUN
-        elif mode == "VIEWING":
-            target_tab = self._TAB_RESULTS
-        else:
+        if mode not in ("SETUP", "RUNNING", "VIEWING"):
             raise ValueError(f"Unknown app mode: {mode!r}")
         self._app_mode = mode
-        # Guarded because the very first _set_app_mode("SETUP") call happens
-        # inside _build_form_panel before the tab widget is constructed (only
-        # in unusual ordering); the production path constructs tabs first.
-        if hasattr(self, "_sidebar_tabs"):
-            self._sidebar_tabs.setCurrentIndex(target_tab)
+        simple = getattr(self, "_ui_mode", "advanced") == "simple"
+        if simple:
+            # RUNNING shows the pass table, VIEWING the analysis; SETUP leaves
+            # the user wherever they are.
+            if mode == "RUNNING":
+                self._set_simple_section("run")
+            elif mode == "VIEWING":
+                self._set_simple_section("analyse")
+        elif hasattr(self, "_sidebar_tabs"):
+            # Guarded because the very first _set_app_mode("SETUP") call happens
+            # inside _build_form_panel before the tab widget is constructed.
+            self._sidebar_tabs.setCurrentIndex(
+                self._TAB_RESULTS if mode == "VIEWING" else self._TAB_RUN
+            )
         # A loaded run with the canvas gated off would show an idle progress
         # panel; surface the cloud and let the user toggle it back off.
         if mode == "VIEWING" and hasattr(self, "_preview_toggle_btn"):
             self._preview_toggle_btn.setChecked(True)
+        self._update_work_area()
 
     def _refresh_run_warnings_view(self) -> None:
         """Keep the setup-form warning mirror in sync with the Results-tab one."""

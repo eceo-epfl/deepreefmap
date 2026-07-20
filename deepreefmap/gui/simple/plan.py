@@ -22,8 +22,10 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSplitter,
     QToolButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from deepreefmap.gui.core.theme import PRIMARY
@@ -47,12 +49,18 @@ class SimplePlanMixin(MixinBase):
     _quick_entry_to_end: bool = False
     _plan_map_fitted: bool = False
 
-    def _build_plan_tab(self, layout: QVBoxLayout) -> None:
+    def _build_plan_page(self) -> QWidget:
+        """Full-page Plan section: the map beside the transect list and details."""
+        page = QSplitter(Qt.Orientation.Horizontal)
+
+        map_pane = QWidget()
+        map_layout = QVBoxLayout(map_pane)
+        map_layout.setContentsMargins(0, 0, 0, 0)
         self._plan_map = SlippyMapWidget()
         self._plan_map.map_clicked.connect(self._on_plan_map_clicked)
         self._plan_map.transect_clicked.connect(self._on_plan_map_transect_clicked)
         self._plan_map.transect_endpoint_moved.connect(self._on_plan_endpoint_moved)
-        layout.addWidget(self._plan_map, 1)
+        map_layout.addWidget(self._plan_map, 1)
         map_row = QHBoxLayout()
         self._map_place_btn = QToolButton()
         self._map_place_btn.setText("Set on map")
@@ -63,7 +71,11 @@ class SimplePlanMixin(MixinBase):
         )
         map_row.addWidget(self._map_place_btn)
         map_row.addStretch(1)
-        layout.addLayout(map_row)
+        map_layout.addLayout(map_row)
+
+        side_pane = QWidget()
+        layout = QVBoxLayout(side_pane)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         transects_group = QGroupBox("Transects")
         group_layout = QVBoxLayout(transects_group)
@@ -137,8 +149,16 @@ class SimplePlanMixin(MixinBase):
         save_btn.clicked.connect(self._on_transect_save)
         grid.addWidget(save_btn, 6, 3)
         layout.addWidget(details)
-        # No list refresh here: opening the store creates survey.db under the
-        # output root, which should only happen once survey mode is entered.
+        layout.addStretch(1)
+
+        page.addWidget(map_pane)
+        page.addWidget(side_pane)
+        page.setStretchFactor(0, 1)
+        page.setStretchFactor(1, 0)
+        side_pane.setMinimumWidth(340)
+        # No list refresh here: refreshes happen when the simple mode is entered,
+        # so opening the store (which creates survey.db) waits until then.
+        return page
 
     # --- List handling ---
 

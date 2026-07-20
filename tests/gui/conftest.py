@@ -17,6 +17,22 @@ def _reset_ui_mode(qapp):
 
 
 @pytest.fixture(autouse=True)
+def _tmp_output_root(qapp, tmp_path):
+    """Point the persisted output root at a temp dir: windows open in simple
+    mode by default and create survey.db under the root at construction."""
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings("ECEO", "deepreefmap")
+    old = settings.value("output_root_dir")
+    settings.setValue("output_root_dir", str(tmp_path / "out"))
+    yield
+    if old is None:
+        settings.remove("output_root_dir")
+    else:
+        settings.setValue("output_root_dir", old)
+
+
+@pytest.fixture(autouse=True)
 def _offline_tiles(qapp):
     """Map widgets must never fetch tiles during tests."""
     from deepreefmap.gui.map.tile_cache import shared_tile_cache

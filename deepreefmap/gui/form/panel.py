@@ -134,9 +134,6 @@ class FormPanelMixin(MixinBase):
 
         (
             setup_layout,
-            plan_layout,
-            survey_layout,
-            analysis_layout,
             viewer_layout,
             models_layout,
             system_layout,
@@ -156,9 +153,6 @@ class FormPanelMixin(MixinBase):
         self._build_results_group(viewer_layout)
         self._build_models_tab(models_layout)
         self._build_updates_section(system_layout)
-        self._build_plan_tab(plan_layout)
-        self._build_survey_batch_tab(survey_layout)
-        self._build_survey_analysis_tab(analysis_layout)
 
         # Start in SETUP, no run loaded yet. The mode flips to RUNNING in
         # _begin_pipeline_run and to VIEWING when a past run is selected or a
@@ -188,20 +182,15 @@ class FormPanelMixin(MixinBase):
         return scroll
 
     def _build_sidebar_tabs(self, layout: QVBoxLayout) -> tuple[QVBoxLayout, ...]:
-        # Sidebar tabs: Run (setup form / live log), Plan (survey transects,
-        # shown in survey mode only), Results (viewer controls + results panel
-        # for a loaded run), Models (HF auth + per-model download/delete),
-        # System (machine gauges + updates). _set_ui_mode toggles visibility
-        # between the expert tabs and the survey tabs.
+        # Advanced-mode sidebar tabs: Run (setup form / live log), Results
+        # (viewer controls + results panel for a loaded run), Models (HF auth +
+        # per-model download/delete), System (machine gauges + updates). Simple
+        # mode replaces this whole panel with full-page sections.
         self._TAB_RUN = 0
-        self._TAB_PLAN = 1
-        self._TAB_SURVEY = 2
-        self._TAB_ANALYSIS = 3
-        self._TAB_RESULTS = 4
-        self._TAB_MODELS = 5
+        self._TAB_RESULTS = 1
+        self._TAB_MODELS = 2
         # System hosts both the live machine gauges and the updates section.
-        self._TAB_SYSTEM = 6
-        self._survey_tabs = [self._TAB_PLAN, self._TAB_SURVEY, self._TAB_ANALYSIS]
+        self._TAB_SYSTEM = 3
         self._sidebar_tabs = QTabWidget()
         # Tabs expand to share the panel width equally so labels of different
         # length (Run / Results / Models / Updates) end up the same visible width.
@@ -213,16 +202,6 @@ class FormPanelMixin(MixinBase):
         run_layout = QVBoxLayout(self._run_tab)
         run_layout.setContentsMargins(4, 6, 4, 4)
         run_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self._plan_tab = QWidget()
-        plan_layout = QVBoxLayout(self._plan_tab)
-        plan_layout.setContentsMargins(4, 6, 4, 4)
-        plan_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self._survey_tab = QWidget()
-        survey_layout = QVBoxLayout(self._survey_tab)
-        survey_layout.setContentsMargins(4, 6, 4, 4)
-        self._analysis_tab = QWidget()
-        analysis_layout = QVBoxLayout(self._analysis_tab)
-        analysis_layout.setContentsMargins(4, 6, 4, 4)
         self._viewer_tab = QWidget()
         viewer_layout = QVBoxLayout(self._viewer_tab)
         viewer_layout.setContentsMargins(4, 6, 4, 4)
@@ -237,9 +216,6 @@ class FormPanelMixin(MixinBase):
         # appended below into the same layout.
         self._system_tab, system_layout = build_system_tab(self._sidebar_tabs)
         self._sidebar_tabs.addTab(self._run_tab, "Run")
-        self._sidebar_tabs.addTab(self._plan_tab, "Plan")
-        self._sidebar_tabs.addTab(self._survey_tab, "Batch")
-        self._sidebar_tabs.addTab(self._analysis_tab, "Analysis")
         self._sidebar_tabs.addTab(self._viewer_tab, "Results")
         self._sidebar_tabs.addTab(self._models_tab, "Models")
         self._sidebar_tabs.addTab(self._system_tab, "System")
@@ -260,9 +236,6 @@ class FormPanelMixin(MixinBase):
         run_layout.addWidget(self._setup_page)
         return (
             setup_layout,
-            plan_layout,
-            survey_layout,
-            analysis_layout,
             viewer_layout,
             models_layout,
             system_layout,
@@ -1270,8 +1243,8 @@ class FormPanelMixin(MixinBase):
 
         # The form (fps, resolution, any restored video duration) is already built,
         # so grade the run once now to flag the icon on startup, not just on edit.
+        # Mode init happens in app.py once the left stack and splitter exist.
         self._update_memory_profile_warning()
-        self._init_ui_mode()
         return bar
 
     def _build_log_panel(self) -> QWidget:

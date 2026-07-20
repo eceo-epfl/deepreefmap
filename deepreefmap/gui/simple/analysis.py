@@ -17,9 +17,11 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from PySide6.QtGui import QColor
@@ -56,14 +58,24 @@ def transect_status_color(statuses: list[str]) -> QColor:
 class SimpleAnalysisMixin(MixinBase):
     """DeepReefMapWindow methods for the survey analysis tab."""
 
-    def _build_survey_analysis_tab(self, layout: QVBoxLayout) -> None:
+    def _build_analysis_page(self) -> QWidget:
+        """Full-page Analyse section: transect map beside the cover chart, with
+        repeatability stats and the run list below."""
         self._analysis_covers = []
 
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        top = QSplitter(Qt.Orientation.Horizontal)
         self._analysis_map = SlippyMapWidget()
         self._analysis_map.setMinimumHeight(200)
         self._analysis_map.transect_clicked.connect(self._on_analysis_map_transect_clicked)
-        layout.addWidget(self._analysis_map, 1)
+        top.addWidget(self._analysis_map)
 
+        chart_pane = QWidget()
+        chart_layout = QVBoxLayout(chart_pane)
+        chart_layout.setContentsMargins(0, 0, 0, 0)
         selector = QHBoxLayout()
         selector.addWidget(QLabel("Transect"))
         self._analysis_transect_combo = QComboBox()
@@ -79,31 +91,39 @@ class SimpleAnalysisMixin(MixinBase):
             lambda *_: self._refresh_survey_analysis()
         )
         selector.addWidget(self._analysis_level_combo)
-        layout.addLayout(selector)
-
+        chart_layout.addLayout(selector)
         self._analysis_chart = GroupedBarChart()
-        layout.addWidget(self._analysis_chart, 2)
+        chart_layout.addWidget(self._analysis_chart, 1)
+        top.addWidget(chart_pane)
+        top.setStretchFactor(0, 1)
+        top.setStretchFactor(1, 2)
+        layout.addWidget(top, 3)
 
+        bottom = QHBoxLayout()
         self._analysis_stats_table = QTableWidget(0, 5)
         self._analysis_stats_table.setHorizontalHeaderLabels(
             ["Class", "Mean", "Std", "CV", "Range"]
         )
         self._analysis_stats_table.verticalHeader().setVisible(False)
         self._analysis_stats_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        layout.addWidget(self._analysis_stats_table, 2)
+        bottom.addWidget(self._analysis_stats_table, 2)
+        self._analysis_runs_list = QListWidget()
+        self._analysis_runs_list.setToolTip("Double-click a run to open it in the viewer.")
+        self._analysis_runs_list.itemDoubleClicked.connect(self._on_analysis_run_opened)
+        bottom.addWidget(self._analysis_runs_list, 1)
+        layout.addLayout(bottom, 2)
 
         self._analysis_repro_label = QLabel("")
         self._analysis_repro_label.setWordWrap(True)
         layout.addWidget(self._analysis_repro_label)
 
-        self._analysis_runs_list = QListWidget()
-        self._analysis_runs_list.setToolTip("Double-click a run to open it in the viewer.")
-        self._analysis_runs_list.itemDoubleClicked.connect(self._on_analysis_run_opened)
-        layout.addWidget(self._analysis_runs_list, 1)
-
+        export_row = QHBoxLayout()
         export_btn = QPushButton("Export repeatability CSV")
         export_btn.clicked.connect(self._on_analysis_export_csv)
-        layout.addWidget(export_btn)
+        export_row.addWidget(export_btn)
+        export_row.addStretch(1)
+        layout.addLayout(export_row)
+        return page
 
     def _analysis_transect_id(self) -> uuid.UUID | None:
         data = self._analysis_transect_combo.currentData()
