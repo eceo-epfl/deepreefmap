@@ -179,18 +179,21 @@ class UiModeMixin(MixinBase):
         self._left_stack.setCurrentIndex(1 if simple else 0)
         self._mode_toggle_btn.setText("Advanced" if simple else "Simple")
         # Advanced run controls have no place in simple mode; batches start
-        # from the Run section.
-        for widget in (self._new_run_btn, self._start_btn, self._pause_btn, self._spinner_stop):
+        # from the Run section. The "+" reset stays put so the toolbar never
+        # shifts between modes.
+        for widget in (self._start_btn, self._pause_btn, self._spinner_stop):
             widget.setVisible(not simple)
         if simple:
             self._memory_warn_icon.setVisible(False)
         else:
             self._update_memory_profile_warning()
         self._settings.setValue("ui_mode", mode)
+        self._host_data_panel(simple)
         if simple:
             self._refresh_transect_list()
             self._refresh_survey_batch_tab()
             self._refresh_survey_analysis()
+            self._refresh_data_manager()
         else:
             viewing = getattr(self, "_app_mode", "SETUP") == "VIEWING"
             self._sidebar_tabs.setCurrentIndex(self._TAB_RESULTS if viewing else self._TAB_RUN)
@@ -211,6 +214,7 @@ class UiModeMixin(MixinBase):
             ("plan", "Plan", self._build_plan_page()),
             ("run", "Run", self._build_simple_run_page()),
             ("analyse", "Analyse", self._build_analysis_page()),
+            ("data", "Data", self._build_simple_data_host()),
         ):
             btn = QToolButton()
             btn.setText(title)

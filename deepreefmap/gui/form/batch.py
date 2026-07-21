@@ -204,4 +204,4 @@ class BatchMixin(MixinBase):
             self._status_label.setText(f"Batch finished: {ok}/{total} succeeded.")
         self._set_form_enabled(True)
         self._batch_btn.setEnabled(True)
-        self._refresh_past_runs_combo()
+        self._refresh_data_manager()

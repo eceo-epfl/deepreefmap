@@ -53,10 +53,11 @@ def test_viewer_pane_follows_app_mode_in_simple(window, monkeypatch):
 
 def test_advanced_run_controls_hidden_in_simple(window):
     assert not window._start_btn.isVisibleTo(window)
-    assert not window._new_run_btn.isVisibleTo(window)
+    assert window._new_run_btn.isVisibleTo(window)
     window._mode_toggle_btn.click()
     assert window._start_btn.isVisibleTo(window)
     assert window._new_run_btn.isVisibleTo(window)
+    assert not hasattr(window, "_past_runs_combo")
 
 
 def test_simple_mode_creates_survey_db_under_root(window):

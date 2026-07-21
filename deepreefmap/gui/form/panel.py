@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListView,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -38,7 +37,6 @@ from PySide6.QtWidgets import (
 )
 
 from deepreefmap.gui.system.log_view import LogView, install_qt_log_handler
-from deepreefmap.gui.runs.past_runs import _PastRunCardDelegate
 from deepreefmap.gui.runs.progress import (
     _LOAD_PHASES,
     _RECON_PHASES,
@@ -189,9 +187,10 @@ class FormPanelMixin(MixinBase):
         # mode replaces this whole panel with full-page sections.
         self._TAB_RUN = 0
         self._TAB_RESULTS = 1
-        self._TAB_MODELS = 2
+        self._TAB_DATA = 2
+        self._TAB_MODELS = 3
         # System hosts both the live machine gauges and the updates section.
-        self._TAB_SYSTEM = 3
+        self._TAB_SYSTEM = 4
         self._sidebar_tabs = QTabWidget()
         # Tabs expand to share the panel width equally so labels of different
         # length (Run / Results / Models / Updates) end up the same visible width.
@@ -216,8 +215,15 @@ class FormPanelMixin(MixinBase):
         # The System tab hosts the gauges/benchmark first, with the updates section
         # appended below into the same layout.
         self._system_tab, system_layout = build_system_tab(self._sidebar_tabs)
+        # The Data tab holds the shared Data panel while in advanced mode;
+        # _host_data_panel moves the panel between here and the simple shell.
+        self._data_tab = QWidget()
+        data_layout = QVBoxLayout(self._data_tab)
+        data_layout.setContentsMargins(4, 6, 4, 4)
+        data_layout.addWidget(self._build_data_panel())
         self._sidebar_tabs.addTab(self._run_tab, "Run")
         self._sidebar_tabs.addTab(self._viewer_tab, "Results")
+        self._sidebar_tabs.addTab(self._data_tab, "Data")
         self._sidebar_tabs.addTab(self._models_tab, "Models")
         self._sidebar_tabs.addTab(self._system_tab, "System")
         self._build_system_panel(system_layout)
@@ -244,35 +250,14 @@ class FormPanelMixin(MixinBase):
 
     def _build_deferred_top_bar_widgets(self, setup_layout: QVBoxLayout) -> None:
         # These widgets are owned by the top toolbar but constructed here so
-        # initialisation code (_refresh_past_runs_combo, etc.) can reference
-        # them before the toolbar is laid out.
-        self._past_runs_combo = QComboBox()
-        self._past_runs_combo.setMinimumContentsLength(20)
-        self._past_runs_combo.currentIndexChanged.connect(self._on_past_run_selected)
-        # Custom delegate paints each dropdown item as a card with name +
-        # facts + input video, so the user can preview metadata before clicking.
-        self._past_runs_combo.setItemDelegate(_PastRunCardDelegate(self._past_runs_combo))
-        view = self._past_runs_combo.view()
-        cast(QListView, view).setSpacing(0)
-        # Popup minimum width is computed from font metrics so it scales with
-        # system DPI / font size (Windows scaling, Linux Hi-DPI, etc.).
-        em = max(1, view.fontMetrics().height())
-        view.setMinimumWidth(em * 36)
-        # Adjust on first show only so a freshly-selected long path doesn't
-        # widen the combo (and through it the top bar, and through it the whole
-        # window) past a comfortable size. Long entries are elided instead.
-        self._past_runs_combo.setSizeAdjustPolicy(
-            QComboBox.SizeAdjustPolicy.AdjustToContentsOnFirstShow
-        )
-        self._past_runs_combo.setMaximumWidth(360)
-
-        # "+" icon button on the far left of the top bar starts a fresh
-        # reconstruction (clears the viewer + resets the past-run selection).
+        # initialisation code can reference them before the toolbar is laid out.
+        # "+" icon button on the far left of the top bar clears the loaded run
+        # in both modes.
         from deepreefmap.gui.core.icons import plus_icon
 
         self._new_run_btn = QPushButton()
         self._new_run_btn.setIcon(plus_icon(20))
-        self._new_run_btn.setToolTip("New reconstruction")
+        self._new_run_btn.setToolTip("Clear the loaded run")
         self._new_run_btn.setFixedSize(28, 28)
         self._new_run_btn.clicked.connect(self._on_new_reconstruction)
 
@@ -989,24 +974,6 @@ class FormPanelMixin(MixinBase):
         self._cover_label.setWordWrap(True)
         res_layout.addWidget(self._cover_label)
 
-        rename_row = QHBoxLayout()
-        self._rename_btn = QPushButton("Rename…")
-        self._rename_btn.clicked.connect(self._begin_rename)
-        rename_row.addWidget(self._rename_btn)
-        self._rename_edit = QLineEdit()
-        self._rename_edit.setVisible(False)
-        self._rename_edit.returnPressed.connect(self._commit_rename)
-        rename_row.addWidget(self._rename_edit, 1)
-        self._rename_ok_btn = QPushButton("OK")
-        self._rename_ok_btn.setVisible(False)
-        self._rename_ok_btn.clicked.connect(self._commit_rename)
-        rename_row.addWidget(self._rename_ok_btn)
-        self._rename_cancel_btn = QPushButton("Cancel")
-        self._rename_cancel_btn.setVisible(False)
-        self._rename_cancel_btn.clicked.connect(self._cancel_rename)
-        rename_row.addWidget(self._rename_cancel_btn)
-        res_layout.addLayout(rename_row)
-
         self._open_dir_btn = QPushButton("Open output directory")
         self._open_dir_btn.clicked.connect(self._open_output_dir)
         res_layout.addWidget(self._open_dir_btn)
@@ -1095,13 +1062,11 @@ class FormPanelMixin(MixinBase):
         self._out_root_input.textChanged.connect(self._on_output_root_changed)
         self._run_name_input.textChanged.connect(self._on_run_name_changed)
 
-        # Watch the output root directory so the past-runs combo reflects new
+        # Watch the output root directory so the Data section reflects new
         # manifests appearing on disk (e.g. a sibling process completes a run)
         # in addition to user edits of the path text.
         self._out_root_watcher = QFileSystemWatcher(self)
-        self._out_root_watcher.directoryChanged.connect(
-            lambda _path: self._refresh_past_runs_combo()
-        )
+        self._out_root_watcher.directoryChanged.connect(self._on_out_root_dir_changed)
 
         self._active_run_dir: Path | None = None
         self._active_run_manifest: dict | None = None
@@ -1123,7 +1088,7 @@ class FormPanelMixin(MixinBase):
         if saved_root:
             self._out_root_input.setText(saved_root)
         self._update_effective_dir_label()
-        self._refresh_past_runs_combo()
+        self._refresh_data_manager()
         self._update_out_root_watch()
         self._recompute_submit_state()
 
@@ -1196,15 +1161,10 @@ class FormPanelMixin(MixinBase):
         h.setContentsMargins(8, 6, 8, 6)
         h.setSpacing(8)
 
-        # New-reconstruction "+" button is the leftmost element: it's the
-        # primary action that resets the workspace for a fresh run.
+        # The "+" reset is the leftmost element and shows in both modes; the
+        # 3D preview toggle lives on the viewer itself (wired in app.py).
         h.addWidget(self._new_run_btn)
         h.addWidget(self._build_mode_toggle())
-        h.addWidget(self._build_preview_toggle())
-
-        h.addWidget(QLabel("Past runs:"))
-        h.addWidget(self._past_runs_combo, 2)
-
         h.addWidget(self._log_toggle_btn)
 
         # Vertical separator between navigation and status.
@@ -1649,8 +1609,13 @@ class FormPanelMixin(MixinBase):
         self._update_effective_dir_label()
         self._recompute_submit_state()
         self._settings.setValue("output_root_dir", self._out_root_input.text())
-        self._refresh_past_runs_combo()
+        self._refresh_data_manager()
         self._update_out_root_watch()
+
+    def _on_out_root_dir_changed(self, _path: str = "") -> None:
+        # Manifests from other processes appear unprompted; the Data refresh is
+        # debounced because runs touch the root continuously while writing.
+        self._request_data_refresh()
 
     def _update_out_root_watch(self) -> None:
         """Re-point the watcher so manifests from other processes appear unprompted."""

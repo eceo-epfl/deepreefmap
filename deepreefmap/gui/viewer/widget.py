@@ -198,8 +198,16 @@ class QtPointCloudViewer(ViewerPickingMixin, QWidget):
         self._canvas_wanted = False
         self._canvas_allowed = True
 
+        # Slim header row above the canvas for controls that belong to the
+        # viewer itself (the 3D preview toggle). A header rather than a canvas
+        # overlay so the controls stay reachable while the placeholder shows.
+        self._header_row = QHBoxLayout()
+        self._header_row.setContentsMargins(4, 2, 4, 2)
+        self._header_row.addStretch(1)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(self._header_row)
         layout.addWidget(self._main_splitter)
 
         # Floating legend pinned to the canvas's top-right corner. Hidden until
@@ -491,6 +499,10 @@ class QtPointCloudViewer(ViewerPickingMixin, QWidget):
         layout = self._placeholder_container.layout()
         assert layout is not None
         layout.addWidget(widget)
+
+    def add_header_widget(self, widget: QWidget) -> None:
+        """Dock a control into the viewer's slim header row, right-aligned."""
+        self._header_row.addWidget(widget)
 
     def set_canvas_allowed(self, allowed: bool) -> None:
         """Gate the 3D canvas. Scene data keeps flowing while disallowed; allowing

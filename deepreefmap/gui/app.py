@@ -24,6 +24,7 @@ from deepreefmap.gui.core.theme import BANNER_BG, BANNER_BORDER, BANNER_TEXT
 from deepreefmap.gui.form.batch import BatchMixin
 from deepreefmap.gui.form.panel import FormPanelMixin
 from deepreefmap.gui.models.management import ModelManagementMixin
+from deepreefmap.gui.runs.data_manager import DataManagerMixin
 from deepreefmap.gui.runs.past_runs import PastRunsMixin
 from deepreefmap.gui.runs.progress_panel import ProgressPanel
 from deepreefmap.gui.runs.results import ResultsMixin
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 class DeepReefMapWindow(
     QMainWindow,
     BatchMixin,
+    DataManagerMixin,
     FormPanelMixin,
     ModelManagementMixin,
     PastRunsMixin,
@@ -73,6 +75,7 @@ class DeepReefMapWindow(
     _sig_discovery_done = Signal(object, object)
     _sig_survey_progress = Signal(int, int, str)
     _sig_survey_done = Signal(int, int, str)
+    _sig_run_sizes_done = Signal(object)
 
     def __init__(self, classes_config: ClassConfig, classes_path: Path | None) -> None:
         super().__init__()
@@ -96,6 +99,7 @@ class DeepReefMapWindow(
         self._sig_discovery_done.connect(self._on_discovery_done)
         self._sig_survey_progress.connect(self._on_survey_progress)
         self._sig_survey_done.connect(self._on_survey_done)
+        self._sig_run_sizes_done.connect(self._apply_run_sizes)
 
         self.setWindowTitle("DeepReefMap")
         # Open at ~90% of the available screen, capped at the comfortable
@@ -112,8 +116,8 @@ class DeepReefMapWindow(
         self.resize(init_w, init_h)
         # Explicit floor so the window can always be shrunk back after the user
         # enlarges it. Without this, Qt's computed minimumSize follows whichever
-        # child currently sizes the widest (e.g. the past-runs combo after it
-        # adopts a long path string), and the window gets stuck at that width.
+        # child currently sizes the widest, and the window gets stuck at that
+        # width.
         self.setMinimumSize(720, 480)
 
         from deepreefmap.gui.viewer.widget import QtPointCloudViewer
@@ -139,6 +143,9 @@ class DeepReefMapWindow(
         form_panel = self._build_form_panel()
         self._capture_form_defaults()
         top_bar = self._build_top_bar()
+        # The preview toggle gates the viewer canvas, so it docks onto the
+        # viewer's header rather than the global toolbar.
+        self._viewer.add_header_widget(self._build_preview_toggle())
         log_panel = self._build_log_panel()
 
         # The left pane is either the advanced sidebar (page 0) or the simple
