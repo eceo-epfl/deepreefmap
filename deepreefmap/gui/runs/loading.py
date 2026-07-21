@@ -105,50 +105,17 @@ class RunLoadingMixin(MixinBase):
         self._settings.setValue("output_root_dir", self._out_root_input.text())
         self._settings.setValue("last_run_dir", str(out_dir))
 
-        transect_length = self._transect_length.value() or None
-        transect_crop = self._crop_width.value() or None
-
         begin_s, end_s = self._effective_time_range()
         self._seed_run_cache(out_dir, video_path, begin_s, end_s)
         kwargs = {
+            **self._collect_run_settings(),
             "video_paths": [str(video_path)],
-            "fps": self._fps_spin.value(),
-            "segmentation_name": self._seg_combo.currentText(),
-            "mapping_name": self._map_combo.currentText(),
-            "camera_profile_name": self._profile_combo.currentText(),
             "output_dir": out_dir,
-            "transect_length": transect_length,
-            "transect_crop_width": transect_crop,
-            "enable_tsdf": self._tsdf_check.isChecked(),
-            "skip_segmentation": self._skip_seg_check.isChecked(),
-            "classes_path": self._classes_path,
             "run_name": run_name,
+            "transect_length": self._transect_length.value() or None,
             "begin_s": begin_s,
             "end_s": end_s,
-            "processing_width": self._proc_width_spin.value(),
-            "processing_height": self._proc_height_spin.value(),
-            "preprocess_batch_size": self._batch_size_spin.value(),
-            "grid_bins": self._grid_bins_spin.value(),
-            "require_gravity_telemetry": self._require_gravity_check.isChecked(),
-            "replacement_radius_factor": self._rr_factor_spin.value() or None,
-            "replacement_radius_estimation_frames": self._rr_est_frames_spin.value(),
-            "replacement_radius_override": self._rr_override_spin.value() or None,
         }
-
-        mapping_name = str(kwargs["mapping_name"])
-        loger_options = self._collect_loger_options(mapping_name)
-        if loger_options is not None:
-            kwargs["mapping_options"] = loger_options
-            kwargs["refine_intrinsics_from_mapper"] = self._refine_intrinsics_check.isChecked()
-        elif mapping_name == "scsfmlearner":
-            scs_opts: dict[str, object] = {
-                "target_width": self._scs_width_spin.value(),
-                "target_height": self._scs_height_spin.value(),
-            }
-            scs_ckpt = self._scs_checkpoint_input.text().strip()
-            if scs_ckpt:
-                scs_opts["checkpoint_path"] = scs_ckpt
-            kwargs["mapping_options"] = scs_opts
 
         self._set_form_enabled(False)
         self._begin_progress(self._recon_model)
@@ -167,12 +134,7 @@ class RunLoadingMixin(MixinBase):
         self._cancel_event = threading.Event()
         self._pause_event = threading.Event()
         self._pause_event.set()
-        self._start_btn.setVisible(False)
-        self._spinner_stop.set_stopping(False)
-        self._spinner_stop.setVisible(True)
-        self._pause_btn.setVisible(True)
-        self._pause_btn.setEnabled(True)
-        self._pause_btn.setChecked(False)
+        self._begin_run_controls()
 
         self._pipeline_thread = threading.Thread(
             target=self._run_pipeline,
@@ -223,11 +185,25 @@ class RunLoadingMixin(MixinBase):
         self._run_log_file_handler = None
         self._set_app_mode("SETUP")
 
+    def _run_in_flight(self) -> bool:
+        thread = getattr(self, "_pipeline_thread", None)
+        return thread is not None and thread.is_alive()
+
     def _end_run_controls(self) -> None:
-        """Return the top-bar cluster to its idle state (play shown, run controls hidden)."""
+        """Return the transport controls to idle. Simple mode never shows start:
+        its wizard step is what launches a run."""
         self._spinner_stop.setVisible(False)
         self._pause_btn.setVisible(False)
-        self._start_btn.setVisible(True)
+        self._start_btn.setVisible(getattr(self, "_ui_mode", "advanced") != "simple")
+
+    def _begin_run_controls(self) -> None:
+        """Swap start for pause and the stop spinner while work is in flight."""
+        self._start_btn.setVisible(False)
+        self._spinner_stop.set_stopping(False)
+        self._spinner_stop.setVisible(True)
+        self._pause_btn.setVisible(True)
+        self._pause_btn.setEnabled(True)
+        self._pause_btn.setChecked(False)
 
     def _on_stop_clicked(self) -> None:
         # The spinner is shared between a live pipeline run and a cached-run

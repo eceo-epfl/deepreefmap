@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         QTabWidget,
         QToolButton,
         QTreeWidget,
+        QVBoxLayout,
         QWidget,
     )
 
@@ -49,6 +50,7 @@ if TYPE_CHECKING:
     from deepreefmap.gui.runs.sunburst import SunburstWidget
     from deepreefmap.gui.map.widget import SlippyMapWidget
     from deepreefmap.gui.simple.charts import GroupedBarChart
+    from deepreefmap.gui.simple.plan import NotesEdit
     from deepreefmap.survey.models import SurveyBatch
     from deepreefmap.survey.store import SurveyStore
 
@@ -81,7 +83,7 @@ if TYPE_CHECKING:
         _form_preferred_width: int
         _survey_store_obj: SurveyStore | None
         _transect_form_id: uuid.UUID | None
-        _quick_entry_to_end: bool
+        _pick_stage: str | None
         _plan_map_fitted: bool
         _survey_rows: list
         _survey_transects: list
@@ -89,6 +91,7 @@ if TYPE_CHECKING:
         _survey_preset: dict | None
         _survey_cancel_event: threading.Event | None
         _survey_worker_running: bool
+        _settings_dialog_open: bool
         _analysis_covers: list
         _downloading: set[str]
         _download_cancel_requested: set[str]
@@ -191,6 +194,14 @@ if TYPE_CHECKING:
         _warnings_label: QLabel
         _warnings_label_running: QLabel
 
+        # --- run form, borrowed by the simple-mode settings dialog ----------
+        _setup_page: QWidget
+        _run_tab_layout: QVBoxLayout
+        _video_row_widget: QWidget
+        _range_row_widget: QWidget
+        _run_name_widget: QWidget
+        _transect_length_widget: QWidget
+
         # --- data section --------------------------------------------------
         _data_panel: QWidget
         _data_tab: QWidget
@@ -215,7 +226,8 @@ if TYPE_CHECKING:
         _data_sizes_scan_running: bool
 
         # --- survey mode -------------------------------------------------
-        _mode_toggle_btn: QToolButton
+        _mode_toggle_btn: QWidget
+        _mode_buttons: dict[str, QToolButton]
         _preview_toggle_btn: QToolButton
         _plan_map: SlippyMapWidget
         _analysis_map: SlippyMapWidget
@@ -225,7 +237,7 @@ if TYPE_CHECKING:
         _survey_preset_label: QLabel
         _survey_pass_table: QTableWidget
         _survey_start_btn: QPushButton
-        _survey_stop_btn: QPushButton
+        _survey_settings_btn: QPushButton
         _analysis_transect_combo: QComboBox
         _analysis_level_combo: QComboBox
         _analysis_chart: GroupedBarChart
@@ -234,19 +246,18 @@ if TYPE_CHECKING:
         _analysis_runs_list: QListWidget
         _transect_list: QListWidget
         _tr_name_input: QLineEdit
-        _tr_quick_input: QLineEdit
-        _tr_start_lat: QLineEdit
-        _tr_start_lon: QLineEdit
-        _tr_end_lat: QLineEdit
-        _tr_end_lon: QLineEdit
+        _tr_start_coord: QLineEdit
+        _tr_end_coord: QLineEdit
+        _pick_both_btn: QPushButton
         _tr_length: QDoubleSpinBox
         _tr_depth: QDoubleSpinBox
-        _tr_description: QLineEdit
+        _tr_description: NotesEdit
         _tr_geodesic_label: QLabel
 
         # --- combos / line edits -----------------------------------------
         _map_combo: QComboBox
         _profile_combo: QComboBox
+        _resolution_preset_combo: QComboBox
         _seg_combo: QComboBox
         _update_version_combo: QComboBox
         _out_root_input: QLineEdit
@@ -263,10 +274,14 @@ if TYPE_CHECKING:
         _sidebar_tabs: QTabWidget
         _left_stack: QStackedWidget
         _simple_stack: QStackedWidget
+        _wizard_back_buttons: dict[str, QPushButton]
+        _wizard_next_buttons: dict[str, QPushButton]
         _work_hsplitter: QSplitter
         _new_run_btn: QPushButton
         _progress_bar: QProgressBar
         _total_progress_bar: QProgressBar
+        _bottom_progress_bar: QProgressBar
+        _bottom_bar: QWidget
         _progress_stack: HoverColumn
         _eta_total_label: QLabel
         _eta: RunEtaEstimator | None
@@ -313,6 +328,7 @@ if TYPE_CHECKING:
         def _check_for_update(self) -> None: ...
         def _clear_run_warnings(self) -> None: ...
         def _collect_loger_options(self, mapping_name: str) -> dict | None: ...
+        def _collect_run_settings(self) -> dict: ...
         def _estimate_frame_count(self, fps: int) -> int | None: ...
         def _recompute_submit_state(self) -> None: ...
         def _refresh_desktop_entry_button(self) -> None: ...
@@ -321,26 +337,38 @@ if TYPE_CHECKING:
         def _build_simple_data_host(self) -> QWidget: ...
         def _host_data_panel(self, simple: bool) -> None: ...
         def _refresh_data_manager(self) -> None: ...
+        def _focus_data_on_transect(self, transect_id: uuid.UUID) -> None: ...
         def _request_data_refresh(self) -> None: ...
         def _apply_run_sizes(self, sizes: dict) -> None: ...
         def _hide_run_meta_banner(self) -> None: ...
         def _refresh_run_warnings_view(self) -> None: ...
         def _required_model_names(self) -> set[str]: ...
         def _reset_progress_bars(self) -> None: ...
+        def _reset_form_defaults(self) -> None: ...
+        def _adopt_form_as_preset(self) -> None: ...
+        def _idle_status_text(self) -> str: ...
+        def _on_edit_run_settings(self) -> None: ...
+        def _set_progress_widgets_visible(self, visible: bool) -> None: ...
+        def _build_bottom_bar(self) -> QWidget: ...
         def _render_status(self) -> None: ...
         def _render_eta(self) -> None: ...
         def _end_run_controls(self) -> None: ...
+        def _begin_run_controls(self) -> None: ...
+        def _run_in_flight(self) -> bool: ...
         def _new_run_estimator(self) -> RunEtaEstimator: ...
         def _reveal_legend_overlay(self) -> None: ...
         def _set_app_mode(self, mode: str) -> None: ...
         def _set_form_enabled(self, enabled: bool) -> None: ...
-        def _build_mode_toggle(self) -> QToolButton: ...
+        def _build_mode_toggle(self) -> QWidget: ...
         def _build_preview_toggle(self) -> QToolButton: ...
         def _build_plan_page(self) -> QWidget: ...
         def _build_simple_run_page(self) -> QWidget: ...
         def _build_analysis_page(self) -> QWidget: ...
         def _build_simple_shell(self) -> QWidget: ...
         def _set_simple_section(self, name: str) -> None: ...
+        def _go_to_step(self, name: str) -> None: ...
+        def _set_wizard_navigation_enabled(self, enabled: bool) -> None: ...
+        def _wrap_wizard_page(self, name: str, page: QWidget) -> QWidget: ...
         def _update_work_area(self) -> None: ...
         def _init_ui_mode(self) -> None: ...
         def _request_ui_mode(self, mode: str) -> None: ...

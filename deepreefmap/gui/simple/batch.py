@@ -129,9 +129,15 @@ class SimpleBatchMixin(MixinBase):
         header.addWidget(new_batch_btn)
         layout.addLayout(header)
 
+        preset_row = QHBoxLayout()
         self._survey_preset_label = QLabel(self._survey_preset_summary())
         self._survey_preset_label.setWordWrap(True)
-        layout.addWidget(self._survey_preset_label)
+        preset_row.addWidget(self._survey_preset_label, 1)
+        self._survey_settings_btn = QPushButton("Edit settings…")
+        self._survey_settings_btn.setToolTip("Change any run setting for this batch.")
+        self._survey_settings_btn.clicked.connect(self._on_edit_run_settings)
+        preset_row.addWidget(self._survey_settings_btn)
+        layout.addLayout(preset_row)
 
         self._survey_pass_table = QTableWidget(0, 5)
         self._survey_pass_table.setHorizontalHeaderLabels(
@@ -156,17 +162,35 @@ class SimpleBatchMixin(MixinBase):
         row_buttons.addStretch(1)
         layout.addLayout(row_buttons)
 
-        run_buttons = QHBoxLayout()
-        self._survey_start_btn = QPushButton("Run remaining (0)")
+        # The run button is the Run step's forward action, so the wizard footer
+        # hosts it rather than this page. Stopping is the bottom bar's job.
+        self._survey_start_btn = QPushButton("Next: Process")
         self._survey_start_btn.setEnabled(False)
         self._survey_start_btn.clicked.connect(self._on_survey_start)
-        self._survey_stop_btn = QPushButton("Stop")
-        self._survey_stop_btn.setEnabled(False)
-        self._survey_stop_btn.clicked.connect(self._on_survey_stop)
-        run_buttons.addWidget(self._survey_start_btn, 1)
-        run_buttons.addWidget(self._survey_stop_btn)
-        layout.addLayout(run_buttons)
         return page
+
+    def _on_edit_run_settings(self) -> None:
+        """Open the real run form in a dialog and adopt whatever comes back."""
+        from deepreefmap.gui.simple.settings_dialog import RunSettingsDialog
+
+        if self._survey_worker_running:
+            self._status_label.setText("Wait for the current batch to finish.")
+            return
+        per_run = [
+            self._video_row_widget,
+            self._range_row_widget,
+            self._run_name_widget,
+            self._transect_length_widget,
+        ]
+        dialog = RunSettingsDialog(self, self._setup_page, per_run)
+        self._settings_dialog_open = True
+        try:
+            dialog.exec()
+        finally:
+            dialog.restore_form()
+            self._settings_dialog_open = False
+        self._adopt_form_as_preset()
+        self._recompute_survey_start()
 
     def _survey_preset_summary(self) -> str:
         if self._survey_preset is None:
@@ -416,16 +440,24 @@ class SimpleBatchMixin(MixinBase):
             return
         unassigned = sum(1 for row in self._survey_rows if row.transect_id is None)
         remaining = self._survey_remaining_rows() if self._survey_rows else []
-        self._survey_start_btn.setText(f"Run remaining ({len(remaining)})")
-        if self._survey_preset is None:
-            self._survey_start_btn.setEnabled(False)
-            return
+
+        # An unassigned row has no pass yet, so it never counts as remaining.
+        # Check it first or the step would offer to move on with work undone.
         if unassigned:
+            self._set_survey_forward_action("process")
             self._survey_start_btn.setEnabled(False)
             # The message sits on the button itself: the status label is at the
-            # far end of the toolbar, easy to miss from the pass table.
+            # far end of the window, easy to miss from the pass table.
             self._survey_start_btn.setText(f"Assign transects first ({unassigned} to do)")
             self._status_label.setText(f"{unassigned} pass(es) still need a transect.")
+            return
+        if not remaining:
+            self._set_survey_forward_action("analyse")
+            self._survey_start_btn.setEnabled(bool(self._survey_rows))
+            return
+        self._set_survey_forward_action("process", count=len(remaining))
+        if self._survey_preset is None:
+            self._survey_start_btn.setEnabled(False)
             return
         missing = self._survey_missing_models()
         if missing:
@@ -434,7 +466,20 @@ class SimpleBatchMixin(MixinBase):
                 f"Download {', '.join(missing)} first: switch to Advanced and open Models."
             )
             return
-        self._survey_start_btn.setEnabled(bool(remaining))
+        self._survey_start_btn.setEnabled(True)
+
+    def _set_survey_forward_action(self, action: str, count: int = 0) -> None:
+        """Point the Run step's one forward button at processing or at the next step."""
+        try:
+            self._survey_start_btn.clicked.disconnect()
+        except RuntimeError:
+            pass
+        if action == "analyse":
+            self._survey_start_btn.setText("Next: Analyse →")
+            self._survey_start_btn.clicked.connect(partial(self._go_to_step, "analyse"))
+        else:
+            self._survey_start_btn.setText(f"Next: Process ({count}) →")
+            self._survey_start_btn.clicked.connect(self._on_survey_start)
 
     def _on_survey_start(self) -> None:
         if self._survey_preset is None or self._survey_worker_running:
@@ -458,15 +503,24 @@ class SimpleBatchMixin(MixinBase):
         if not jobs:
             return
         self._survey_worker_running = True
+        # Share the window's cancel and pause events so the bottom-bar transport
+        # controls drive a survey batch exactly as they drive a single run.
         self._survey_cancel_event = threading.Event()
+        self._cancel_event = self._survey_cancel_event
+        self._pause_event = threading.Event()
+        self._pause_event.set()
         self._survey_start_btn.setEnabled(False)
-        self._survey_stop_btn.setEnabled(True)
+        self._begin_run_controls()
+        self._set_wizard_navigation_enabled(False)
         self._refresh_survey_pass_statuses()
         self._set_app_mode("RUNNING")
         out_root = Path(self._out_root_input.text()).expanduser()
+        # Read the form on the GUI thread: a survey run honours every setting,
+        # not just the seven the preset used to carry.
+        settings = self._collect_run_settings()
         self._pipeline_thread = threading.Thread(
             target=self._run_survey_worker,
-            args=(jobs, out_root, dict(self._survey_preset), store, batch),
+            args=(jobs, out_root, settings, store, batch, self._pause_event),
             daemon=True,
         )
         self._pipeline_thread.start()
@@ -475,15 +529,18 @@ class SimpleBatchMixin(MixinBase):
         self,
         jobs: list[_SurveyJob],
         out_root: Path,
-        preset: dict,
+        settings: dict,
         store: SurveyStore,
         batch: SurveyBatch,
+        pause_event: threading.Event,
     ) -> None:
         from deepreefmap.pipeline.orchestrator import run_reconstruction
 
         ok = 0
         last_error = ""
         for index, job in enumerate(jobs, start=1):
+            # Hold between passes too, so pausing doesn't let the next one start.
+            pause_event.wait()
             cancel_event = self._survey_cancel_event
             if cancel_event is not None and cancel_event.is_set():
                 store.set_run_status(job.run.id, "cancelled")
@@ -502,10 +559,11 @@ class SimpleBatchMixin(MixinBase):
                     run_name=job.dir_name,
                     viewer=self._viewer,
                     cancel_event=cancel_event,
+                    pause_event=pause_event,
                     manifest_extra={
                         "survey": survey_manifest_block(job.run, job.pass_, job.transect, batch)
                     },
-                    **preset,
+                    **settings,
                 )
                 store.set_run_status(job.run.id, "succeeded")
                 ok += 1
@@ -528,7 +586,8 @@ class SimpleBatchMixin(MixinBase):
 
     def _on_survey_done(self, ok: int, total: int, last_error: str) -> None:
         self._survey_worker_running = False
-        self._survey_stop_btn.setEnabled(False)
+        self._end_run_controls()
+        self._set_wizard_navigation_enabled(True)
         self._reset_progress_bars()
         panel = getattr(self, "_progress_panel", None)
         if panel is not None:
@@ -553,6 +612,9 @@ class SimpleBatchMixin(MixinBase):
     def _on_survey_stop(self) -> None:
         if self._survey_cancel_event is not None:
             self._survey_cancel_event.set()
+            # Release a paused worker, or it never reaches the cancel check.
+            if getattr(self, "_pause_event", None) is not None:
+                self._pause_event.set()
             self._status_label.setText("Stopping survey batch…")
 
     def _refresh_survey_pass_statuses(self) -> None:

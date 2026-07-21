@@ -106,6 +106,12 @@ def _probe_video_duration_s(video_path: str) -> float | None:
         return None
 
 
+# Transport controls sit in the bottom bar where they are the primary run
+# affordance, so they are larger than the old 40px top-bar cluster.
+_TRANSPORT_SIZE = 34
+_TRANSPORT_ICON = 28
+
+
 def _separator() -> QWidget:
     line = QWidget()
     line.setFixedHeight(1)
@@ -240,6 +246,7 @@ class FormPanelMixin(MixinBase):
         setup_layout = QVBoxLayout(self._setup_page)
         setup_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         setup_layout.setContentsMargins(0, 0, 0, 0)
+        self._run_tab_layout = run_layout
         run_layout.addWidget(self._setup_page)
         return (
             setup_layout,
@@ -283,14 +290,18 @@ class FormPanelMixin(MixinBase):
         input_group = QGroupBox("Input")
         ig = QVBoxLayout(input_group)
 
-        video_row = QHBoxLayout()
+        # Wrapped in a container so the simple-mode settings dialog can hide
+        # every per-run input in one go; the pass table supplies them there.
+        self._video_row_widget = QWidget()
+        video_row = QHBoxLayout(self._video_row_widget)
+        video_row.setContentsMargins(0, 0, 0, 0)
         self._video_input = QLineEdit()
         self._video_input.setPlaceholderText("Path to video file")
         browse_btn = QPushButton("Browse")
         browse_btn.clicked.connect(self._browse_video)
         video_row.addWidget(self._video_input, 1)
         video_row.addWidget(browse_btn)
-        ig.addLayout(video_row)
+        ig.addWidget(self._video_row_widget)
 
         profile_fps_row = QHBoxLayout()
         profile_fps_row.setContentsMargins(0, 0, 0, 0)
@@ -313,7 +324,8 @@ class FormPanelMixin(MixinBase):
         profile_fps_row.addLayout(fps_col)
         ig.addLayout(profile_fps_row)
 
-        range_row = QHBoxLayout()
+        self._range_row_widget = QWidget()
+        range_row = QHBoxLayout(self._range_row_widget)
         range_row.setContentsMargins(0, 0, 0, 0)
         begin_col = QVBoxLayout()
         begin_col.setContentsMargins(0, 0, 0, 0)
@@ -343,7 +355,7 @@ class FormPanelMixin(MixinBase):
         self._scrub_btn.setEnabled(False)
         self._scrub_btn.clicked.connect(self._open_scrub_dialog)
         range_row.addWidget(self._scrub_btn, 0, Qt.AlignmentFlag.AlignBottom)
-        ig.addLayout(range_row)
+        ig.addWidget(self._range_row_widget)
 
         self._video_duration_s: float | None = None
         setup_layout.addWidget(input_group)
@@ -399,12 +411,16 @@ class FormPanelMixin(MixinBase):
         output_group = QGroupBox("Output")
         og = QVBoxLayout(output_group)
 
-        og.addWidget(QLabel("Run name"))
         from datetime import datetime
 
+        self._run_name_widget = QWidget()
+        run_name_col = QVBoxLayout(self._run_name_widget)
+        run_name_col.setContentsMargins(0, 0, 0, 0)
+        run_name_col.addWidget(QLabel("Run name"))
         self._run_name_input = QLineEdit(datetime.now().strftime("%Y%m%d-%H%M%S"))
         self._run_name_input.setPlaceholderText("Friendly name (e.g. barrier-reef-2026-05-20)")
-        og.addWidget(self._run_name_input)
+        run_name_col.addWidget(self._run_name_input)
+        og.addWidget(self._run_name_widget)
 
         self._effective_dir_label = QLabel("")
         self._effective_dir_label.setStyleSheet(f"color: {TEXT_DIM};")
@@ -493,14 +509,18 @@ class FormPanelMixin(MixinBase):
         setup_layout.addWidget(self._advanced_panel)
 
     def _build_advanced_transect_crop(self, adv_layout: QVBoxLayout) -> None:
-        adv_layout.addWidget(QLabel("Transect length (m), 0 disables"))
+        self._transect_length_widget = QWidget()
+        length_col = QVBoxLayout(self._transect_length_widget)
+        length_col.setContentsMargins(0, 0, 0, 0)
+        length_col.addWidget(QLabel("Transect length (m), 0 disables"))
         self._transect_length = QDoubleSpinBox()
         self._transect_length.setRange(0.0, 100.0)
         self._transect_length.setDecimals(2)
         self._transect_length.setSingleStep(0.1)
         self._transect_length.setValue(0.0)
         self._transect_length.setSuffix(" m")
-        adv_layout.addWidget(self._transect_length)
+        length_col.addWidget(self._transect_length)
+        adv_layout.addWidget(self._transect_length_widget)
         adv_layout.addWidget(QLabel("Crop width (m), 0 disables"))
         self._crop_width = QDoubleSpinBox()
         self._crop_width.setRange(0.0, 50.0)
@@ -754,7 +774,7 @@ class FormPanelMixin(MixinBase):
     def _build_progress_widgets(self) -> None:
         # Status label and progress bar are owned by the top toolbar but
         # constructed here so they exist before _recompute_submit_state runs.
-        self._status_label = QLabel("Ready. Fill the form above and click Start.")
+        self._status_label = QLabel("Ready.")
         self._status_label.setWordWrap(True)
 
         # Stage bar (top) + total bar (bottom) stacked in one compact hover column
@@ -799,29 +819,29 @@ class FormPanelMixin(MixinBase):
         self._active_progress_model: ProgressModel | None = None
 
     def _build_run_control_buttons(self) -> None:
-        # All run operations live in one top-bar cluster: play to start (greyed
-        # until the form is valid), then pause and the animated stop-spinner while
-        # a run is in flight. Play is shown in SETUP, pause + spinner in RUNNING.
+        # Transport controls live at the bottom-right of the window, next to the
+        # progress bar they drive. Play shows in SETUP (advanced only), pause and
+        # the animated stop-spinner while a run is in flight.
         from deepreefmap.gui.core.icons import pause_icon, play_icon
 
         self._start_btn = QPushButton()
-        self._start_btn.setIcon(play_icon())
+        self._start_btn.setIcon(play_icon(_TRANSPORT_ICON))
         self._start_btn.setToolTip("Start reconstruction")
-        self._start_btn.setMaximumWidth(40)
+        self._start_btn.setFixedSize(_TRANSPORT_SIZE, _TRANSPORT_SIZE)
         self._start_btn.clicked.connect(self._on_submit)
 
         self._pause_btn = QPushButton()
-        self._pause_btn.setIcon(pause_icon())
+        self._pause_btn.setIcon(pause_icon(_TRANSPORT_ICON))
         self._pause_btn.setToolTip(
-            "Pause the reconstruction at the next safe checkpoint. "
-            "Long mapping passes may take time to respond."
+            "Pause at the next safe checkpoint. Long mapping passes may take "
+            "time to respond."
         )
         self._pause_btn.setCheckable(True)
-        self._pause_btn.setMaximumWidth(40)
+        self._pause_btn.setFixedSize(_TRANSPORT_SIZE, _TRANSPORT_SIZE)
         self._pause_btn.setVisible(False)
         self._pause_btn.toggled.connect(self._on_pause_toggled)
 
-        self._spinner_stop = SpinnerStopButton()
+        self._spinner_stop = SpinnerStopButton(size=_TRANSPORT_SIZE)
         self._spinner_stop.setVisible(False)
         self._spinner_stop.clicked.connect(self._on_stop_clicked)
 
@@ -1167,22 +1187,17 @@ class FormPanelMixin(MixinBase):
         h.addWidget(self._build_mode_toggle())
         h.addWidget(self._log_toggle_btn)
 
-        # Vertical separator between navigation and status.
-        sep = QWidget()
-        sep.setFixedWidth(1)
-        sep.setStyleSheet(f"background-color: {BORDER};")
-        h.addSpacing(6)
-        h.addWidget(sep)
-        h.addSpacing(6)
+        h.addStretch(1)
 
-        self._status_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
-        h.addWidget(self._status_label, 3)
+        # The stage/total bars keep their home here for the hover breakdown, but
+        # only while a run is in flight; _begin_progress and _reset_progress_bars
+        # drive their visibility.
+        self._progress_stack.setVisible(False)
         h.addWidget(self._progress_stack)
-        h.addWidget(self._eta_total_label)
 
-        # Memory-risk icon sits immediately left of the play button. Hidden when
-        # the run fits; a click jumps to the System tab. Its tooltip shows on the
-        # instant of hover (no delay) and word-wraps. The run is never gated on it.
+        # Memory-risk icon. Hidden when the run fits; a click jumps to the System
+        # tab. Its tooltip shows on the instant of hover (no delay) and word-wraps.
+        # The run is never gated on it.
         self._memory_warn_icon = _InstantTipLabel()
         self._memory_warn_icon.setVisible(False)
         self._memory_warn_icon.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1192,14 +1207,45 @@ class FormPanelMixin(MixinBase):
         )
         h.addWidget(self._memory_warn_icon)
 
-        h.addWidget(self._start_btn)
-        h.addWidget(self._pause_btn)
-        h.addWidget(self._spinner_stop)
-
         # The form (fps, resolution, any restored video duration) is already built,
         # so grade the run once now to flag the icon on startup, not just on edit.
         # Mode init happens in app.py once the left stack and splitter exist.
         self._update_memory_profile_warning()
+        return bar
+
+    def _build_bottom_bar(self) -> QWidget:
+        """Full-width status and progress strip, the way a desktop app reports work.
+
+        The progress bar spans the window above a row of status text, remaining
+        estimate, and the transport controls at the right.
+        """
+        bar = QWidget()
+        self._bottom_bar = bar
+        bar.setStyleSheet(f"QWidget {{ background-color: {CARD_BG}; }} ")
+        outer = QVBoxLayout(bar)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._bottom_progress_bar = QProgressBar()
+        self._bottom_progress_bar.setRange(0, 100)
+        self._bottom_progress_bar.setValue(0)
+        self._bottom_progress_bar.setTextVisible(False)
+        self._bottom_progress_bar.setFixedHeight(BAR_HEIGHT)
+        self._bottom_progress_bar.setStyleSheet(bar_qss(PRIMARY))
+        self._bottom_progress_bar.setVisible(False)
+        outer.addWidget(self._bottom_progress_bar)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(8, 4, 8, 4)
+        row.setSpacing(8)
+        self._status_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        row.addWidget(self._status_label, 1)
+        self._eta_total_label.setVisible(False)
+        row.addWidget(self._eta_total_label)
+        row.addWidget(self._start_btn)
+        row.addWidget(self._pause_btn)
+        row.addWidget(self._spinner_stop)
+        outer.addLayout(row)
         return bar
 
     def _build_log_panel(self) -> QWidget:
@@ -1248,6 +1294,47 @@ class FormPanelMixin(MixinBase):
         backend = self._map_combo.currentText()
         self._loger_panel.setVisible(backend in ("loger", "loger_star"))
         self._scs_panel.setVisible(backend == "scsfmlearner")
+
+    def _collect_run_settings(self) -> dict:
+        """Every run_reconstruction kwarg the form controls, minus the per-run
+        inputs (video, output dir, run name, trim, transect length).
+
+        Both the advanced Start button and simple mode's survey batches build
+        their run from this, so a setting cannot apply in one mode only.
+        """
+        settings: dict = {
+            "fps": self._fps_spin.value(),
+            "segmentation_name": self._seg_combo.currentText(),
+            "mapping_name": self._map_combo.currentText(),
+            "camera_profile_name": self._profile_combo.currentText(),
+            "transect_crop_width": self._crop_width.value() or None,
+            "enable_tsdf": self._tsdf_check.isChecked(),
+            "skip_segmentation": self._skip_seg_check.isChecked(),
+            "classes_path": self._classes_path,
+            "processing_width": self._proc_width_spin.value(),
+            "processing_height": self._proc_height_spin.value(),
+            "preprocess_batch_size": self._batch_size_spin.value(),
+            "grid_bins": self._grid_bins_spin.value(),
+            "require_gravity_telemetry": self._require_gravity_check.isChecked(),
+            "replacement_radius_factor": self._rr_factor_spin.value() or None,
+            "replacement_radius_estimation_frames": self._rr_est_frames_spin.value(),
+            "replacement_radius_override": self._rr_override_spin.value() or None,
+        }
+        mapping_name = str(settings["mapping_name"])
+        loger_options = self._collect_loger_options(mapping_name)
+        if loger_options is not None:
+            settings["mapping_options"] = loger_options
+            settings["refine_intrinsics_from_mapper"] = self._refine_intrinsics_check.isChecked()
+        elif mapping_name == "scsfmlearner":
+            scs_opts: dict[str, object] = {
+                "target_width": self._scs_width_spin.value(),
+                "target_height": self._scs_height_spin.value(),
+            }
+            scs_ckpt = self._scs_checkpoint_input.text().strip()
+            if scs_ckpt:
+                scs_opts["checkpoint_path"] = scs_ckpt
+            settings["mapping_options"] = scs_opts
+        return settings
 
     def _collect_loger_options(self, mapping_name: str) -> dict | None:
         """Build the LoGeR mapping_options dict from the form, or None for other backends."""

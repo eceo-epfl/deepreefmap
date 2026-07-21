@@ -92,7 +92,7 @@ def test_assigning_transect_persists_pass(batch_window, tmp_path, monkeypatch):
     assert passes[0].direction == "forward"
     assert passes[0].batch_id is not None
     assert batch_window._survey_start_btn.isEnabled()
-    assert "1" in batch_window._survey_start_btn.text()
+    assert batch_window._survey_start_btn.text() == "Next: Process (1) →"
 
 
 def test_split_pass_duplicates_row(batch_window, tmp_path, monkeypatch):
@@ -132,9 +132,28 @@ def test_run_batch_records_success_and_links_manifest(
     assert survey["pass"]["direction"] == "forward"
     runs = batch_window._survey_store().list_runs()
     assert [r.status for r in runs] == ["succeeded"]
-    assert not batch_window._survey_start_btn.isEnabled()
-    assert "0" in batch_window._survey_start_btn.text()
+    # Nothing left to process, so the step offers the way forward instead.
+    assert batch_window._survey_start_btn.text() == "Next: Analyse →"
     assert batch_window._survey_pass_table.item(0, _COL_STATUS).text() == "succeeded"
+
+
+def test_advanced_settings_reach_a_survey_run(batch_window, tmp_path, monkeypatch, qapp):
+    """A survey run honours the whole run form, not just the core preset keys."""
+    calls = []
+    monkeypatch.setattr(
+        "deepreefmap.pipeline.orchestrator.run_reconstruction",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    batch_window._grid_bins_spin.setValue(1234)
+    batch_window._require_gravity_check.setChecked(True)
+    add_video(batch_window, tmp_path, monkeypatch)
+    assign_transect(batch_window, 0)
+    batch_window._on_survey_start()
+    batch_window._pipeline_thread.join(timeout=10)
+    qapp.processEvents()
+
+    assert calls[0]["grid_bins"] == 1234
+    assert calls[0]["require_gravity_telemetry"] is True
 
 
 def test_batch_lands_on_analysis_when_done(batch_window, tmp_path, monkeypatch, qapp):
@@ -167,7 +186,7 @@ def test_failed_run_keeps_pass_remaining(batch_window, tmp_path, monkeypatch, qa
     assert [r.status for r in runs] == ["failed"]
     assert "boom" in runs[0].error
     assert batch_window._survey_start_btn.isEnabled()
-    assert "1" in batch_window._survey_start_btn.text()
+    assert batch_window._survey_start_btn.text() == "Next: Process (1) →"
 
 
 def test_remove_pass_with_runs_is_blocked(batch_window, tmp_path, monkeypatch, qapp):
@@ -196,3 +215,44 @@ def test_refresh_restores_batch_from_store(batch_window, tmp_path, monkeypatch):
     assert batch_window._survey_pass_table.rowCount() == 1
     assert batch_window._survey_batch_name.text() == batch_name
     assert batch_window._survey_rows[0].transect_id is not None
+
+
+def test_survey_run_can_be_paused_and_stopped(batch_window, tmp_path, monkeypatch, qapp):
+    """Scenario: a field worker pauses a batch, then stops it while paused.
+
+    Expected behaviour: the worker is released rather than wedged in wait().
+    """
+    seen = {}
+    monkeypatch.setattr(
+        "deepreefmap.pipeline.orchestrator.run_reconstruction",
+        lambda **kwargs: seen.update(kwargs),
+    )
+    add_video(batch_window, tmp_path, monkeypatch)
+    assign_transect(batch_window, 0)
+    batch_window._on_survey_start()
+    batch_window._pipeline_thread.join(timeout=10)
+    qapp.processEvents()
+
+    assert seen["pause_event"] is batch_window._pause_event
+    assert seen["cancel_event"] is batch_window._survey_cancel_event
+
+    batch_window._pause_event.clear()
+    batch_window._on_survey_stop()
+    assert batch_window._pause_event.is_set()
+    assert batch_window._survey_cancel_event.is_set()
+
+
+def test_pause_button_drives_the_survey_pause_event(batch_window, tmp_path, monkeypatch, qapp):
+    monkeypatch.setattr(
+        "deepreefmap.pipeline.orchestrator.run_reconstruction", lambda **kwargs: None
+    )
+    add_video(batch_window, tmp_path, monkeypatch)
+    assign_transect(batch_window, 0)
+    batch_window._on_survey_start()
+    batch_window._pipeline_thread.join(timeout=10)
+    qapp.processEvents()
+
+    batch_window._on_pause_toggled(True)
+    assert not batch_window._pause_event.is_set()
+    batch_window._on_pause_toggled(False)
+    assert batch_window._pause_event.is_set()
