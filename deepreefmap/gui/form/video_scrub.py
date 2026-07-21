@@ -25,7 +25,7 @@ _TICKS_PER_S = 100
 
 
 def _format_time(seconds: float) -> str:
-    return f"{int(seconds // 60)}:{seconds % 60:05.2f}"
+    return f"{seconds:.2f} s ({int(seconds // 60)}:{seconds % 60:05.2f})"
 
 
 class RangeSlider(QWidget):
@@ -179,7 +179,7 @@ class VideoScrubDialog(QDialog):
         self._begin_readout = QLabel()
         self._end_readout = QLabel()
         for readout in (self._begin_readout, self._end_readout):
-            readout.setStyleSheet('font-family: "JetBrains Mono"; min-width: 96px;')
+            readout.setStyleSheet('font-family: "JetBrains Mono"; min-width: 150px;')
         self._begin_readout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._range_slider = RangeSlider(max_tick, begin_tick, end_tick)
         row.addWidget(self._begin_readout)

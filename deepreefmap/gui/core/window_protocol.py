@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from deepreefmap.gui.viewer.pick_tooltip import PickCard
     from deepreefmap.profiling.eta import RunEtaEstimator
     from deepreefmap.gui.core.spinner import SpinnerStopButton
+    from deepreefmap.gui.form.time_edit import TimeSecondsEdit
     from deepreefmap.gui.runs.timing_popup import HoverColumn, TimingPopup
     from deepreefmap.pipeline.artifacts import SemanticPointCloud
     from deepreefmap.pointcloud.grid_ortho import OrthoGrid
@@ -158,10 +159,10 @@ if TYPE_CHECKING:
         _rr_est_frames_spin: QSpinBox
         _scs_height_spin: QSpinBox
         _scs_width_spin: QSpinBox
-        _begin_spin: QDoubleSpinBox
+        _begin_spin: TimeSecondsEdit
         _camera_backoff_spin: QDoubleSpinBox
         _crop_width: QDoubleSpinBox
-        _end_spin: QDoubleSpinBox
+        _end_spin: TimeSecondsEdit
         _point_size_spin: QDoubleSpinBox
         _results_crop_width: QDoubleSpinBox
         _results_transect_length: QDoubleSpinBox

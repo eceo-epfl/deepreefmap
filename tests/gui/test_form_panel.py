@@ -45,3 +45,37 @@ def test_loger_panel_visibility_follows_backend(window) -> None:
     window._map_combo.setCurrentText("loger")
     assert not window._loger_panel.isHidden()
 
+
+def test_time_edit_parses_clamps_and_reverts(qapp) -> None:
+    from deepreefmap.gui.form.time_edit import TimeSecondsEdit
+
+    edit = TimeSecondsEdit()
+    edit.setText("12.5")
+    edit._commit()
+    assert edit.value() == 12.5
+
+    edit.setText("nonsense")
+    edit._commit()
+    assert edit.value() == 12.5
+    assert edit.text() == "12.50"
+
+    edit.setText("-3")
+    edit._commit()
+    assert edit.value() == 0.0
+
+    edit.setMaximum(30.0)
+    edit.setText("99")
+    edit._commit()
+    assert edit.value() == 30.0
+    assert edit.text() == "30.00"
+
+
+def test_begin_and_end_snap_together(window) -> None:
+    window._end_spin.setValue(50.0)
+    window._begin_spin.setValue(80.0)
+    assert window._begin_spin.value() == 50.0
+
+    window._begin_spin.setValue(20.0)
+    window._end_spin.setValue(10.0)
+    assert window._end_spin.value() == 20.0
+

@@ -63,6 +63,7 @@ from deepreefmap.gui.core.theme import (
     bar_qss,
 )
 from deepreefmap.gui.core.spinner import SpinnerStopButton
+from deepreefmap.gui.form.time_edit import TimeSecondsEdit
 from deepreefmap.gui.runs.sunburst import SunburstWidget
 from deepreefmap.gui.runs.timing_popup import HoverColumn
 
@@ -332,22 +333,14 @@ class FormPanelMixin(MixinBase):
         begin_col = QVBoxLayout()
         begin_col.setContentsMargins(0, 0, 0, 0)
         begin_col.addWidget(QLabel("Begin (s)"))
-        self._begin_spin = QDoubleSpinBox()
-        self._begin_spin.setDecimals(2)
-        self._begin_spin.setRange(0.0, 1e9)
-        self._begin_spin.setSingleStep(1.0)
-        self._begin_spin.setValue(0.0)
+        self._begin_spin = TimeSecondsEdit()
         begin_col.addWidget(self._begin_spin)
         range_row.addLayout(begin_col, 1)
 
         end_col = QVBoxLayout()
         end_col.setContentsMargins(0, 0, 0, 0)
         end_col.addWidget(QLabel("End (s)"))
-        self._end_spin = QDoubleSpinBox()
-        self._end_spin.setDecimals(2)
-        self._end_spin.setRange(0.0, 1e9)
-        self._end_spin.setSingleStep(1.0)
-        self._end_spin.setValue(0.0)
+        self._end_spin = TimeSecondsEdit()
         end_col.addWidget(self._end_spin)
         range_row.addLayout(end_col, 1)
 
@@ -499,6 +492,8 @@ class FormPanelMixin(MixinBase):
         self._fps_spin.valueChanged.connect(self._update_memory_profile_warning)
         self._begin_spin.valueChanged.connect(self._update_memory_profile_warning)
         self._end_spin.valueChanged.connect(self._update_memory_profile_warning)
+        self._begin_spin.valueChanged.connect(self._on_begin_time_committed)
+        self._end_spin.valueChanged.connect(self._on_end_time_committed)
 
     def _build_advanced_panel(self, setup_layout: QVBoxLayout) -> None:
         self._advanced_panel = QWidget()
@@ -1558,16 +1553,24 @@ class FormPanelMixin(MixinBase):
             self._video_input.setText(path)
             self._auto_probe_video_duration(path)
 
+    def _on_begin_time_committed(self, value: float) -> None:
+        # end == 0.0 means "untrimmed/unknown" (see _effective_time_range).
+        if self._end_spin.value() > 0.0 and value > self._end_spin.value():
+            self._begin_spin.setValue(self._end_spin.value())
+
+    def _on_end_time_committed(self, value: float) -> None:
+        if value > 0.0 and value < self._begin_spin.value():
+            self._end_spin.setValue(self._begin_spin.value())
+
     def _auto_probe_video_duration(self, video_path: str) -> None:
-        """Probe with cv2 and fill the End spinbox so the user has a sane default."""
+        """Probe with cv2 and fill the End field so the user has a sane default."""
         duration = _probe_video_duration_s(video_path)
         if duration is None:
             return
         self._video_duration_s = duration
         self._scrub_btn.setEnabled(True)
-        # Cap is generous to allow concatenated streams beyond a single file.
-        self._end_spin.setMaximum(max(duration, 1e9))
-        self._begin_spin.setMaximum(max(duration, 1e9))
+        self._end_spin.setMaximum(duration)
+        self._begin_spin.setMaximum(duration)
         self._begin_spin.setValue(0.0)
         self._end_spin.setValue(duration)
         # Duration just became known, so the run's frame count (and therefore

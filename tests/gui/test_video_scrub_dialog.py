@@ -96,3 +96,10 @@ def test_capture_released_on_close(qapp, tiny_video) -> None:
     assert dialog._cap.isOpened()
     dialog.reject()
     assert not dialog._cap.isOpened()
+
+
+def test_format_time_shows_seconds_and_minutes() -> None:
+    from deepreefmap.gui.form.video_scrub import _format_time
+
+    assert _format_time(83.45) == "83.45 s (1:23.45)"
+    assert _format_time(0.0) == "0.00 s (0:00.00)"
