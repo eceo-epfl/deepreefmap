@@ -42,17 +42,48 @@ def assign_transect(window, row_index):
     combo.setCurrentIndex(1)
 
 
-def test_add_video_creates_unassigned_row(batch_window, tmp_path, monkeypatch):
+def add_second_transect(window, name="T2"):
+    window._survey_store().add_transect(
+        Transect(
+            name=name,
+            start_lat=-17.6,
+            start_lon=177.2,
+            end_lat=-17.6005,
+            end_lon=177.2005,
+            length_m=50.0,
+        )
+    )
+    window._refresh_survey_batch_tab()
+
+
+def test_add_video_stays_unassigned_between_transects(batch_window, tmp_path, monkeypatch):
+    add_second_transect(batch_window)
     add_video(batch_window, tmp_path, monkeypatch)
     assert batch_window._survey_pass_table.rowCount() == 1
     assert batch_window._survey_rows[0].transect_id is None
     assert batch_window._survey_rows[0].end_s == 60.0
     assert not batch_window._survey_start_btn.isEnabled()
+    assert batch_window._survey_start_btn.text() == "Assign transects first (1 to do)"
+    combo = batch_window._survey_pass_table.cellWidget(0, _COL_TRANSECT)
+    assert combo.currentText() == "Not assigned yet"
+    assert combo.styleSheet() != ""
     assert batch_window._survey_store().list_passes() == []
 
 
-def test_assigning_transect_persists_pass(batch_window, tmp_path, monkeypatch):
+def test_add_video_preselects_the_only_transect(batch_window, tmp_path, monkeypatch):
     add_video(batch_window, tmp_path, monkeypatch)
+    assert batch_window._survey_rows[0].transect_id is not None
+    assert len(batch_window._survey_store().list_passes()) == 1
+    combo = batch_window._survey_pass_table.cellWidget(0, _COL_TRANSECT)
+    assert combo.currentText() == "T1"
+    assert combo.styleSheet() == ""
+    assert batch_window._survey_start_btn.isEnabled()
+
+
+def test_assigning_transect_persists_pass(batch_window, tmp_path, monkeypatch):
+    add_second_transect(batch_window)
+    add_video(batch_window, tmp_path, monkeypatch)
+    assert batch_window._survey_store().list_passes() == []
     assign_transect(batch_window, 0)
     passes = batch_window._survey_store().list_passes()
     assert len(passes) == 1

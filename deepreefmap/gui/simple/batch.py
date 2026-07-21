@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from deepreefmap.gui.core.theme import WARN_BG, WARN_BORDER, WARN_TEXT
 from deepreefmap.gui.form.video_scrub import VideoScrubDialog
 from deepreefmap.pipeline.artifacts import ReconstructionCancelled
 from deepreefmap.survey.models import (
@@ -50,6 +51,17 @@ _COL_VIDEO, _COL_TRANSECT, _COL_DIRECTION, _COL_TRIM, _COL_STATUS = range(5)
 
 def _mmss(seconds: float) -> str:
     return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
+
+
+def _style_transect_combo(combo: QComboBox, *, assigned: bool) -> None:
+    """Unassigned rows must look wrong from across the room."""
+    if assigned:
+        combo.setStyleSheet("")
+    else:
+        combo.setStyleSheet(
+            f"QComboBox {{ background-color: {WARN_BG}; color: {WARN_TEXT};"
+            f" border: 1px solid {WARN_BORDER}; }}"
+        )
 
 
 def _probe_video(path: str) -> tuple[float, float] | None:
@@ -219,12 +231,13 @@ class SimpleBatchMixin(MixinBase):
     def _fill_transect_combo(self, combo: QComboBox, selected: uuid.UUID | None) -> None:
         combo.blockSignals(True)
         combo.clear()
-        combo.addItem("Select…", None)
+        combo.addItem("Not assigned yet", None)
         for transect in self._survey_transects:
             combo.addItem(transect.name, str(transect.id))
             if selected is not None and transect.id == selected:
                 combo.setCurrentIndex(combo.count() - 1)
         combo.blockSignals(False)
+        _style_transect_combo(combo, assigned=combo.currentData() is not None)
 
     def _append_survey_row(self, row: _PassRow) -> None:
         table = self._survey_pass_table
@@ -279,7 +292,15 @@ class SimpleBatchMixin(MixinBase):
             asset.duration_s = duration_s
             asset.fps = fps
             asset = store.upsert_video(asset)
-            self._append_survey_row(_PassRow(video=asset, begin_s=0.0, end_s=duration_s))
+            # With exactly one transect the choice is unambiguous, so preselect
+            # it. Never copy the previous row's transect: a silently wrong
+            # assignment is worse than a loud empty one.
+            only = self._survey_transects[0].id if len(self._survey_transects) == 1 else None
+            self._append_survey_row(
+                _PassRow(video=asset, begin_s=0.0, end_s=duration_s, transect_id=only)
+            )
+            if only is not None:
+                self._persist_survey_row(self._survey_rows[-1])
         if skipped:
             self._status_label.setText(f"Skipped {skipped} unreadable video(s).")
         self._recompute_survey_start()
@@ -317,6 +338,7 @@ class SimpleBatchMixin(MixinBase):
     def _on_survey_row_transect(self, row: _PassRow, combo: QComboBox, _index: int) -> None:
         data = combo.currentData()
         row.transect_id = uuid.UUID(data) if data else None
+        _style_transect_combo(combo, assigned=row.transect_id is not None)
         self._persist_survey_row(row)
 
     def _on_survey_row_direction(self, row: _PassRow, direction: str) -> None:
@@ -400,6 +422,9 @@ class SimpleBatchMixin(MixinBase):
             return
         if unassigned:
             self._survey_start_btn.setEnabled(False)
+            # The message sits on the button itself: the status label is at the
+            # far end of the toolbar, easy to miss from the pass table.
+            self._survey_start_btn.setText(f"Assign transects first ({unassigned} to do)")
             self._status_label.setText(f"{unassigned} pass(es) still need a transect.")
             return
         missing = self._survey_missing_models()
@@ -522,7 +547,7 @@ class SimpleBatchMixin(MixinBase):
             self._status_label.setText(f"Batch finished: {ok}/{total} succeeded.")
         self._refresh_survey_pass_statuses()
         self._recompute_survey_start()
-        self._refresh_past_runs_combo()
+        self._refresh_data_manager()
         self._refresh_survey_analysis()
 
     def _on_survey_stop(self) -> None:
