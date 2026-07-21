@@ -145,14 +145,26 @@ def test_start_button_disabled_when_form_invalid(make_window) -> None:
 
 def test_run_controls_morph_setup_to_running(make_window) -> None:
     window = make_window()
+    window._set_ui_mode("advanced")
     # isHidden, not isVisible: the offscreen test window is never shown on screen.
-    window._start_btn.setVisible(False)
-    window._pause_btn.setVisible(True)
-    window._spinner_stop.setVisible(True)
+    window._begin_run_controls()
+    assert window._start_btn.isHidden()
+    assert not window._pause_btn.isHidden()
+    assert not window._spinner_stop.isHidden()
     window._end_run_controls()
     assert not window._start_btn.isHidden()
     assert window._pause_btn.isHidden()
     assert window._spinner_stop.isHidden()
+
+
+def test_simple_mode_never_shows_a_start_button(make_window) -> None:
+    """Simple mode launches runs from its Run step, so start would be a decoy."""
+    window = make_window()
+    assert window._ui_mode == "simple"
+    window._begin_run_controls()
+    assert not window._pause_btn.isHidden()
+    window._end_run_controls()
+    assert window._start_btn.isHidden()
 
 
 def test_bars_carry_no_text_and_overall_estimate_is_visible(make_window, monkeypatch, tmp_path) -> None:
@@ -213,3 +225,39 @@ def test_hover_popup_builds_rows_from_estimator(make_window, monkeypatch) -> Non
     assert window._timing_popup.isVisible()
     window._on_total_bar_hover(None)
     assert not window._timing_popup.isVisible()
+
+
+def test_progress_readouts_are_hidden_until_a_run_starts(window) -> None:
+    """Scenario: an idle window.
+
+    Expected behaviour: nothing reports progress until there is progress.
+    """
+    assert not window._progress_stack.isVisibleTo(window)
+    assert not window._bottom_progress_bar.isVisibleTo(window)
+    assert not window._eta_total_label.isVisibleTo(window)
+
+    window._begin_progress(window._recon_model)
+    assert window._progress_stack.isVisibleTo(window)
+    assert window._bottom_progress_bar.isVisibleTo(window)
+
+    window._reset_progress_bars()
+    assert not window._progress_stack.isVisibleTo(window)
+    assert not window._bottom_progress_bar.isVisibleTo(window)
+
+
+def test_bottom_bar_mirrors_total_progress(window) -> None:
+    window._begin_progress(window._recon_model)
+    window._apply_progress("preprocess", "Preprocess", current=5, total=10)
+    assert window._bottom_progress_bar.value() == window._total_progress_bar.value()
+
+
+def test_status_and_transport_live_in_the_bottom_bar(window) -> None:
+    for widget in (window._status_label, window._start_btn, window._spinner_stop):
+        assert window._bottom_bar.isAncestorOf(widget)
+
+
+def test_spinner_honours_a_larger_size(qapp) -> None:
+    from deepreefmap.gui.core.spinner import SpinnerStopButton
+
+    assert SpinnerStopButton(size=40).width() == 40
+    assert SpinnerStopButton().width() == 26

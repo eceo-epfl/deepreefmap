@@ -20,9 +20,10 @@ _STEP_DEG = _DEG_PER_SEC * _TICK_MS / 1000.0
 class SpinnerStopButton(QAbstractButton):
     """Circular abort button with a spinning ring border."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, size: int = _SIZE) -> None:
         super().__init__(parent)
-        self.setFixedSize(_SIZE, _SIZE)
+        self._size = size
+        self.setFixedSize(size, size)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("Stop the running job")
         self._angle = 0.0
@@ -69,7 +70,7 @@ class SpinnerStopButton(QAbstractButton):
 
         active = self._hovered and not self._stopping
         m = 2.0
-        ring = QRectF(m, m, _SIZE - 2 * m, _SIZE - 2 * m)
+        ring = QRectF(m, m, self._size - 2 * m, self._size - 2 * m)
 
         # Faint full-circle track so the moving arc reads as a ring, not a
         # floating sliver.
@@ -91,8 +92,8 @@ class SpinnerStopButton(QAbstractButton):
             square_color = QColor(ERROR).lighter(120)
         else:
             square_color = QColor(ERROR)
-        side = _SIZE * 0.38
-        off = (_SIZE - side) / 2
+        side = self._size * 0.38
+        off = (self._size - side) / 2
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(square_color)
         p.drawRoundedRect(QRectF(off, off, side, side), 2.0, 2.0)

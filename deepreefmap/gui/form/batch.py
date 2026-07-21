@@ -130,7 +130,7 @@ class BatchMixin(MixinBase):
         self._status_label.setText(f"Batch starting: {len(jobs)} job(s)")
         self._progress_bar.setRange(0, len(jobs))
         self._progress_bar.setValue(0)
-        self._progress_bar.setVisible(True)
+        self._set_progress_widgets_visible(True)
 
         # Snapshot the form once so a user editing it mid-batch doesn't
         # produce mixed configurations across jobs.
@@ -189,7 +189,7 @@ class BatchMixin(MixinBase):
         if self._progress_bar.maximum() != total:
             self._progress_bar.setRange(0, total)
         self._progress_bar.setValue(idx - 1)
-        self._progress_bar.setVisible(True)
+        self._set_progress_widgets_visible(True)
 
     def _on_batch_done(self, ok: int, total: int, last_error: str) -> None:
         self._progress_bar.setValue(total)

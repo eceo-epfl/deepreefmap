@@ -9,7 +9,9 @@ import sqlite3
 import uuid
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from functools import partial
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
@@ -21,6 +23,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QToolButton,
@@ -28,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from deepreefmap.gui.core.icons import crosshair_icon
 from deepreefmap.gui.core.theme import PRIMARY
 from deepreefmap.gui.map.overlays import OverlayTransect
 from deepreefmap.gui.map.widget import SlippyMapWidget
@@ -42,15 +46,39 @@ from deepreefmap.survey.models.importers import (
 logger = logging.getLogger(__name__)
 
 
+class NotesEdit(QPlainTextEdit):
+    """Multi-line notes that commit on focus-out.
+
+    QPlainTextEdit has no editingFinished, and the transect form autosaves on
+    field exit, so the signal is supplied here.
+    """
+
+    editing_finished = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setPlaceholderText("Anything worth remembering about this transect")
+        self.setTabChangesFocus(True)
+        self.setFixedHeight(64)
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().focusOutEvent(event)
+        self.editing_finished.emit()
+
+
 class SimplePlanMixin(MixinBase):
     """DeepReefMapWindow methods for the transect planning tab."""
 
     _transect_form_id: uuid.UUID | None = None
-    _quick_entry_to_end: bool = False
+    _pick_stage: str | None = None
     _plan_map_fitted: bool = False
 
     def _build_plan_page(self) -> QWidget:
-        """Full-page Plan section: the map beside the transect list and details."""
+        """Plan step: the map beside the transect editor, over the run browser.
+
+        Keeping the browser here means a video that landed under the wrong
+        transect, or none at all, is fixed where the transects are.
+        """
         page = QSplitter(Qt.Orientation.Horizontal)
 
         map_pane = QWidget()
@@ -91,30 +119,31 @@ class SimplePlanMixin(MixinBase):
         self._tr_name_input = QLineEdit()
         grid.addWidget(self._tr_name_input, 0, 1, 1, 3)
 
-        # Boat-friendly entry: type decimal degrees once for the start point,
-        # again for the end point.
-        self._tr_quick_input = QLineEdit()
-        self._tr_quick_input.setPlaceholderText("lat lon  (Enter sets start, then end)")
-        self._tr_quick_input.returnPressed.connect(self._on_quick_entry)
-        grid.addWidget(QLabel("Quick"), 1, 0)
-        grid.addWidget(self._tr_quick_input, 1, 1, 1, 3)
-
-        self._tr_start_lat = QLineEdit()
-        self._tr_start_lon = QLineEdit()
-        self._tr_end_lat = QLineEdit()
-        self._tr_end_lon = QLineEdit()
-        grid.addWidget(QLabel("Start"), 2, 0)
-        grid.addWidget(self._tr_start_lat, 2, 1)
-        grid.addWidget(self._tr_start_lon, 2, 2)
-        grid.addWidget(self._coord_actions("start"), 2, 3)
-        grid.addWidget(QLabel("End"), 3, 0)
-        grid.addWidget(self._tr_end_lat, 3, 1)
-        grid.addWidget(self._tr_end_lon, 3, 2)
-        grid.addWidget(self._coord_actions("end"), 3, 3)
-        self._map_start_btn.toggled.connect(self._on_map_start_armed)
-        self._map_end_btn.toggled.connect(self._on_map_end_armed)
-        for edit in (self._tr_start_lat, self._tr_start_lon, self._tr_end_lat, self._tr_end_lon):
+        # One box per end takes a coordinate straight off a GPS, pasted or
+        # typed, in either "lat lon" or "lat, lon" form.
+        self._tr_start_coord = QLineEdit()
+        self._tr_start_coord.setPlaceholderText("lat, lon")
+        self._tr_end_coord = QLineEdit()
+        self._tr_end_coord.setPlaceholderText("lat, lon")
+        grid.addWidget(QLabel("Start"), 1, 0)
+        grid.addWidget(self._tr_start_coord, 1, 1, 1, 2)
+        grid.addWidget(self._coord_actions("start"), 1, 3)
+        grid.addWidget(QLabel("End"), 2, 0)
+        grid.addWidget(self._tr_end_coord, 2, 1, 1, 2)
+        grid.addWidget(self._coord_actions("end"), 2, 3)
+        self._map_start_btn.toggled.connect(partial(self._on_endpoint_armed, "start"))
+        self._map_end_btn.toggled.connect(partial(self._on_endpoint_armed, "end"))
+        for edit in (self._tr_start_coord, self._tr_end_coord):
             edit.editingFinished.connect(self._on_coords_edited)
+
+        # The common case is a brand new transect, so one button walks both
+        # ends: click the start, then click the end.
+        self._pick_both_btn = QPushButton("Pick both on map")
+        self._pick_both_btn.setIcon(crosshair_icon(16))
+        self._pick_both_btn.setCheckable(True)
+        self._pick_both_btn.setToolTip("Click the start of the transect, then the end.")
+        self._pick_both_btn.toggled.connect(self._on_pick_both_toggled)
+        grid.addWidget(self._pick_both_btn, 3, 1, 1, 3)
 
         self._tr_length = QDoubleSpinBox()
         self._tr_length.setRange(0.0, 500.0)
@@ -131,8 +160,8 @@ class SimplePlanMixin(MixinBase):
         grid.addWidget(QLabel("Depth"), 4, 2)
         grid.addWidget(self._tr_depth, 4, 3)
 
-        grid.addWidget(QLabel("Notes"), 5, 0)
-        self._tr_description = QLineEdit()
+        grid.addWidget(QLabel("Notes"), 5, 0, Qt.AlignmentFlag.AlignTop)
+        self._tr_description = NotesEdit()
         grid.addWidget(self._tr_description, 5, 1, 1, 3)
 
         self._tr_geodesic_label = QLabel("")
@@ -146,20 +175,26 @@ class SimplePlanMixin(MixinBase):
         # later edits commit on field exit.
         self._tr_name_input.textChanged.connect(self._on_draft_changed)
         self._tr_name_input.editingFinished.connect(self._maybe_autosave)
-        for edit in (self._tr_start_lat, self._tr_start_lon, self._tr_end_lat, self._tr_end_lon):
+        for edit in (self._tr_start_coord, self._tr_end_coord):
             edit.textChanged.connect(self._on_draft_changed)
         self._tr_length.editingFinished.connect(self._maybe_autosave)
         self._tr_depth.editingFinished.connect(self._maybe_autosave)
-        self._tr_description.editingFinished.connect(self._maybe_autosave)
+        self._tr_description.editing_finished.connect(self._maybe_autosave)
 
         page.addWidget(map_pane)
         page.addWidget(side_pane)
         page.setStretchFactor(0, 1)
         page.setStretchFactor(1, 0)
         side_pane.setMinimumWidth(340)
+
+        split = QSplitter(Qt.Orientation.Vertical)
+        split.addWidget(page)
+        split.addWidget(self._build_simple_data_host())
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 2)
         # No list refresh here: refreshes happen when the simple mode is entered,
         # so opening the store (which creates survey.db) waits until then.
-        return page
+        return split
 
     # --- List handling ---
 
@@ -197,13 +232,12 @@ class SimplePlanMixin(MixinBase):
         if self._transect_form_id is not None:
             return None
         name = self._tr_name_input.text().strip()
-        lat = self._tr_start_lat.text().strip()
-        lon = self._tr_start_lon.text().strip()
-        if not (name or lat or lon):
+        start = self._tr_start_coord.text().strip()
+        if not (name or start):
             return None
         label = name or "New transect"
-        if lat and lon:
-            label += f"  ({lat}, {lon})"
+        if start:
+            label += f"  ({start})"
         return label
 
     def _on_draft_changed(self) -> None:
@@ -239,16 +273,15 @@ class SimplePlanMixin(MixinBase):
             return
         self._transect_form_id = transect.id
         self._tr_name_input.setText(transect.name)
-        self._tr_start_lat.setText(f"{transect.start_lat:.6f}")
-        self._tr_start_lon.setText(f"{transect.start_lon:.6f}")
-        self._tr_end_lat.setText(f"{transect.end_lat:.6f}")
-        self._tr_end_lon.setText(f"{transect.end_lon:.6f}")
+        self._tr_start_coord.setText(f"{transect.start_lat:.6f}, {transect.start_lon:.6f}")
+        self._tr_end_coord.setText(f"{transect.end_lat:.6f}, {transect.end_lon:.6f}")
         self._tr_length.setValue(transect.length_m or 0.0)
         self._tr_depth.setValue(transect.depth_m or 0.0)
-        self._tr_description.setText(transect.description)
-        self._quick_entry_to_end = False
+        self._tr_description.setPlainText(transect.description)
+        self._pick_stage = None
         self._refresh_geodesic_label()
         self._refresh_plan_map()
+        self._focus_data_on_transect(transect.id)
 
     # --- Form handling ---
 
@@ -257,62 +290,38 @@ class SimplePlanMixin(MixinBase):
         self._transect_list.setCurrentRow(-1)
         for edit in (
             self._tr_name_input,
-            self._tr_quick_input,
-            self._tr_start_lat,
-            self._tr_start_lon,
-            self._tr_end_lat,
-            self._tr_end_lon,
+            self._tr_start_coord,
+            self._tr_end_coord,
             self._tr_description,
         ):
             edit.clear()
         self._tr_length.setValue(0.0)
         self._tr_depth.setValue(0.0)
         self._tr_geodesic_label.setText("")
-        self._quick_entry_to_end = False
+        self._pick_stage = None
         self._tr_name_input.setFocus()
 
-    def _on_quick_entry(self) -> None:
-        try:
-            lat, lon = parse_latlon(self._tr_quick_input.text())
-        except ValueError as exc:
-            self._status_label.setText(str(exc))
-            return
-        self._apply_endpoint(lat, lon)
-        self._tr_quick_input.clear()
-
-    def _apply_endpoint(self, lat: float, lon: float) -> None:
-        """Quick entry fills the start point first, then the end, alternating."""
-        self._set_endpoint("end" if self._quick_entry_to_end else "start", lat, lon)
-        self._quick_entry_to_end = not self._quick_entry_to_end
+    def _coord_edit(self, which: str) -> QLineEdit:
+        return self._tr_start_coord if which == "start" else self._tr_end_coord
 
     def _set_endpoint(self, which: str, lat: float, lon: float) -> None:
-        if which == "start":
-            self._tr_start_lat.setText(f"{lat:.6f}")
-            self._tr_start_lon.setText(f"{lon:.6f}")
-            self._status_label.setText("Start point set.")
-        else:
-            self._tr_end_lat.setText(f"{lat:.6f}")
-            self._tr_end_lon.setText(f"{lon:.6f}")
-            self._status_label.setText("End point set.")
+        self._coord_edit(which).setText(f"{lat:.6f}, {lon:.6f}")
+        self._status_label.setText(f"{which.capitalize()} point set.")
         self._refresh_geodesic_label()
         self._refresh_plan_map()
         self._maybe_autosave()
 
     def _form_coordinates(self) -> tuple[float, float, float, float]:
-        values = []
-        for edit, label in (
-            (self._tr_start_lat, "start latitude"),
-            (self._tr_start_lon, "start longitude"),
-            (self._tr_end_lat, "end latitude"),
-            (self._tr_end_lon, "end longitude"),
-        ):
-            text = edit.text().strip()
+        """Both endpoints in decimal degrees, raising if either is blank or unparseable."""
+        values: list[float] = []
+        for which in ("start", "end"):
+            text = self._coord_edit(which).text().strip()
             if not text:
-                raise ValueError(f"Missing {label}")
+                raise ValueError(f"Missing {which} point")
             try:
-                values.append(float(text))
-            except ValueError:
-                raise ValueError(f"Invalid {label}: {text}") from None
+                values.extend(parse_latlon(text))
+            except ValueError as exc:
+                raise ValueError(f"{which.capitalize()} point: {exc}") from None
         return values[0], values[1], values[2], values[3]
 
     def _on_coords_edited(self) -> None:
@@ -340,7 +349,7 @@ class SimplePlanMixin(MixinBase):
                 end_lon=lon2,
                 length_m=self._tr_length.value() or None,
                 depth_m=self._tr_depth.value() or None,
-                description=self._tr_description.text().strip(),
+                description=self._tr_description.toPlainText().strip(),
             )
         except ValueError as exc:
             self._status_label.setText(str(exc))
@@ -432,6 +441,8 @@ class SimplePlanMixin(MixinBase):
                 end=(transect.end_lat, transect.end_lon),
                 color=QColor(PRIMARY),
                 selected=transect.id == selected,
+                label=transect.name,
+                tooltip=f"<b>{transect.name}</b><br>Click to edit this transect",
             ))
         # An unsaved transect previews as soon as both endpoints are filled.
         if selected is None:
@@ -479,25 +490,54 @@ class SimplePlanMixin(MixinBase):
         return box
 
     def _copy_endpoint(self, which: str) -> None:
-        if which == "start":
-            lat, lon = self._tr_start_lat.text().strip(), self._tr_start_lon.text().strip()
-        else:
-            lat, lon = self._tr_end_lat.text().strip(), self._tr_end_lon.text().strip()
-        if not lat or not lon:
+        text = self._coord_edit(which).text().strip()
+        if not text:
             self._status_label.setText(f"No {which} point to copy.")
             return
-        QGuiApplication.clipboard().setText(f"{lat}, {lon}")
-        self._status_label.setText(f"Copied {which} point {lat}, {lon}.")
+        QGuiApplication.clipboard().setText(text)
+        self._status_label.setText(f"Copied {which} point {text}.")
 
-    def _on_map_start_armed(self, on: bool) -> None:
-        if on:
-            self._map_end_btn.setChecked(False)
+    def _on_endpoint_armed(self, which: str, on: bool) -> None:
+        """Only one pick can be armed, so a map click is never ambiguous."""
+        if not on:
+            self._sync_map_pick_mode()
+            return
+        other = self._map_end_btn if which == "start" else self._map_start_btn
+        other.setChecked(False)
+        self._pick_both_btn.setChecked(False)
+        self._pick_stage = None
+        self._sync_map_pick_mode()
 
-    def _on_map_end_armed(self, on: bool) -> None:
+    def _on_pick_both_toggled(self, on: bool) -> None:
         if on:
             self._map_start_btn.setChecked(False)
+            self._map_end_btn.setChecked(False)
+            self._pick_stage = "start"
+            self._status_label.setText("Click the start of the transect.")
+        else:
+            self._pick_stage = None
+        self._sync_map_pick_mode()
+
+    def _sync_map_pick_mode(self) -> None:
+        """Crosshair cursor whenever a click would land somewhere."""
+        armed = (
+            self._pick_stage is not None
+            or self._map_start_btn.isChecked()
+            or self._map_end_btn.isChecked()
+        )
+        self._plan_map.set_pick_mode(armed)
 
     def _on_plan_map_clicked(self, lat: float, lon: float) -> None:
+        if self._pick_stage == "start":
+            self._set_endpoint("start", lat, lon)
+            self._pick_stage = "end"
+            self._status_label.setText("Now click the end of the transect.")
+            return
+        if self._pick_stage == "end":
+            self._pick_stage = None
+            self._pick_both_btn.setChecked(False)
+            self._set_endpoint("end", lat, lon)
+            return
         if self._map_start_btn.isChecked():
             self._map_start_btn.setChecked(False)
             self._set_endpoint("start", lat, lon)
@@ -515,12 +555,7 @@ class SimplePlanMixin(MixinBase):
     def _on_plan_endpoint_moved(self, transect_id: str, which: str, lat: float, lon: float) -> None:
         if self._transect_form_id is None or str(self._transect_form_id) != transect_id:
             return
-        if which == "start":
-            self._tr_start_lat.setText(f"{lat:.6f}")
-            self._tr_start_lon.setText(f"{lon:.6f}")
-        else:
-            self._tr_end_lat.setText(f"{lat:.6f}")
-            self._tr_end_lon.setText(f"{lon:.6f}")
+        self._coord_edit(which).setText(f"{lat:.6f}, {lon:.6f}")
         self._on_transect_save()
 
     def _survey_data_changed(self) -> None:

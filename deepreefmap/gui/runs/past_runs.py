@@ -45,5 +45,5 @@ class PastRunsMixin(MixinBase):
         if getattr(self, "_ui_mode", "advanced") == "simple":
             self._status_label.setText("Workspace cleared.")
         else:
-            self._status_label.setText("Ready. Fill the form above and click Start.")
+            self._status_label.setText(self._idle_status_text())
         self._set_app_mode("SETUP")

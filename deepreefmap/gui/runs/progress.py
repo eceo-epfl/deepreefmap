@@ -257,6 +257,7 @@ class ProgressBarsMixin(MixinBase):
         self._total_progress_bar.setRange(0, 100)
         self._total_progress_bar.setValue(0)
         self._total_progress_bar.setEnabled(True)
+        self._set_progress_widgets_visible(True)
         self._status_base_text = ""
         self._status_count_text = ""
         self._status_phase_key = None
@@ -285,16 +286,22 @@ class ProgressBarsMixin(MixinBase):
             expected_points = None
         return RunEtaEstimator(frames=0, priors=priors, expected_points=expected_points)
 
+    def _set_progress_widgets_visible(self, visible: bool) -> None:
+        """Progress readouts belong to a run in flight; idle shows none of them."""
+        self._progress_stack.setVisible(visible)
+        self._eta_total_label.setVisible(visible)
+        self._bottom_progress_bar.setVisible(visible)
+
     def _reset_progress_bars(self) -> None:
-        # Bars stay visible but empty when idle so the top-right cluster always
-        # reads as the run status area next to the play button.
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
         self._progress_bar.setEnabled(False)
         self._total_progress_bar.setRange(0, 100)
         self._total_progress_bar.setValue(0)
         self._total_progress_bar.setEnabled(False)
+        self._bottom_progress_bar.setValue(0)
         self._eta_total_label.setText("")
+        self._set_progress_widgets_visible(False)
         self._active_progress_model = None
         self._eta = None
         popup = getattr(self, "_timing_popup", None)
@@ -473,6 +480,7 @@ class ProgressBarsMixin(MixinBase):
             self._total_progress_bar.setRange(0, 100)
             self._total_progress_bar.setValue(pct)
             self._total_progress_bar.setEnabled(True)
+            self._bottom_progress_bar.setValue(pct)
             panel = getattr(self, "_progress_panel", None)
             if panel is not None:
                 panel.set_percent(pct)

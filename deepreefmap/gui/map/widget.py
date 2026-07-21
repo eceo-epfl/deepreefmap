@@ -6,7 +6,7 @@ import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QPen, QWheelEvent
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QToolTip, QWidget
 
 from deepreefmap.gui.map.overlays import (
     ENDPOINT_HIT_PX,
@@ -42,6 +42,10 @@ class SlippyMapWidget(QWidget):
         self._press_center_tile: tuple[float, float] | None = None
         self._dragging_endpoint: tuple[OverlayTransect, str] | None = None
         self._moved = False
+        self._pick_mode = False
+        self._hovered_id: str | None = None
+        # Tracking without a button held is what makes hover tooltips possible.
+        self.setMouseTracking(True)
         self.setMinimumHeight(240)
 
     # --- view state ---
@@ -59,6 +63,14 @@ class SlippyMapWidget(QWidget):
     def set_editable(self, transect_id: str | None) -> None:
         self._editable_id = transect_id
         self.update()
+
+    def set_pick_mode(self, picking: bool) -> None:
+        """Arm the map for coordinate picking: crosshair cursor, and a click on
+        an existing transect sets a point rather than selecting that transect."""
+        self._pick_mode = picking
+        self.setCursor(
+            Qt.CursorShape.CrossCursor if picking else Qt.CursorShape.ArrowCursor
+        )
 
     def fit_transects(self) -> None:
         points = [p for t in self._transects for p in (t.start, t.end)]
@@ -126,6 +138,24 @@ class SlippyMapWidget(QWidget):
             painter.setPen(QPen(QColor(255, 255, 255), 1.5 if editable else 0.5))
             painter.drawEllipse(p1, radius, radius)
             painter.drawEllipse(p2, radius, radius)
+            if transect.label:
+                self._paint_label(painter, transect, p1, p2)
+
+    def _paint_label(
+        self, painter: QPainter, transect: OverlayTransect, p1: QPointF, p2: QPointF
+    ) -> None:
+        """Name plate at the midpoint, on a dark plate so it reads over any tile."""
+        metrics = painter.fontMetrics()
+        pad = 3
+        width = metrics.horizontalAdvance(transect.label)
+        mid_x = (p1.x() + p2.x()) / 2 - width / 2
+        mid_y = (p1.y() + p2.y()) / 2 - metrics.height() - 6
+        plate = QRectF(mid_x - pad, mid_y - pad, width + 2 * pad, metrics.height() + 2 * pad)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 150))
+        painter.drawRoundedRect(plate, 3, 3)
+        painter.setPen(QPen(QColor(255, 255, 255)))
+        painter.drawText(QPointF(mid_x, mid_y + metrics.ascent()), transect.label)
 
     def _paint_attribution(self, painter: QPainter) -> None:
         text = self._cache.layer.attribution
@@ -163,6 +193,28 @@ class SlippyMapWidget(QWidget):
                 return transect
         return None
 
+    def _update_hover(self, pos: QPointF) -> None:
+        """Tooltip and cursor for the transect under the pointer, so a map full
+        of lines can be read without clicking each one."""
+        if self._pick_mode:
+            return
+        hit = self._transect_at(pos)
+        if hit is None:
+            QToolTip.hideText()
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self._hovered_id = None
+            return
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        if hit.id != self._hovered_id:
+            self._hovered_id = hit.id
+        if hit.tooltip:
+            QToolTip.showText(self.mapToGlobal(pos.toPoint()), hit.tooltip, self)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().leaveEvent(event)
+        self._hovered_id = None
+        QToolTip.hideText()
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
             return
@@ -173,6 +225,7 @@ class SlippyMapWidget(QWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._press_pos is None:
+            self._update_hover(event.position())
             return
         delta = event.position() - self._press_pos
         if not self._moved and math.hypot(delta.x(), delta.y()) < 3:
@@ -201,7 +254,7 @@ class SlippyMapWidget(QWidget):
             latlon = transect.start if which == "start" else transect.end
             self.transect_endpoint_moved.emit(transect.id, which, latlon[0], latlon[1])
         elif not self._moved:
-            hit = self._transect_at(event.position())
+            hit = None if self._pick_mode else self._transect_at(event.position())
             if hit is not None:
                 self.transect_clicked.emit(hit.id)
             else:

@@ -61,3 +61,35 @@ def test_analysis_level_switch_recomputes(analysis_window):
     w._analysis_level_combo.setCurrentText("coarse")
     assert len(w._analysis_covers) == 1
     assert pytest.approx(sum(w._analysis_covers[0].cover.values())) == 0.3
+
+
+def test_analysis_map_labels_and_counts_each_transect(analysis_window):
+    """Transects are identifiable on the map, with their survey effort on hover."""
+    window = analysis_window
+    window._refresh_survey_analysis()
+    overlays = window._analysis_map._transects
+    assert overlays
+    overlay = overlays[0]
+    assert overlay.label == "T1"
+    assert "T1" in overlay.tooltip
+    assert "1 video" in overlay.tooltip
+    assert "1 pass" in overlay.tooltip
+    assert "succeeded" in overlay.tooltip
+
+
+def test_unprocessed_transect_says_so(analysis_window):
+    from deepreefmap.survey.models import Transect
+
+    window = analysis_window
+    window._survey_store().add_transect(
+        Transect(
+            name="Untouched",
+            start_lat=-17.6,
+            start_lon=177.2,
+            end_lat=-17.6005,
+            end_lon=177.2005,
+        )
+    )
+    window._refresh_survey_analysis()
+    tooltips = {o.label: o.tooltip for o in window._analysis_map._transects}
+    assert "Not processed yet" in tooltips["Untouched"]

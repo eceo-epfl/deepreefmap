@@ -111,17 +111,19 @@ def test_open_routes_through_auto_load(tmp_path, make_window, monkeypatch):
 def test_data_panel_moves_between_hosts(make_window):
     window = make_window()
     assert window._data_panel.parentWidget() is window._data_host_simple
-    window._mode_toggle_btn.click()
+    window._mode_buttons["advanced"].click()
     assert window._data_panel.parentWidget() is window._data_tab
-    window._mode_toggle_btn.click()
+    window._mode_buttons["simple"].click()
     assert window._data_panel.parentWidget() is window._data_host_simple
 
 
 def test_data_tab_and_nav_registered(make_window):
+    """Advanced keeps a Data tab; simple folds the browser into the Plan step."""
     window = make_window()
     assert window._sidebar_tabs.tabText(window._TAB_DATA) == "Data"
     assert window._sidebar_tabs.tabText(window._TAB_SYSTEM) == "System"
-    assert "data" in window._simple_nav_buttons
+    assert list(window._simple_nav_buttons) == ["plan", "run", "analyse"]
+    assert window._data_host_simple.isAncestorOf(window._data_panel)
 
 
 def test_rename_updates_manifest_and_card(tmp_path, make_window, monkeypatch):

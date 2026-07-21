@@ -207,6 +207,9 @@ class DeepReefMapWindow(
         central_layout.addWidget(top_bar)
         central_layout.addWidget(self._run_meta_banner)
         central_layout.addWidget(self._central_vsplitter, 1)
+        # Status and progress span the whole window under everything else, so
+        # they read the same in both modes and survive log-panel resizing.
+        central_layout.addWidget(self._build_bottom_bar())
         self.setCentralWidget(central)
 
         # Apply the saved mode last: it flips the left stack and re-divides the

@@ -176,16 +176,42 @@ class SimpleAnalysisMixin(MixinBase):
     def _refresh_analysis_map(self, store, selected_id: uuid.UUID | None) -> None:
         overlays = []
         for transect in store.list_transects():
-            statuses = [run.status for run in store.runs_for_transect(transect.id)]
+            runs = store.runs_for_transect(transect.id)
+            statuses = [run.status for run in runs]
             overlays.append(OverlayTransect(
                 id=str(transect.id),
                 start=(transect.start_lat, transect.start_lon),
                 end=(transect.end_lat, transect.end_lon),
                 color=transect_status_color(statuses),
                 selected=transect.id == selected_id,
+                label=transect.name,
+                tooltip=self._transect_tooltip(store, transect, runs),
             ))
         self._analysis_map.set_transects(overlays)
         self._analysis_map.fit_transects()
+
+    def _transect_tooltip(self, store, transect, runs: list) -> str:
+        """What has actually been surveyed here, without opening the transect."""
+        passes = store.list_passes(transect_id=transect.id)
+        videos = {p.video_id for p in passes}
+        done = sum(1 for run in runs if run.status == "succeeded")
+        failed = sum(1 for run in runs if run.status == "failed")
+        lines = [f"<b>{transect.name}</b>"]
+        lines.append(f"{len(videos)} video{'s' if len(videos) != 1 else ''}"
+                     f" · {len(passes)} pass{'es' if len(passes) != 1 else ''}")
+        if runs:
+            summary = f"{done} of {len(runs)} run{'s' if len(runs) != 1 else ''} succeeded"
+            if failed:
+                summary += f", {failed} failed"
+            lines.append(summary)
+            last = max((run.started_at or run.created_at for run in runs), default="")
+            if last:
+                lines.append(f"Last run {last[:10]}")
+        else:
+            lines.append("Not processed yet")
+        if transect.length_m:
+            lines.append(f"{transect.length_m:g} m tape")
+        return "<br>".join(lines)
 
     def _on_analysis_map_transect_clicked(self, transect_id: str) -> None:
         combo = self._analysis_transect_combo

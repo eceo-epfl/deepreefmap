@@ -22,17 +22,19 @@ def make_transect(name="T1"):
     )
 
 
-def enter_quick(window, text):
-    window._tr_quick_input.setText(text)
-    window._on_quick_entry()
+def type_coord(window, which, text):
+    """Type a coordinate the way a field worker pastes one off a GPS."""
+    edit = window._tr_start_coord if which == "start" else window._tr_end_coord
+    edit.setText(text)
+    window._on_coords_edited()
 
 
 def test_transect_autosaves_once_complete(plan_window):
     w = plan_window
     w._tr_name_input.setText("T1")
-    enter_quick(w, "-17.5 177.1")
+    type_coord(w, "start", "-17.5 177.1")
     assert w._survey_store().list_transects() == []
-    enter_quick(w, "-17.5005, 177.1005")
+    type_coord(w, "end", "-17.5005, 177.1005")
     transects = w._survey_store().list_transects()
     assert len(transects) == 1
     assert transects[0].name == "T1"
@@ -62,21 +64,34 @@ def test_draft_row_tracks_typing_before_save(plan_window):
     assert w._survey_store().list_transects() == []
 
 
-def test_quick_entry_rejects_garbage(plan_window):
-    enter_quick(plan_window, "junk")
-    assert "Expected" in plan_window._status_label.text()
+def test_out_of_range_coordinate_is_reported(plan_window):
+    """The range check that used to live on the Quick field still applies."""
+    w = plan_window
+    w._tr_name_input.setText("T1")
+    type_coord(w, "start", "-17.5, 177.1")
+    type_coord(w, "end", "95.0, 177.1")
+    assert w._survey_store().list_transects() == []
+    with pytest.raises(ValueError, match="out of range"):
+        w._form_coordinates()
+
+
+def test_garbage_coordinate_never_saves(plan_window):
+    w = plan_window
+    w._tr_name_input.setText("T1")
+    type_coord(w, "start", "junk")
+    type_coord(w, "end", "-17.5, 177.1")
+    assert w._survey_store().list_transects() == []
 
 
 def test_map_buttons_set_endpoints_one_shot(plan_window):
     w = plan_window
     w._map_start_btn.setChecked(True)
     w._plan_map.map_clicked.emit(-17.5, 177.1)
-    assert w._tr_start_lat.text() == "-17.500000"
-    assert w._tr_start_lon.text() == "177.100000"
+    assert w._tr_start_coord.text() == "-17.500000, 177.100000"
     assert not w._map_start_btn.isChecked()
     w._map_end_btn.setChecked(True)
     w._plan_map.map_clicked.emit(-17.5005, 177.1005)
-    assert w._tr_end_lat.text() == "-17.500500"
+    assert w._tr_end_coord.text() == "-17.500500, 177.100500"
     assert not w._map_end_btn.isChecked()
 
 
@@ -105,8 +120,7 @@ def test_copy_endpoint_puts_latlon_on_clipboard(plan_window, monkeypatch):
 
     monkeypatch.setattr("deepreefmap.gui.simple.plan.QGuiApplication", _App)
     w = plan_window
-    w._tr_start_lat.setText("-17.500000")
-    w._tr_start_lon.setText("177.100000")
+    w._tr_start_coord.setText("-17.500000, 177.100000")
     w._copy_endpoint("start")
     assert captured == ["-17.500000, 177.100000"]
     w._copy_endpoint("end")
@@ -116,8 +130,8 @@ def test_copy_endpoint_puts_latlon_on_clipboard(plan_window, monkeypatch):
 def test_map_click_without_armed_button_is_ignored(plan_window):
     w = plan_window
     w._plan_map.map_clicked.emit(-17.5, 177.1)
-    assert w._tr_start_lat.text() == ""
-    assert w._tr_end_lat.text() == ""
+    assert w._tr_start_coord.text() == ""
+    assert w._tr_end_coord.text() == ""
 
 
 def test_draft_line_appears_once_both_endpoints_set(plan_window):
@@ -138,8 +152,8 @@ def test_duplicate_name_reports_and_keeps_one(plan_window):
     w = plan_window
     w._survey_store().add_transect(make_transect())
     w._tr_name_input.setText("T1")
-    enter_quick(w, "-17.6 177.2")
-    enter_quick(w, "-17.6005 177.2005")
+    type_coord(w, "start", "-17.6 177.2")
+    type_coord(w, "end", "-17.6005 177.2005")
     w._on_transect_save()
     assert "already exists" in w._status_label.text()
     assert len(w._survey_store().list_transects()) == 1
@@ -151,7 +165,7 @@ def test_edit_selected_transect_updates_row(plan_window):
     w._refresh_transect_list()
     w._transect_list.setCurrentRow(0)
     assert w._tr_name_input.text() == "T1"
-    w._tr_end_lat.setText("-17.502")
+    w._tr_end_coord.setText("-17.502, 177.1005")
     w._on_transect_save()
     stored = w._survey_store().list_transects()
     assert len(stored) == 1
@@ -201,3 +215,57 @@ def test_export_csv_round_trip(plan_window, tmp_path, monkeypatch):
     )
     w._on_transects_export()
     assert "T1" in out_path.read_text()
+
+
+def test_pick_both_walks_start_then_end(plan_window):
+    """Scenario: a new transect drawn entirely on the map.
+
+    Expected behaviour: one button, two clicks, then it disarms itself.
+    """
+    w = plan_window
+    w._pick_both_btn.setChecked(True)
+    assert w._plan_map._pick_mode
+    w._plan_map.map_clicked.emit(-17.5, 177.1)
+    assert w._tr_start_coord.text() == "-17.500000, 177.100000"
+    assert w._tr_end_coord.text() == ""
+    assert "end" in w._status_label.text().lower()
+    w._plan_map.map_clicked.emit(-17.5005, 177.1005)
+    assert w._tr_end_coord.text() == "-17.500500, 177.100500"
+    assert not w._pick_both_btn.isChecked()
+    assert not w._plan_map._pick_mode
+
+
+def test_single_endpoint_pick_disarms_pick_both(plan_window):
+    w = plan_window
+    w._pick_both_btn.setChecked(True)
+    w._map_end_btn.setChecked(True)
+    assert not w._pick_both_btn.isChecked()
+    assert w._pick_stage is None
+    w._plan_map.map_clicked.emit(-17.6, 177.2)
+    assert w._tr_end_coord.text() == "-17.600000, 177.200000"
+    assert w._tr_start_coord.text() == ""
+
+
+def test_notes_round_trip_through_the_store(plan_window):
+    w = plan_window
+    w._tr_name_input.setText("T1")
+    type_coord(w, "start", "-17.5, 177.1")
+    type_coord(w, "end", "-17.5005, 177.1005")
+    w._tr_description.setPlainText("tape run W→E\nviz ~12 m")
+    w._maybe_autosave()
+    stored = w._survey_store().list_transects()[0]
+    assert stored.description == "tape run W→E\nviz ~12 m"
+    w._on_transect_new()
+    w._refresh_transect_list()
+    w._transect_list.setCurrentRow(0)
+    assert w._tr_description.toPlainText() == "tape run W→E\nviz ~12 m"
+
+
+def test_selecting_a_transect_filters_the_browser(plan_window):
+    w = plan_window
+    transect = make_transect()
+    w._survey_store().add_transect(transect)
+    w._refresh_transect_list()
+    w._transect_list.setCurrentRow(0)
+    assert w._data_facet == "transects"
+    assert w._data_selected_key == ("transect", str(transect.id))

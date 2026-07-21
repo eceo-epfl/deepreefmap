@@ -93,3 +93,37 @@ def test_render_without_network_is_safe(map_widget):
     map_widget.fit_transects()
     image = map_widget.grab()
     assert not image.isNull()
+
+
+def test_pick_mode_sends_clicks_past_transects(map_widget):
+    """While picking a coordinate, a click on a line sets the point rather than
+    selecting that transect."""
+    overlay = make_overlay()
+    map_widget.set_transects([overlay])
+    map_widget.fit_transects()
+    center = map_widget._px_of(
+        (overlay.start[0] + overlay.end[0]) / 2, (overlay.start[1] + overlay.end[1]) / 2
+    )
+    at = QPoint(int(center.x()), int(center.y()))
+    picked, selected = [], []
+    map_widget.map_clicked.connect(lambda lat, lon: picked.append((lat, lon)))
+    map_widget.transect_clicked.connect(selected.append)
+
+    QTest.mouseClick(map_widget, Qt.MouseButton.LeftButton, pos=at)
+    assert selected == [overlay.id]
+    assert picked == []
+
+    map_widget.set_pick_mode(True)
+    QTest.mouseClick(map_widget, Qt.MouseButton.LeftButton, pos=at)
+    assert len(picked) == 1
+    assert selected == [overlay.id]
+    assert map_widget.cursor().shape() == Qt.CursorShape.CrossCursor
+
+
+def test_labels_and_tooltips_ride_on_the_overlay():
+    overlay = make_overlay()
+    assert overlay.label == ""
+    labelled = make_overlay()
+    labelled.label = "T1 north"
+    labelled.tooltip = "3 videos"
+    assert (labelled.label, labelled.tooltip) == ("T1 north", "3 videos")

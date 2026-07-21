@@ -253,6 +253,16 @@ class DataManagerMixin(MixinBase):
                 return
         self._data_selected_key = None
 
+    def _focus_data_on_transect(self, transect_id: uuid.UUID) -> None:
+        """Point the browser at one transect, so the Plan step shows that
+        transect's runs directly beneath its map."""
+        if not hasattr(self, "_data_tree"):
+            return
+        self._data_facet = "transects"
+        self._data_facet_buttons["transects"].setChecked(True)
+        self._data_selected_key = ("transect", str(transect_id))
+        self._rebuild_data_tree()
+
     def _on_data_facet_changed(self, name: str) -> None:
         self._data_facet = name
         self._data_selected_key = None

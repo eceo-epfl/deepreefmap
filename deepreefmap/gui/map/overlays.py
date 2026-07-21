@@ -19,6 +19,10 @@ class OverlayTransect:
     end: tuple[float, float]
     color: QColor
     selected: bool = False
+    # Drawn beside the line so a transect is identifiable without clicking it;
+    # the tooltip carries the detail that would clutter the map.
+    label: str = ""
+    tooltip: str = ""
 
 
 def segment_distance_px(point: QPointF, a: QPointF, b: QPointF) -> float:
