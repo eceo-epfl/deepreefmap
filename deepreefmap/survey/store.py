@@ -292,8 +292,19 @@ class SurveyStore:
         if cursor.rowcount == 0:
             raise KeyError(f"No run_record row with id {run_id}")
 
+    def delete_run(self, run_id: uuid.UUID) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM run_record WHERE id = ?", (str(run_id),))
+
     def get_run(self, run_id: uuid.UUID) -> RunRecord | None:
         return self._get("run_record", RunRecord, run_id)
+
+    def run_by_dir_name(self, run_dir_name: str) -> RunRecord | None:
+        row = self._conn().execute(
+            "SELECT * FROM run_record WHERE run_dir_name = ? ORDER BY created_at DESC LIMIT 1",
+            (run_dir_name,),
+        ).fetchone()
+        return from_row(RunRecord, row) if row is not None else None
 
     def runs_for_pass(self, pass_id: uuid.UUID) -> list[RunRecord]:
         rows = self._conn().execute(

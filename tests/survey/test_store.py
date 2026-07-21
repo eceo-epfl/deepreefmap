@@ -145,6 +145,16 @@ def test_runs_for_transect_joins_passes(store):
     assert store.runs_for_pass(pass_.id) == [store.get_run(run.id)]
 
 
+def test_run_lookup_by_dir_name_and_delete(store):
+    _, _, pass_ = seed_pass(store)
+    run = RunRecord(pass_id=pass_.id, run_dir_name="t1__p01")
+    store.add_run(run)
+    assert store.run_by_dir_name("t1__p01") == store.get_run(run.id)
+    assert store.run_by_dir_name("missing") is None
+    store.delete_run(run.id)
+    assert store.get_run(run.id) is None
+
+
 def test_json_export_import_round_trip(store, tmp_path):
     _, _, pass_ = seed_pass(store)
     batch = SurveyBatch(name="Day 1")
