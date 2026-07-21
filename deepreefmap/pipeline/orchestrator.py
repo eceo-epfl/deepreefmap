@@ -530,6 +530,7 @@ def run_reconstruction(
                 video_meta=video_meta,
                 run_params={
                     **run_params,
+                    "run_duration_s": instr.total_seconds(),
                     "transect": {
                         "length": transect_length,
                         "crop_width": transect_crop_width,
@@ -680,6 +681,7 @@ def run_reconstruction(
             video_meta=video_meta,
             run_params={
                 **run_params,
+                "run_duration_s": instr.total_seconds(),
                 "transect": {
                     "length": transect_length,
                     "crop_width": transect_crop_width,
@@ -725,6 +727,7 @@ def run_reconstruction(
         manifest_dict["output_files"] = list(output_files)
         manifest_dict["stage_durations"] = instr.stage_durations()
         manifest_dict["stage_peaks"] = instr.stage_peaks()
+        manifest_dict["run_duration_s"] = instr.total_seconds()
         save_run_manifest(output_dir / "run_manifest.json", manifest_dict)
 
         if viewer is not None:

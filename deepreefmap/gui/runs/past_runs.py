@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from deepreefmap.gui.core.window_protocol import MixinBase
 from deepreefmap.gui.core.theme import BANNER_TEXT, CARD_BG
+from deepreefmap.profiling.eta import format_duration
 
 import json
 import logging
@@ -112,6 +113,16 @@ def _format_trim_range(manifest: dict) -> str | None:
     begin_txt = f"{float(begin):.1f}" if begin is not None else "0"
     end_txt = f"{float(end):.1f}s" if end is not None else "end"
     return f"{begin_txt}–{end_txt}"
+
+
+def _run_duration_s(manifest: dict) -> float | None:
+    """Total wall-clock run time; sums stage_durations for pre-field manifests."""
+    v = manifest.get("run_duration_s")
+    if isinstance(v, (int, float)) and v > 0:
+        return float(v)
+    stages = manifest.get("stage_durations") or {}
+    total = sum(s for s in stages.values() if isinstance(s, (int, float)))
+    return total if total > 0 else None
 
 
 class _PastRunCardDelegate(QStyledItemDelegate):
@@ -378,6 +389,9 @@ class PastRunsMixin(MixinBase):
         trim = _format_trim_range(manifest)
         if trim:
             lines.append(f"Range: {trim}")
+        dur = _run_duration_s(manifest)
+        if dur:
+            lines.append(f"Runtime: {format_duration(dur)}")
         created = _format_timestamp(manifest.get("run_timestamp"))
         if created:
             lines.append(f"Created: {created}")
@@ -397,7 +411,8 @@ class PastRunsMixin(MixinBase):
             facts.append(mode)
         frames = manifest.get("frames_processed")
         if frames is not None:
-            facts.append(f"{frames}f")
+            fps = manifest.get("fps")
+            facts.append(f"{frames}f @ {fps}fps" if fps else f"{frames}f")
         seg = manifest.get("segmentation_model")
         if seg and seg != "__skip__":
             facts.append(str(seg))
@@ -419,6 +434,9 @@ class PastRunsMixin(MixinBase):
         trim = _format_trim_range(manifest)
         if trim:
             facts.append(trim)
+        dur = _run_duration_s(manifest)
+        if dur:
+            facts.append(format_duration(dur))
         if related_runs:
             facts.append(f"{related_runs} related run{'s' if related_runs > 1 else ''}")
         videos = manifest.get("input_videos") or []
@@ -448,6 +466,7 @@ class PastRunsMixin(MixinBase):
         for label, key, fmt in (
             ("Mode", "mode", str),
             ("Frames", "frames_processed", str),
+            ("FPS", "fps", str),
             ("Segmentation", "segmentation_model", str),
             ("Mapping", "mapping_backend", str),
             ("Geometry", "geometry_source", lambda v: _GEOMETRY_LABELS.get(v, str(v))),
@@ -463,6 +482,18 @@ class PastRunsMixin(MixinBase):
                     f'<span style="color:#8aa0b8">{label}:</span>&nbsp;'
                     f'<span style="color:{BANNER_TEXT}">{fmt(v)}</span>'
                 )
+        trim = _format_trim_range(manifest)
+        if trim:
+            facts.append(
+                f'<span style="color:#8aa0b8">Range:</span>&nbsp;'
+                f'<span style="color:{BANNER_TEXT}">{trim}</span>'
+            )
+        dur = _run_duration_s(manifest)
+        if dur:
+            facts.append(
+                f'<span style="color:#8aa0b8">Runtime:</span>&nbsp;'
+                f'<span style="color:{BANNER_TEXT}">{format_duration(dur)}</span>'
+            )
         if include_disk_size:
             disk = _format_disk_size(run_dir)
             if disk:

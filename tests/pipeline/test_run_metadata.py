@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from deepreefmap.pipeline.instrumentation import durations_from_marks
+from deepreefmap.pipeline.instrumentation import RunInstrumentation, durations_from_marks
 from deepreefmap.pipeline.orchestrator import _build_manifest
 from deepreefmap.pipeline.run_loader import _world_points_fallback_warning
 
@@ -87,6 +87,13 @@ def test_durations_from_marks_reports_completed_spans_only() -> None:
     # Geometry-only shortcut never reaches ortho, so those spans are omitted.
     partial = durations_from_marks({"start": 0.0, "preprocess": 1.0, "mapping": 3.0, "cloud": 9.0, "end": 12.0})
     assert set(partial) == {"startup", "preprocess", "mapping"}
+
+
+def test_total_seconds_spans_start_to_latest_mark() -> None:
+    timing = SimpleNamespace(marks={"start": 5.0, "preprocess": 7.0, "end": 58.0})
+    assert RunInstrumentation.total_seconds(timing) == 53.0
+    timing.marks["scene_end"] = 115.0
+    assert RunInstrumentation.total_seconds(timing) == 110.0
 
 
 def test_durations_from_marks_includes_scene_save_tail() -> None:

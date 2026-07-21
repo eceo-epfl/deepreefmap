@@ -50,6 +50,10 @@ class RunInstrumentation:
     def stage_durations(self) -> dict[str, float]:
         return durations_from_marks(self.marks)
 
+    def total_seconds(self) -> float:
+        """Wall-clock seconds from run start to the latest mark."""
+        return max(self.marks.values()) - self.marks["start"]
+
     def stage_peaks(self) -> dict[str, dict[str, int | None]]:
         return peaks_from_marks(self._sampler.samples, STAGE_SPANS, self.marks)
 

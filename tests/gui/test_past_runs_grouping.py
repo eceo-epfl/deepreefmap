@@ -82,3 +82,23 @@ def test_card_facts_show_trim_range_only_when_trimmed() -> None:
         {"begin_s": None, "end_s": None}, Path("run_a")
     )
     assert "–" not in meta["facts"]
+
+
+def test_card_facts_show_fps_and_runtime() -> None:
+    meta = PastRunsMixin._build_past_run_card_meta(
+        {"frames_processed": 120, "fps": 5, "run_duration_s": 134.2}, Path("run_a")
+    )
+    assert "120f @ 5fps" in meta["facts"]
+    assert "2m 14s" in meta["facts"]
+
+
+def test_card_runtime_falls_back_to_stage_durations() -> None:
+    meta = PastRunsMixin._build_past_run_card_meta(
+        {"stage_durations": {"preprocess": 10.0, "mapping": 30.5}}, Path("run_a")
+    )
+    assert "40s" in meta["facts"]
+
+
+def test_card_runtime_omitted_without_timing_fields() -> None:
+    meta = PastRunsMixin._build_past_run_card_meta({"frames_processed": 120}, Path("run_a"))
+    assert meta["facts"] == "120f"
