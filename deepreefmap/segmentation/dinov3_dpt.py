@@ -29,6 +29,22 @@ class DinoV3DPTWrapper(SegmentationModel):
             raise RuntimeError("Could not load coralscapes_hub_model.py from model repo.")
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
+        hub_auto_processor = mod.AutoImageProcessor
+
+        class _FastAutoImageProcessor:
+            @staticmethod
+            def from_pretrained(*args, **kwargs):
+                kwargs.setdefault("use_fast", True)
+                return hub_auto_processor.from_pretrained(*args, **kwargs)
+
+        mod.AutoImageProcessor = _FastAutoImageProcessor
+        hub_load_weights = mod._load_hub_weights
+
+        def _load_hub_weights_compat(path):
+            state = hub_load_weights(path)
+            return {k.replace("encoder.model.", "encoder.", 1): v for k, v in state.items()}
+
+        mod._load_hub_weights = _load_hub_weights_compat
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._model = mod.Dinov3DPTSegmenter.from_pretrained(root, map_location=self._device).eval()
 
