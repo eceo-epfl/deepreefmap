@@ -1,0 +1,661 @@
+{
+  "b2_w1376_fps3": {
+    "structure": {
+      "schema_version": 2,
+      "mode": "semantic",
+      "frames_processed": 22,
+      "segmentation_model": "segformer-b2",
+      "mapping_backend": "scsfmlearner",
+      "camera_profile": "gopro_hero_10",
+      "gravity_telemetry": true,
+      "depth_shape": [
+        22,
+        256,
+        512
+      ],
+      "artifacts": [
+        "benthic_cover.json",
+        "mapping_outputs.npz",
+        "ortho.npz",
+        "ortho.png",
+        "run_manifest.json",
+        "semantic_reference_cloud.ply"
+      ]
+    },
+    "mapping": {
+      "depth_mean": 0.5944051244417469,
+      "depth_std": 0.1628498853334754,
+      "depth_min": 0.3199633061885834,
+      "depth_max": 1.6078553199768066,
+      "pose_path_length": 0.32285624742507935,
+      "fx": 416.7969970703125,
+      "fy": 370.48626708984375,
+      "cx": 255.86666870117188,
+      "cy": 127.88148498535156
+    },
+    "cloud": {
+      "cloud_points": 274389,
+      "cover_denominator": 260241.0
+    },
+    "cover": {
+      "other coral dead": 0.0003381481011831341,
+      "sand": 0.6307153753636052,
+      "other coral alive": 0.0002267129314750558,
+      "unknown hard substrate": 0.17502622569080198,
+      "transect line": 0.016400182907382002,
+      "massive/meandering alive": 0.07143762896699597,
+      "rubble": 0.02554555200756222,
+      "branching dead": 0.02272124684427127,
+      "branching alive": 0.037177078169850254,
+      "massive/meandering dead": 0.009452776464892157,
+      "acropora alive": 0.005533332564814922,
+      "pocillopora alive": 0.0008376850688400368,
+      "stylophora alive": 0.001625416440914383,
+      "meandering alive": 0.0028704162679977405,
+      "meandering dead": 9.222220941358203e-05
+    }
+  },
+  "b2_w1376_fps5": {
+    "structure": {
+      "schema_version": 2,
+      "mode": "semantic",
+      "frames_processed": 36,
+      "segmentation_model": "segformer-b2",
+      "mapping_backend": "scsfmlearner",
+      "camera_profile": "gopro_hero_10",
+      "gravity_telemetry": true,
+      "depth_shape": [
+        36,
+        256,
+        512
+      ],
+      "artifacts": [
+        "benthic_cover.json",
+        "mapping_outputs.npz",
+        "ortho.npz",
+        "ortho.png",
+        "run_manifest.json",
+        "semantic_reference_cloud.ply"
+      ]
+    },
+    "mapping": {
+      "depth_mean": 0.5943110524933926,
+      "depth_std": 0.162293685803241,
+      "depth_min": 0.3111574351787567,
+      "depth_max": 1.6084731817245483,
+      "pose_path_length": 0.34527647495269775,
+      "fx": 416.7969970703125,
+      "fy": 370.48626708984375,
+      "cx": 255.86666870117188,
+      "cy": 127.88148498535156
+    },
+    "cloud": {
+      "cloud_points": 335551,
+      "cover_denominator": 315917.0
+    },
+    "cover": {
+      "other coral dead": 0.00024373490505417563,
+      "sand": 0.6133098250489843,
+      "other coral alive": 0.0005539429660322173,
+      "unknown hard substrate": 0.18030685274929809,
+      "transect line": 0.01685885849764337,
+      "massive/meandering alive": 0.08366121481275145,
+      "rubble": 0.025304114688351687,
+      "branching dead": 0.021375867712088936,
+      "branching alive": 0.0370951863938946,
+      "massive/meandering dead": 0.010436285480046974,
+      "acropora alive": 0.005159583055042939,
+      "pocillopora alive": 0.0004969659752403321,
+      "stylophora alive": 0.0018390906472269615,
+      "meandering alive": 0.0032730115821560726,
+      "meandering dead": 8.546548618782781e-05
+    }
+  },
+  "b2_w344_fps3": {
+    "structure": {
+      "schema_version": 2,
+      "mode": "semantic",
+      "frames_processed": 22,
+      "segmentation_model": "segformer-b2",
+      "mapping_backend": "scsfmlearner",
+      "camera_profile": "gopro_hero_10",
+      "gravity_telemetry": true,
+      "depth_shape": [
+        22,
+        256,
+        512
+      ],
+      "artifacts": [
+        "benthic_cover.json",
+        "mapping_outputs.npz",
+        "ortho.npz",
+        "ortho.png",
+        "run_manifest.json",
+        "semantic_reference_cloud.ply"
+      ]
+    },
+    "mapping": {
+      "depth_mean": 0.6263365611300018,
+      "depth_std": 0.16711839754487998,
+      "depth_min": 0.3429945707321167,
+      "depth_max": 1.6268731355667114,
+      "pose_path_length": 0.3465630114078522,
+      "fx": 416.7969970703125,
+      "fy": 370.48626708984375,
+      "cx": 255.86666870117188,
+      "cy": 127.88148498535156
+    },
+    "cloud": {
+      "cloud_points": 256458,
+      "cover_denominator": 255326.0
+    },
+    "cover": {
+      "sand": 0.6362258446065031,
+      "other coral alive": 0.05555250934099935,
+      "algae covered substrate": 0.018223760995746616,
+      "unknown hard substrate": 0.09286167487839077,
+      "transect line": 0.0134181399465781,
+      "massive/meandering alive": 0.05860351080579338,
+      "rubble": 0.03181422965150435,
+      "branching dead": 0.04999882503152832,
+      "branching alive": 0.025641728613615536,
+      "acropora alive": 0.0066503215497050825,
+      "table acropora alive": 0.007245638908689283,
+      "sponge": 0.0014687105895991792,
+      "table acropora dead": 0.00010966372402340537,
+      "stylophora alive": 0.00047782051181626624,
+      "meandering alive": 0.0017076208455073121
+    }
+  },
+  "b2_w344_fps5": {
+    "structure": {
+      "schema_version": 2,
+      "mode": "semantic",
+      "frames_processed": 36,
+      "segmentation_model": "segformer-b2",
+      "mapping_backend": "scsfmlearner",
+      "camera_profile": "gopro_hero_10",
+      "gravity_telemetry": true,
+      "depth_shape": [
+        36,
+        256,
+        512
+      ],
+      "artifacts": [
+        "benthic_cover.json",
+        "mapping_outputs.npz",
+        "ortho.npz",
+        "ortho.png",
+        "run_manifest.json",
+        "semantic_reference_cloud.ply"
+      ]
+    },
+    "mapping": {
+      "depth_mean": 0.6265777572178435,
+      "depth_std": 0.16693389580911844,
+      "depth_min": 0.34123414754867554,
+      "depth_max": 1.627625823020935,
+      "pose_path_length": 0.3667486011981964,
+      "fx": 416.7969970703125,
+      "fy": 370.48626708984375,
+      "cx": 255.86666870117188,
+      "cy": 127.88148498535156
+    },
+    "cloud": {
+      "cloud_points": 311263,
+      "cover_denominator": 309593.0
+    },
+    "cover": {
+      "sand": 0.6123846469396917,
+      "other coral alive": 0.06856744177032427,
+      "algae covered substrate": 0.023359701285235776,
+      "unknown hard substrate": 0.09667531242631455,
+      "transect line": 0.014748395474057876,
+      "massive/meandering alive": 0.06171974172542661,
+      "rubble": 0.03575339235706234,
+      "branching dead": 0.04686798474125707,
+      "branching alive": 0.021415212876260123,
+      "massive/meandering dead": 0.0003811455685367563,
+      "acropora alive": 0.006676507543775215,
+      "table acropora alive": 0.002309483741557464,
+      "sponge": 0.007102873772985823,
+      "table acropora dead": 3.5530519100884064e-05,
+      "stylophora alive": 8.721127415671543e-05,
+      "meandering alive": 0.00191541798425675
+    }
+  },
+  "b2_w688_fps3": {
+    "structure": {
+      "schema_version": 2,
+      "mode": "semantic",
+      "frames_processed": 22,
+      "segmentation_model": "segformer-b2",
+      "mapping_backend": "scsfmlearner",
+      "camera_profile": "gopro_hero_10",
+      "gravity_telemetry": true,
+      "depth_shape": [
+        22,
+        256,
+        512
+      ],
+      "artifacts": [
+        "benthic_cover.json",
+        "mapping_outputs.npz",
+        "ortho.npz",
+        "ortho.png",
+        "run_manifest.json",
+        "semantic_reference_cloud.ply"
+      ]
+    },
+    "mapping": {
+      "depth_mean": 0.6080865654202874,
+      "depth_std": 0.1653042031987001,
+      "depth_min": 0.3265322744846344,
+      "depth_max": 1.6153191328048706,
+      "pose_path_length": 0.33324193954467773,
+      "fx": 416.7969970703125,
+      "fy": 370.48626708984375,
+      "cx": 255.86666870117188,
+      "cy": 127.88148498535156
+    },
+    "cloud": {
+      "cloud_points": 266290,
+      "cover_denominator": 255809.0
+    },
+    "cover": {
+      "other coral dead": 0.000340097494615123,
+      "sand": 0.6466699764277254,
+      "other coral alive": 0.0310856928411432,
+      "algae covered substrate": 0.0029123291205547888,
+      "unknown hard substrate": 0.17440746807188176,
+      "transect line": 0.017172968894761324,
+      "massive/meandering alive": 0.06117454819806965,
+      "rubble": 0.02071467383868433,
+      "branching dead": 0.009217814854051265,
+      "branching alive": 0.023232177132157195,
+      "massive/meandering dead": 0.004131989101243506,
+      "acropora alive": 0.0059653882388813525,
+      "pocillopora alive": 0.0012392058137125747,
+      "stylophora alive": 0.0012001141476648592,
+      "meandering alive": 0.0005355558248536994
+    }
+  },
+  "b2_w688_fps5": {
+    "structure": {
+      "schema_version": 2,
+      "mode": "semantic",
+      "frames_processed": 36,
+      "segmentation_model": "segformer-b2",
+      "mapping_backend": "scsfmlearner",
+      "camera_profile": "gopro_hero_10",
+      "gravity_telemetry": true,
+      "depth_shape": [
+        36,
+        256,
+        512
+      ],
+      "artifacts": [
+        "benthic_cover.json",
+        "mapping_outputs.npz",
+        "ortho.npz",
+        "ortho.png",
+        "run_manifest.json",
+        "semantic_reference_cloud.ply"
+      ]
+    },
+    "mapping": {
+      "depth_mean": 0.6081959486008373,
+      "depth_std": 0.1649754107624566,
+      "depth_min": 0.31991058588027954,
+      "depth_max": 1.61497962474823,
+      "pose_path_length": 0.35507306456565857,
+      "fx": 416.7969970703125,
+      "fy": 370.48626708984375,
+      "cx": 255.86666870117188,
+      "cy": 127.88148498535156
+    },
+    "cloud": {
+      "cloud_points": 325723,
+      "cover_denominator": 310242.0
+    },
+    "cover": {
+      "other coral dead": 0.0002159604437825955,
+      "sand": 0.6169957645966697,
+      "other coral alive": 0.03848286176597624,
+      "algae covered substrate": 0.0017631397425235784,
+      "unknown hard substrate": 0.18665106594207104,
+      "transect line": 0.01640977043727155,
+      "massive/meandering alive": 0.07057393905402878,
+      "rubble": 0.01820836637205794,
+      "branching dead": 0.010939846958181032,
+      "branching alive": 0.02607641776419698,
+      "massive/meandering dead": 0.004512606287994533,
+      "acropora alive": 0.007397451022105324,
+      "pocillopora alive": 0.0005221730133250817,
+      "stylophora alive": 0.000921860998833169,
+      "meandering alive": 0.00032877560098245885
+    }
+  },
+  "b5_w1376_fps3": {
+    "structure": {
+      "schema_version": 2,
+      "mode": "semantic",
+      "frames_processed": 22,
+      "segmentation_model": "segformer-b5",
+      "mapping_backend": "scsfmlearner",
+      "camera_profile": "gopro_hero_10",
+      "gravity_telemetry": true,
+      "depth_shape": [
+        22,
+        256,
+        512
+      ],
+      "artifacts": [
+        "benthic_cover.json",
+        "mapping_outputs.npz",
+        "ortho.npz",
+        "ortho.png",
+        "run_manifest.json",
+        "semantic_reference_cloud.ply"
+      ]
+    },
+    "mapping": {
+      "depth_mean": 0.5944051244417469,
+      "depth_std": 0.1628498853334754,
+      "depth_min": 0.3199633061885834,
+      "depth_max": 1.6078553199768066,
+      "pose_path_length": 0.32285624742507935,
+      "fx": 416.7969970703125,
+      "fy": 370.48626708984375,
+      "cx": 255.86666870117188,
+      "cy": 127.88148498535156
+    },
+    "cloud": {
+      "cloud_points": 265005,
+      "cover_denominator": 255380.0
+    },
+    "cover": {
+      "sand": 0.6530033675307385,
+      "other coral alive": 5.090453441929673e-05,
+      "unknown hard substrate": 0.17678361657138383,
+      "transect line": 0.018082856919100946,
+      "massive/meandering alive": 0.0476270655493774,
+      "rubble": 0.02413658078158039,
+      "branching dead": 0.012949330409585716,
+      "branching alive": 0.028381235805466365,
+      "massive/meandering dead": 0.020365729501135563,
+      "acropora alive": 0.008085989505834442,
+      "pocillopora alive": 0.006425718537081996,
+      "stylophora alive": 0.00019970240426031796,
+      "meandering alive": 0.003853081682199076,
+      "meandering dead": 5.4820267836165715e-05
+    }
+  },
+  "b5_w1376_fps5": {
+    "structure": {
+      "schema_version": 2,
+      "mode": "semantic",
+      "frames_processed": 36,
+      "segmentation_model": "segformer-b5",
+      "mapping_backend": "scsfmlearner",
+      "camera_profile": "gopro_hero_10",
+      "gravity_telemetry": true,
+      "depth_shape": [
+        36,
+        256,
+        512
+      ],
+      "artifacts": [
+        "benthic_cover.json",
+        "mapping_outputs.npz",
+        "ortho.npz",
+        "ortho.png",
+        "run_manifest.json",
+        "semantic_reference_cloud.ply"
+      ]
+    },
+    "mapping": {
+      "depth_mean": 0.5943110524933926,
+      "depth_std": 0.162293685803241,
+      "depth_min": 0.3111574351787567,
+      "depth_max": 1.6084731817245483,
+      "pose_path_length": 0.34527647495269775,
+      "fx": 416.7969970703125,
+      "fy": 370.48626708984375,
+      "cx": 255.86666870117188,
+      "cy": 127.88148498535156
+    },
+    "cloud": {
+      "cloud_points": 321762,
+      "cover_denominator": 308843.0
+    },
+    "cover": {
+      "sand": 0.636857561932762,
+      "other coral alive": 0.0005148246843865653,
+      "unknown hard substrate": 0.18590675521219518,
+      "transect line": 0.01887366720307729,
+      "massive/meandering alive": 0.05247973889646196,
+      "rubble": 0.02601321707145702,
+      "branching dead": 0.012038479097794024,
+      "branching alive": 0.02811784628435807,
+      "massive/meandering dead": 0.0197058052149474,
+      "acropora alive": 0.008373186376249422,
+      "pocillopora alive": 0.006569681035348057,
+      "meandering alive": 0.004322584614189087,
+      "meandering dead": 0.0002266523767739596
+    }
+  },
+  "b5_w344_fps3": {
+    "structure": {
+      "schema_version": 2,
+      "mode": "semantic",
+      "frames_processed": 22,
+      "segmentation_model": "segformer-b5",
+      "mapping_backend": "scsfmlearner",
+      "camera_profile": "gopro_hero_10",
+      "gravity_telemetry": true,
+      "depth_shape": [
+        22,
+        256,
+        512
+      ],
+      "artifacts": [
+        "benthic_cover.json",
+        "mapping_outputs.npz",
+        "ortho.npz",
+        "ortho.png",
+        "run_manifest.json",
+        "semantic_reference_cloud.ply"
+      ]
+    },
+    "mapping": {
+      "depth_mean": 0.6263365611300018,
+      "depth_std": 0.16711839754487998,
+      "depth_min": 0.3429945707321167,
+      "depth_max": 1.6268731355667114,
+      "pose_path_length": 0.3465630114078522,
+      "fx": 416.7969970703125,
+      "fy": 370.48626708984375,
+      "cx": 255.86666870117188,
+      "cy": 127.88148498535156
+    },
+    "cloud": {
+      "cloud_points": 231114,
+      "cover_denominator": 230874.0
+    },
+    "cover": {
+      "sand": 0.7535278983341563,
+      "other coral alive": 0.0009615634501936121,
+      "algae covered substrate": 0.004729852646898308,
+      "unknown hard substrate": 0.14189557940694925,
+      "transect line": 0.0010828417231910047,
+      "massive/meandering alive": 0.0333212055060336,
+      "rubble": 0.029167424655872902,
+      "branching dead": 0.007423962854197528,
+      "branching alive": 0.012045531328776735,
+      "acropora alive": 0.01559725218084323,
+      "pocillopora alive": 0.0002468879128875491
+    }
+  },
+  "b5_w344_fps5": {
+    "structure": {
+      "schema_version": 2,
+      "mode": "semantic",
+      "frames_processed": 36,
+      "segmentation_model": "segformer-b5",
+      "mapping_backend": "scsfmlearner",
+      "camera_profile": "gopro_hero_10",
+      "gravity_telemetry": true,
+      "depth_shape": [
+        36,
+        256,
+        512
+      ],
+      "artifacts": [
+        "benthic_cover.json",
+        "mapping_outputs.npz",
+        "ortho.npz",
+        "ortho.png",
+        "run_manifest.json",
+        "semantic_reference_cloud.ply"
+      ]
+    },
+    "mapping": {
+      "depth_mean": 0.6265777572178435,
+      "depth_std": 0.16693389580911844,
+      "depth_min": 0.34123414754867554,
+      "depth_max": 1.627625823020935,
+      "pose_path_length": 0.3667486011981964,
+      "fx": 416.7969970703125,
+      "fy": 370.48626708984375,
+      "cx": 255.86666870117188,
+      "cy": 127.88148498535156
+    },
+    "cloud": {
+      "cloud_points": 274740,
+      "cover_denominator": 274302.0
+    },
+    "cover": {
+      "sand": 0.74021698711639,
+      "other coral alive": 0.0014910573018060386,
+      "algae covered substrate": 0.0004192459406056099,
+      "unknown hard substrate": 0.15280967692543254,
+      "transect line": 0.0017134399311707533,
+      "massive/meandering alive": 0.04617538333661439,
+      "rubble": 0.02047378436905309,
+      "branching dead": 0.00409038213356082,
+      "branching alive": 0.017134399311707533,
+      "acropora alive": 0.014086663604348492,
+      "pocillopora alive": 0.0013889800293107597
+    }
+  },
+  "b5_w688_fps3": {
+    "structure": {
+      "schema_version": 2,
+      "mode": "semantic",
+      "frames_processed": 22,
+      "segmentation_model": "segformer-b5",
+      "mapping_backend": "scsfmlearner",
+      "camera_profile": "gopro_hero_10",
+      "gravity_telemetry": true,
+      "depth_shape": [
+        22,
+        256,
+        512
+      ],
+      "artifacts": [
+        "benthic_cover.json",
+        "mapping_outputs.npz",
+        "ortho.npz",
+        "ortho.png",
+        "run_manifest.json",
+        "semantic_reference_cloud.ply"
+      ]
+    },
+    "mapping": {
+      "depth_mean": 0.6080865654202874,
+      "depth_std": 0.1653042031987001,
+      "depth_min": 0.3265322744846344,
+      "depth_max": 1.6153191328048706,
+      "pose_path_length": 0.33324193954467773,
+      "fx": 416.7969970703125,
+      "fy": 370.48626708984375,
+      "cx": 255.86666870117188,
+      "cy": 127.88148498535156
+    },
+    "cloud": {
+      "cloud_points": 248186,
+      "cover_denominator": 243936.0
+    },
+    "cover": {
+      "sand": 0.6975600157418339,
+      "other coral alive": 0.00226288862652499,
+      "unknown hard substrate": 0.16781860815951724,
+      "transect line": 0.0160410927456382,
+      "massive/meandering alive": 0.040641807687262235,
+      "rubble": 0.02599452315361406,
+      "branching dead": 0.0009510691328873147,
+      "branching alive": 0.02681031090121999,
+      "massive/meandering dead": 0.0066328873147054965,
+      "acropora alive": 0.01247458349731077,
+      "sponge": 8.198871835235472e-06,
+      "pocillopora alive": 0.0015208907254361799,
+      "stylophora alive": 0.0001598780007870917,
+      "meandering alive": 0.0011232454414272597
+    }
+  },
+  "b5_w688_fps5": {
+    "structure": {
+      "schema_version": 2,
+      "mode": "semantic",
+      "frames_processed": 36,
+      "segmentation_model": "segformer-b5",
+      "mapping_backend": "scsfmlearner",
+      "camera_profile": "gopro_hero_10",
+      "gravity_telemetry": true,
+      "depth_shape": [
+        36,
+        256,
+        512
+      ],
+      "artifacts": [
+        "benthic_cover.json",
+        "mapping_outputs.npz",
+        "ortho.npz",
+        "ortho.png",
+        "run_manifest.json",
+        "semantic_reference_cloud.ply"
+      ]
+    },
+    "mapping": {
+      "depth_mean": 0.6081959486008373,
+      "depth_std": 0.1649754107624566,
+      "depth_min": 0.31991058588027954,
+      "depth_max": 1.61497962474823,
+      "pose_path_length": 0.35507306456565857,
+      "fx": 416.7969970703125,
+      "fy": 370.48626708984375,
+      "cx": 255.86666870117188,
+      "cy": 127.88148498535156
+    },
+    "cloud": {
+      "cloud_points": 296051,
+      "cover_denominator": 289997.0
+    },
+    "cover": {
+      "sand": 0.6767552767787253,
+      "other coral alive": 0.004382803960040966,
+      "unknown hard substrate": 0.18148118773642485,
+      "transect line": 0.016717414318079153,
+      "massive/meandering alive": 0.042445266675172504,
+      "rubble": 0.024727842012158746,
+      "branching dead": 0.0016517412249092232,
+      "branching alive": 0.026307168694848566,
+      "massive/meandering dead": 0.008651813639451443,
+      "acropora alive": 0.01374841808708366,
+      "pocillopora alive": 0.0006069028300292762,
+      "stylophora alive": 0.0004379355648506709,
+      "meandering alive": 0.002086228478225637
+    }
+  }
+}
