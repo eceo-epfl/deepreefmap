@@ -50,5 +50,6 @@ camera_profiles/*_diagnostics/
 *.7z
 demo/
 
-# pytest basetemp used by the e2e CI job
+# pytest basetemp and staged uploads used by the e2e CI job
 e2e_tmp/
+artifacts/

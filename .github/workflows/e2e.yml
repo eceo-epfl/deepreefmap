@@ -23,30 +23,45 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `label` names the job in the checks list, `scenario` is the pytest -k
+          # selector, `slug` names the artifact. GitHub expressions have no string
+          # replace, so the artifact name cannot be derived from the label.
           - label: SegFormer-b2 344x192, 3 fps
             scenario: b2_w344_fps3
+            slug: segformer-b2-344x192-3fps
           - label: SegFormer-b2 344x192, 5 fps
             scenario: b2_w344_fps5
+            slug: segformer-b2-344x192-5fps
           - label: SegFormer-b2 688x384, 3 fps
             scenario: b2_w688_fps3
+            slug: segformer-b2-688x384-3fps
           - label: SegFormer-b2 688x384, 5 fps
             scenario: b2_w688_fps5
+            slug: segformer-b2-688x384-5fps
           - label: SegFormer-b2 1376x768, 3 fps
             scenario: b2_w1376_fps3
+            slug: segformer-b2-1376x768-3fps
           - label: SegFormer-b2 1376x768, 5 fps
             scenario: b2_w1376_fps5
+            slug: segformer-b2-1376x768-5fps
           - label: SegFormer-b5 344x192, 3 fps
             scenario: b5_w344_fps3
+            slug: segformer-b5-344x192-3fps
           - label: SegFormer-b5 344x192, 5 fps
             scenario: b5_w344_fps5
+            slug: segformer-b5-344x192-5fps
           - label: SegFormer-b5 688x384, 3 fps
             scenario: b5_w688_fps3
+            slug: segformer-b5-688x384-3fps
           - label: SegFormer-b5 688x384, 5 fps
             scenario: b5_w688_fps5
+            slug: segformer-b5-688x384-5fps
           - label: SegFormer-b5 1376x768, 3 fps
             scenario: b5_w1376_fps3
+            slug: segformer-b5-1376x768-3fps
           - label: SegFormer-b5 1376x768, 5 fps
             scenario: b5_w1376_fps5
+            slug: segformer-b5-1376x768-5fps
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -81,22 +96,35 @@ jobs:
           uv run --python 3.12 pytest tests/test_reconstruct_e2e.py -v -s \
             --basetemp=e2e_tmp -k ${{ matrix.scenario }}
 
+      # pytest's tmp_path factory creates a `<name>current` symlink beside the
+      # numbered directory it hands the test, and a `**` glob walks through it, so
+      # uploading straight from e2e_tmp put every file in the artifact twice.
+      # `-type d` matches the real directory and not the symlink. Each copy is
+      # tolerant of a missing source because this runs even when the test failed
+      # before writing outputs, and staging must not mask that failure.
+      - name: Stage run outputs
+        if: always()
+        run: |
+          base=$(find e2e_tmp -mindepth 1 -maxdepth 1 -type d -name 'test_*' -print -quit)
+          mkdir -p artifacts
+          [ -n "$base" ] || exit 0
+          cp "$base/computed_summary.json"            artifacts/summary.json   || true
+          cp "$base/run/run_manifest.json"            artifacts/manifest.json  || true
+          cp "$base/run/benthic_cover.json"           artifacts/cover.json     || true
+          cp "$base/run/ortho.png"                    artifacts/ortho.png      || true
+          cp "$base/run/view_top.png"                 artifacts/view-top.png   || true
+          cp "$base/run/view_side.png"                artifacts/view-side.png  || true
+          cp "$base/run/semantic_reference_cloud.ply" artifacts/cloud.ply      || true
+
       # Published pass or fail. The golden compares numeric summaries; these
       # artifacts are what allow the reconstruction itself to be inspected.
       - name: Upload run outputs
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-outputs-${{ matrix.scenario }}
+          name: ${{ matrix.slug }}
           retention-days: 14
-          path: |
-            e2e_tmp/**/computed_summary.json
-            e2e_tmp/**/run_manifest.json
-            e2e_tmp/**/benthic_cover.json
-            e2e_tmp/**/ortho.png
-            e2e_tmp/**/view_top.png
-            e2e_tmp/**/view_side.png
-            e2e_tmp/**/semantic_reference_cloud.ply
+          path: artifacts/
 
       # Shared key: on a cold cache every scenario misses and tries to save; the
       # losers log "cache already exists" and carry on.
