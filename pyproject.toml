@@ -22,9 +22,9 @@ classifiers = [
 ]
 dependencies = [
   "numpy>=1.26.0",
-  "opencv-python>=4.10.0.84",
-  "imageio[ffmpeg]>=2.37.3",
-  "typer>=0.25.1",
+  "opencv-python>=5.0.0.93",
+  "imageio[ffmpeg]>=2.37.4",
+  "typer>=0.27.0",
   "pyyaml>=6.0.2",
   "scikit-learn>=1.5.0",
   "open3d>=0.18.0",
@@ -40,9 +40,9 @@ dependencies = [
   # Upper-bounded so the dual-API fallback in deepreefmap.camera.colmap_calibration
   # (ImageReaderOptions.single_camera vs pycolmap.CameraMode.SINGLE) stays the
   # documented contract; bump after retesting calibrate against a new major.
-  "pycolmap>=4.0.4,<5.0",
-  "viser>=1.0.27",
-  "tqdm>=4.67.3",
+  "pycolmap>=4.1.1,<5.0",
+  "viser>=1.0.30",
+  "tqdm>=4.70.0",
 ]
 
 [project.optional-dependencies]
@@ -53,17 +53,17 @@ dependencies = [
 # gradio/trimesh/matplotlib/evo). Initialize the submodule with:
 #   git submodule update --init --recursive
 loger = [
-  "safetensors>=0.4.0",
+  "safetensors>=0.8.0",
   "natsort>=8.4.0",
   "einops>=0.7.0",
-  "roma>=1.5.0",
-  "accelerate>=0.30.0",
+  "roma>=1.5.7",
+  "accelerate>=1.14.0",
 ]
 gopro = [
   "py-gpmf-parser>=0.1.1,<0.2.0; sys_platform == 'linux' and platform_machine == 'x86_64'"
 ]
-train = ["wandb>=0.20.0", "tensorboard>=2.18.0"]
-dev = ["pytest>=8.4.0", "ruff>=0.12.0", "mypy>=2.0.0"]
+train = ["wandb>=0.28.1", "tensorboard>=2.21.0"]
+dev = ["pytest>=9.1.1", "ruff>=0.16.0", "mypy>=2.3.0"]
 
 [project.urls]
 Repository = "https://github.com/EPFL-ECEO/deepreefmap"
