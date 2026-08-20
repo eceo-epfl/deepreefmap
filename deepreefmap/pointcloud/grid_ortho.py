@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 from sklearn.decomposition import PCA
 
 from deepreefmap.pipeline.artifacts import SemanticPointCloud
+
+
+ProgressFn = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -38,7 +42,15 @@ def aggregate_cloud_to_ortho_grid(
     cloud: SemanticPointCloud,
     bins: int = 2000,
     cell_size: float | None = None,
+    progress: ProgressFn | None = None,
 ) -> OrthoGrid:
+    def _emit(msg: str) -> None:
+        if progress is not None:
+            try:
+                progress(msg)
+            except Exception:
+                pass
+
     if len(cloud) < 2 or _is_degenerate(cloud.xyz):
         empty_rgb = np.zeros((1, 1, 3), dtype=np.uint8)
         empty = np.zeros((1, 1), dtype=np.int32)
@@ -51,6 +63,7 @@ def aggregate_cloud_to_ortho_grid(
             cell_size=1.0,
         )
 
+    _emit("Computing PCA projection")
     xyz_all = np.asarray(cloud.xyz, dtype=np.float32)
     pca = PCA(n_components=2)
     xy_raw = pca.fit_transform(xyz_all)
@@ -68,6 +81,7 @@ def aggregate_cloud_to_ortho_grid(
 
     distance_to_camera = _valid_distance_to_camera(cloud)
 
+    _emit("Sorting points into cells")
     keys = coords[:, 1].astype(np.int64) * width + coords[:, 0].astype(np.int64)
     flat_size = height * width
 
@@ -75,6 +89,8 @@ def aggregate_cloud_to_ortho_grid(
         order = np.argsort(keys)
     else:
         order = np.lexsort((np.where(np.isfinite(distance_to_camera), distance_to_camera, np.inf), keys))
+
+    _emit("Aggregating ortho grid")
 
     keys_s = keys[order]
     group_starts = np.concatenate([[0], np.flatnonzero(np.diff(keys_s) != 0) + 1])

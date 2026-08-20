@@ -5,26 +5,20 @@ import logging
 
 import typer
 
-from deepreefmap.camera.colmap_calibration import calibrate_camera_profile, verify_camera_profile
-from deepreefmap.pipeline.orchestrator import run_reconstruction
-from deepreefmap.pipeline.run_loader import load_cached_run
-from deepreefmap.pointcloud.filters import PointFilterConfig
-from deepreefmap.postproc.reports import render_offline_video_placeholder
-from deepreefmap.segmentation.registry import list_segmentation_models
-from deepreefmap.mapping.registry import list_mapping_backends
-from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR, available_profile_names
-from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
-from deepreefmap.visualization.viser_app import ViserLiveApp
-
 app = typer.Typer(help="DeepReefMap command line interface")
 
 
 def _available_profiles() -> list[str]:
+    from deepreefmap.camera.intrinsics import available_profile_names
+
     return available_profile_names()
 
 
 @app.command("list-models")
 def list_models() -> None:
+    from deepreefmap.segmentation.registry import list_segmentation_models
+    from deepreefmap.mapping.registry import list_mapping_backends
+
     typer.echo("Segmentation models:")
     for name in list_segmentation_models():
         typer.echo(f"  - {name}")
@@ -123,6 +117,9 @@ def reconstruct(
         help="Skip segmentation entirely. Produces only the 3D reconstruction (geometry cloud + poses + depths) and runs a minimal viser app.",
     ),
 ) -> None:
+    from deepreefmap.camera.intrinsics import CAMERA_PROFILE_DIR
+    from deepreefmap.pipeline.orchestrator import run_reconstruction
+
     if camera_profile not in _available_profiles():
         profile_path = CAMERA_PROFILE_DIR / f"{camera_profile}.json"
         available = _available_profiles()
@@ -165,8 +162,6 @@ def reconstruct(
         end_s=end,
         transect_length=transect_length,
         transect_crop_width=transect_crop_width,
-        enable_viser=viser,
-        viser_port=viser_port,
         enable_tsdf=tsdf,
         replacement_radius_factor=replacement_radius_factor,
         replacement_radius_estimation_frames=replacement_radius_estimation_frames,
@@ -174,13 +169,15 @@ def reconstruct(
         mapping_options=mapping_options,
         classes_path=classes,
         grid_bins=grid_bins,
-        keep_viser_open=keep_viser_open,
         require_gravity_telemetry=require_gravity_telemetry,
         preprocess_batch_size=preprocess_batch_size,
         processing_width=processing_width,
         processing_height=processing_height,
         skip_segmentation=skip_segmentation,
         refine_intrinsics_from_mapper=refine_intrinsics_from_mapper,
+        enable_viser=viser,
+        viser_port=viser_port,
+        keep_viser_open=keep_viser_open,
     )
 
 
@@ -193,6 +190,8 @@ def calibrate(
     begin: Optional[float] = typer.Option(None, help="Optional begin timestamp (seconds) for calibration window."),
     end: Optional[float] = typer.Option(None, help="Optional end timestamp (seconds) for calibration window."),
 ) -> None:
+    from deepreefmap.camera.colmap_calibration import calibrate_camera_profile
+
     profile_path = calibrate_camera_profile(
         video,
         name,
@@ -211,6 +210,8 @@ def verify_calibration(
         help="Camera profile name (bundled or `./camera_profiles/<name>.json` in CWD).",
     ),
 ) -> None:
+    from deepreefmap.camera.colmap_calibration import verify_camera_profile
+
     report = verify_camera_profile(name)
     typer.echo(json.dumps(report, indent=2))
 
@@ -221,7 +222,7 @@ def render_video(
     transect_length_m: Optional[float] = typer.Option(
         None,
         "--transect-length-m",
-        help="Transect length in meters; enables ortho crop (matches viser). Falls back to manifest.",
+        help="Transect length in meters; enables ortho crop. Falls back to manifest.",
     ),
     crop_width_m: Optional[float] = typer.Option(
         None,
@@ -234,7 +235,9 @@ def render_video(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    render_offline_video_placeholder(
+    from deepreefmap.postproc.reports import render_offline_video
+
+    render_offline_video(
         run_dir,
         transect_length_m=transect_length_m,
         crop_width_m=crop_width_m,
@@ -261,6 +264,11 @@ def view_run(
     ),
     ortho_bins: int = typer.Option(1000, help="Bins used for the interactive ortho preview."),
 ) -> None:
+    from deepreefmap.pipeline.run_loader import load_cached_run
+    from deepreefmap.pointcloud.filters import PointFilterConfig
+    from deepreefmap.visualization.simple_viser_app import SimpleGeometryViserApp
+    from deepreefmap.visualization.viser_app import ViserLiveApp
+
     try:
         loaded = load_cached_run(
             run_dir,

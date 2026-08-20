@@ -50,36 +50,61 @@ At a high level, a run does four things:
 3. Runs semantic segmentation and depth/pose reconstruction.
 4. Exports point clouds, ortho products, and reports.
 
+## Desktop app
+
+The native desktop application lives in [deepreefmap-gui](https://github.com/eceo-epfl/deepreefmap-gui), which uses this package as a library. Prebuilt binaries for Windows, macOS, and Linux are on its releases page.
+
+Everything below covers the library and CLI.
+
 ## Requirements
 
 - Python 3.10, 3.11, or 3.12
 - `[uv](https://docs.astral.sh/uv/)` for dependency management
 - FFmpeg (pulled in via `imageio[ffmpeg]`)
-- **GPU**: strongly recommended. CPU-only runs work with `scsfmlearner` but are slow. The `loger` / `loger_star` backends require CUDA.
+- **GPU**: strongly recommended. NVIDIA (CUDA), AMD (ROCm), and Apple Silicon (MPS) are supported. CPU-only runs work with `scsfmlearner` but are slow.
 
 ## Installation
+
+### NVIDIA
+
+```bash
+uv sync --extra cu126   # most cards, up to RTX 40-series
+uv sync --extra cu130   # RTX 50-series (Blackwell)
+```
+
+### AMD ROCm
+
+```bash
+uv sync --extra rocm   # Linux only
+```
+
+> **Experimental.** AOTriton attention is auto-enabled so LoGeR runs on RDNA3 (set `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=0` to disable). Sync ROCm into its own venv, or a stray `triton` wheel can shadow `pytorch-triton-rocm`.
+
+### macOS (Apple Silicon)
 
 ```bash
 uv sync
 ```
 
-Optional extras:
+### Optional extras
 
 ```bash
 uv sync --extra gopro --extra train
 ```
 
+Extras can be combined (eg. `uv sync --extra rocm --extra gopro --extra loger`).
+
 ### Choose a reconstruction backend
 
 To run `deepreefmap reconstruct`, you need at least one reconstruction backend:
 
-- `scsfmlearner`: easiest to start with, no LoGeR checkpoint setup, but poorer reconstruction quality.
-- `loger` (or `loger_star`): higher quality reconstruction, but requires CUDA + GPU and checkpoint download.
+- `scsfmlearner`: easiest to start with, no LoGeR checkpoint setup, but lower reconstruction quality.
+- `loger` (or `loger_star`): higher quality reconstruction, requires a GPU and checkpoint download.
 
-Important performance note:
+Performance notes:
 
 - Without a GPU, all reconstruction backends will be slow.
-- LoGeR specifically requires CUDA and a compatible GPU.
+- LoGeR requires a GPU (CUDA, ROCm, or MPS). On MPS, unsupported operations fall back to CPU automatically.
 
 ### SC-SfMLearner path (simplest)
 
@@ -242,6 +267,8 @@ Useful `reconstruct` flags:
 - `--preprocess-batch-size`: segmentation batch size during frame preparation.
 - `--transect-length` and `--transect-crop-width`: crop outputs around dominant transect.
 - `--skip-segmentation`: geometry-only run (no semantics).
+
+`DEEPREEFMAP_LOGER_CKPTS` overrides the LoGeR checkpoint directory, eg. an existing `third_party/LoGeR/ckpts`.
 
 ## Reconstruction outputs
 

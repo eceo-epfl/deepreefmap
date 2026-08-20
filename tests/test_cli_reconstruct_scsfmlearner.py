@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from deepreefmap.camera import intrinsics
 from deepreefmap.cli import main as cli_main
+from deepreefmap.pipeline import orchestrator as orchestrator_mod
 
 
 def test_reconstruct_passes_default_scsfmlearner_resolution(tmp_path: Path):
@@ -14,10 +15,8 @@ def test_reconstruct_passes_default_scsfmlearner_resolution(tmp_path: Path):
     def _fake_run_reconstruction(**kwargs):
         captured.update(kwargs)
 
-    with patch.object(cli_main, "CAMERA_PROFILE_DIR", profile_dir), patch.object(
-        intrinsics, "CAMERA_PROFILE_DIR", profile_dir
-    ), patch.object(
-        cli_main,
+    with patch.object(intrinsics, "CAMERA_PROFILE_DIR", profile_dir), patch.object(
+        orchestrator_mod,
         "run_reconstruction",
         _fake_run_reconstruction,
     ):
@@ -48,10 +47,8 @@ def test_reconstruct_passes_custom_scsfmlearner_resolution(tmp_path: Path):
     def _fake_run_reconstruction(**kwargs):
         captured.update(kwargs)
 
-    with patch.object(cli_main, "CAMERA_PROFILE_DIR", profile_dir), patch.object(
-        intrinsics, "CAMERA_PROFILE_DIR", profile_dir
-    ), patch.object(
-        cli_main,
+    with patch.object(intrinsics, "CAMERA_PROFILE_DIR", profile_dir), patch.object(
+        orchestrator_mod,
         "run_reconstruction",
         _fake_run_reconstruction,
     ):
@@ -80,10 +77,8 @@ def test_reconstruct_threads_intrinsics_refinement_flag(tmp_path: Path):
     def _fake_run_reconstruction(**kwargs):
         captured.update(kwargs)
 
-    with patch.object(cli_main, "CAMERA_PROFILE_DIR", profile_dir), patch.object(
-        intrinsics, "CAMERA_PROFILE_DIR", profile_dir
-    ), patch.object(
-        cli_main,
+    with patch.object(intrinsics, "CAMERA_PROFILE_DIR", profile_dir), patch.object(
+        orchestrator_mod,
         "run_reconstruction",
         _fake_run_reconstruction,
     ):

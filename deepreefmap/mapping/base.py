@@ -1,10 +1,16 @@
+from __future__ import annotations
+
+import threading
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
 
 from deepreefmap.mapping.gravity import align_poses_to_gravity
-from deepreefmap.pipeline.artifacts import ScaleType
+from deepreefmap.pipeline.artifacts import ReconstructionCancelled, ScaleType
+
+ProgressCallback = Callable[[int, int, str], None]  # (current, total, message); total 0 shows an indeterminate bar
 
 
 @dataclass
@@ -36,19 +42,29 @@ class MappingBackend(ABC):
         frame_indices: list[int],
         images_rgb: list[np.ndarray],
         gravity_vectors: np.ndarray | None = None,
+        cancel_event: threading.Event | None = None,
+        progress_callback: ProgressCallback | None = None,
     ):
         """Return depth + pose estimates for an ordered image sequence.
 
         Backends that maintain temporal state inside a full-sequence forward pass
         should override this method. Frame-oriented preview backends can rely on
         this default adapter.
+
+        ``cancel_event`` and ``progress_callback`` came with the GUI. Mapping
+        is the longest stage: the user can stop mid-sequence, and the bar
+        moves frame by frame instead of sitting still.
         """
         from deepreefmap.pipeline.artifacts import MappingSequenceResult
 
-        estimates = [
-            self.process_frame(frame_index=idx, image_rgb=image)
-            for idx, image in zip(frame_indices, images_rgb)
-        ]
+        estimates = []
+        total = len(images_rgb)
+        for i, (idx, image) in enumerate(zip(frame_indices, images_rgb)):
+            if cancel_event is not None and cancel_event.is_set():
+                raise ReconstructionCancelled("Cancelled during mapping")
+            estimates.append(self.process_frame(frame_index=idx, image_rgb=image))
+            if progress_callback is not None:
+                progress_callback(i + 1, total, "Estimating depth and pose")
         if not estimates:
             raise RuntimeError("Cannot process an empty mapping sequence")
         confidence = None

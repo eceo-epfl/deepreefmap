@@ -294,19 +294,46 @@ class ViserLiveApp:
             self.startup_error = str(exc) or exc.__class__.__name__
             self.enabled = False
 
+    def _show_geometry_preview(self, geometry_xyz: np.ndarray, geometry_rgb: np.ndarray) -> None:
+        """Render a bare geometry cloud at /preview/cloud, with no semantics attached."""
+        if self._server is None:
+            return
+        with self._render_lock:
+            ps = 0.002 if self._point_size_slider is None else float(self._point_size_slider.value)
+            with suppress(Exception):
+                self._server.scene.add_point_cloud(
+                    name="/preview/cloud",
+                    points=np.ascontiguousarray(geometry_xyz, dtype=np.float32),
+                    colors=np.ascontiguousarray(geometry_rgb, dtype=np.uint8),
+                    point_size=ps,
+                )
+
     def set_data(
         self,
         frame_batch: "FrameBatch",
         mapping_result: "MappingSequenceResult",
-        reference_cloud: "SemanticPointCloud",
-        classes_config: "ClassConfig",
+        reference_cloud: "SemanticPointCloud | None" = None,
+        classes_config: "ClassConfig | None" = None,
         ortho_bins: int = 1000,
         ortho_cloud: "SemanticPointCloud | None" = None,
         ortho_grid: OrthoGrid | None = None,
+        geometry_xyz: np.ndarray | None = None,
+        geometry_rgb: np.ndarray | None = None,
+        **_ignored: object,
     ) -> None:
-        """Build scene graph and caches after reconstruction (single bulk load)."""
+        """Build scene graph and caches after reconstruction (single bulk load).
+
+        A geometry-only run arrives with ``geometry_xyz``/``geometry_rgb`` and no
+        ``reference_cloud``, and gets the bare geometry cloud instead of the scene graph.
+        """
         if not self.enabled or self._server is None:
             return
+
+        if reference_cloud is None:
+            if geometry_xyz is not None and geometry_rgb is not None:
+                self._show_geometry_preview(geometry_xyz, geometry_rgb)
+            return
+        assert classes_config is not None  # always paired with reference_cloud by the orchestrator
 
         frame_order = tuple(int(x) for x in frame_batch.frame_indices)
         self._frame_order = frame_order
@@ -367,6 +394,8 @@ class ViserLiveApp:
             self._camera_view_by_frame[int(fid)] = (pose_w_c, fov_y)
 
         with self._render_lock:
+            with suppress(Exception):
+                self._server.scene.remove("/preview/cloud")
             if self._scene_controller is None:
                 self._scene_controller = ViserSceneController(self._server.scene)
             else:

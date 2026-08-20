@@ -20,3 +20,4 @@ release archives and document it as an optional user-managed integration.
 Segmentation and mapping models are downloaded or loaded separately from the
 source tree. Release notes should name each model source, pinned revision or
 checksum, and license/usage terms.
+

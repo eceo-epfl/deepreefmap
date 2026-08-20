@@ -7,7 +7,7 @@ import yaml
 from deepreefmap.postproc.reports import (
     _build_legend,
     _present_class_ids,
-    render_offline_video_placeholder,
+    render_offline_video,
 )
 
 
@@ -42,7 +42,7 @@ def test_render_offline_video_uses_manifest(tmp_path):
         )
     )
 
-    render_offline_video_placeholder(tmp_path)
+    render_offline_video(tmp_path)
 
     assert (tmp_path / "videos" / "qc_render.mp4").exists()
 
@@ -105,7 +105,7 @@ def test_render_offline_video_4panel_layout_and_cumulative_ortho(tmp_path):
         )
     )
 
-    render_offline_video_placeholder(tmp_path)
+    render_offline_video(tmp_path)
 
     out = tmp_path / "videos" / "qc_render.mp4"
     assert out.exists()

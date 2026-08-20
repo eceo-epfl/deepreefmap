@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 from deepreefmap.config.classes import ClassConfig
 from deepreefmap.pipeline.artifacts import SemanticPointCloud
@@ -34,8 +35,14 @@ def build_ortho_outputs(
     *,
     bins: int = 2000,
     crop: TransectCropParams | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> OrthoOutputs:
-    base_grid = aggregate_cloud_to_ortho_grid(cloud, bins=bins)
+    base_grid = aggregate_cloud_to_ortho_grid(cloud, bins=bins, progress=progress)
+    if progress is not None:
+        try:
+            progress("Computing benthic cover")
+        except Exception:
+            pass
     return apply_ortho_crop(base_grid, classes_config, crop=crop)
 
 

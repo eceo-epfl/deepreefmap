@@ -10,6 +10,14 @@ import numpy as np
 ScaleType = Literal["metric", "relative", "unknown"]
 
 
+class ReconstructionCancelled(Exception):
+    """Raised when the user cancels a running reconstruction.
+
+    Lives here rather than beside the orchestrator so mapping backends can raise
+    it without importing the pipeline that drives them.
+    """
+
+
 @dataclass(frozen=True)
 class PreparedFrame:
     frame_index: int

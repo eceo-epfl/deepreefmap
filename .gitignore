@@ -49,3 +49,5 @@ camera_profiles/*_diagnostics/
 *.tgz
 *.7z
 demo/
+
+*.tmp

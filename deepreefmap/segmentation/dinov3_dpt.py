@@ -5,47 +5,44 @@ from pathlib import Path
 import importlib.util
 
 import numpy as np
+import torch
 
 from deepreefmap.segmentation.base import SegmentationModel, SegmentationOutput
 
 
 class DinoV3DPTWrapper(SegmentationModel):
-    def __init__(self, repo_id: str, resolution: tuple[int, int] = (768, 1376)) -> None:
+    def __init__(
+        self,
+        repo_id: str,
+        resolution: tuple[int, int] = (768, 1376),
+        device: torch.device | None = None,
+    ) -> None:
         self.name = repo_id
         self.default_resolution = resolution
         self._repo_id = repo_id
         self._model = None
-        self._device = None
+        self._device: torch.device | None = None
+        self._requested_device = device
 
     def _lazy_load(self) -> None:
         if self._model is not None:
             return
-        import torch
         from huggingface_hub import snapshot_download
 
-        root = Path(snapshot_download(self._repo_id))
+        # Prefer the local cache: a repo-id load checks the Hub for a newer revision
+        # first, which stalls an offline field laptop. A miss falls back to a download.
+        try:
+            root = Path(snapshot_download(self._repo_id, local_files_only=True))
+        except Exception:
+            root = Path(snapshot_download(self._repo_id))
         spec = importlib.util.spec_from_file_location("coralscapes_hub_model", root / "coralscapes_hub_model.py")
         if spec is None or spec.loader is None:
             raise RuntimeError("Could not load coralscapes_hub_model.py from model repo.")
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        hub_auto_processor = mod.AutoImageProcessor
+        from deepreefmap.device import resolve_device
 
-        class _FastAutoImageProcessor:
-            @staticmethod
-            def from_pretrained(*args, **kwargs):
-                kwargs.setdefault("use_fast", True)
-                return hub_auto_processor.from_pretrained(*args, **kwargs)
-
-        mod.AutoImageProcessor = _FastAutoImageProcessor
-        hub_load_weights = mod._load_hub_weights
-
-        def _load_hub_weights_compat(path):
-            state = hub_load_weights(path)
-            return {k.replace("encoder.model.", "encoder.", 1): v for k, v in state.items()}
-
-        mod._load_hub_weights = _load_hub_weights_compat
-        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._device = self._requested_device or resolve_device()
         self._model = mod.Dinov3DPTSegmenter.from_pretrained(root, map_location=self._device).eval()
 
     def predict(self, image_rgb: np.ndarray) -> SegmentationOutput:
