@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 # producing mirrored geometry.
 _POSE_IDENTITY_TOLERANCE = 1e-3
 
+# Re-anchoring in blocks keeps peak transient memory at a few hundred MB instead
+# of a full float64 copy; the block size never changes the result bitwise.
+_REANCHOR_POINT_BLOCK = 8_000_000
+
 
 # The wheel vendors LoGeR's `loger` package, so a deployed binary imports it directly.
 # A source checkout falls back to the third_party/LoGeR submodule on sys.path.
@@ -196,7 +200,10 @@ class LoGeRBackend(MappingBackend):
             if progress_callback is not None:
                 progress_callback(0, 0, "Preparing frames for LoGeR")  # 0/0 shows an indeterminate bar
             t_resize = time.monotonic()
-            resized = [cv2.resize(frm, (target_w, target_h), interpolation=cv2.INTER_AREA) for frm in images_rgb]
+            resized = [
+                cv2.resize(frm, (target_w, target_h), interpolation=cv2.INTER_AREA)
+                for frm in images_rgb
+            ]
             logger.info(
                 "LoGeR input resize complete for %d/%d frames to %dx%d in %.1fs",
                 len(resized),
@@ -206,7 +213,9 @@ class LoGeRBackend(MappingBackend):
                 time.monotonic() - t_resize,
             )
             batch = np.stack(resized, axis=0).astype(np.float32) / 255.0
+            del resized  # only needed to build the batch; frees ~3 B/px/frame during inference
             batch_t = torch.from_numpy(batch).permute(0, 3, 1, 2).unsqueeze(0).to(self._device)
+            del batch
             forward_kwargs = {
                 "window_size": self.default_window_size,
                 "overlap_size": self._overlap_size,
@@ -262,9 +271,13 @@ class LoGeRBackend(MappingBackend):
             if local_points is None and world_points is None:
                 raise RuntimeError("LoGeR output missing both 'local_points' and 'points'")
             if local_points is None:
-                local_points = world_points
+                # world_points exists here (both-None raised above). Re-anchoring
+                # rebases it in place, so the fallback must snapshot the
+                # un-anchored values it stands in for.
+                assert world_points is not None
+                local_points = world_points.copy()
             assert local_points is not None
-            depth = np.abs(local_points[..., 2]).astype(np.float32)
+            depth = np.abs(local_points[..., 2]).astype(np.float32, copy=False)
             if poses is None or poses.shape[-2:] != (4, 4):
                 raise RuntimeError("LoGeR output missing usable 'camera_poses'")
 
@@ -278,28 +291,32 @@ class LoGeRBackend(MappingBackend):
             logger.info("LoGeR outputs validated: %d/%d frames have depth and poses", n_out, n_in)
 
             # Re-anchoring left-multiplies every point by inv(pose[0]) in float64,
-            # a pass over every pixel of every frame.
+            # a pass over every pixel of every frame. It runs in point-blocks that
+            # each report progress, so the bar advances instead of pinning at 100%.
             if progress_callback is not None:
                 progress_callback(0, 0, "Aligning poses to world frame")
-            poses, world_points = _reanchor_to_first_camera(poses, world_points)
+            poses, world_points = _reanchor_to_first_camera(poses, world_points, progress_callback)
             _assert_pose_convention(poses)
 
             confidence = _tensor_to_numpy(out.get("conf"))
             if confidence is not None:
-                confidence_t = torch.as_tensor(confidence)
-                confidence = torch.sigmoid(confidence_t).numpy().astype(np.float32)
+                # In-place sigmoid: `confidence` aliases out["conf"], which has
+                # no other reader, and is already float32 from _tensor_to_numpy.
+                confidence = torch.sigmoid_(torch.as_tensor(confidence)).numpy()
                 confidence = np.squeeze(confidence, axis=-1) if confidence.ndim == 4 and confidence.shape[-1] == 1 else confidence
             input_h, input_w = images_rgb[0].shape[:2]
             image_size = self._image_size or (input_w, input_h)
             intrinsics = scale_intrinsics(self._k, image_size, (target_w, target_h))
             logger.info("LoGeR sequence run complete for %d frames", n_in)
+            # copy=False: these are already float32 (see _tensor_to_numpy), and
+            # an unconditional astype would duplicate ~7 GB at the run's peak.
             return MappingSequenceResult(
                 frame_indices=np.asarray(frame_indices, dtype=np.int32),
-                depth_maps=depth.astype(np.float32),
+                depth_maps=depth.astype(np.float32, copy=False),
                 poses_w_c=poses.astype(np.float32),
                 intrinsics=intrinsics,
-                world_points=None if world_points is None else world_points.astype(np.float32),
-                local_points=local_points.astype(np.float32),
+                world_points=None if world_points is None else world_points.astype(np.float32, copy=False),
+                local_points=local_points.astype(np.float32, copy=False),
                 confidence=confidence,
                 scale_type="relative",
                 gravity_vectors=None if gravity_vectors is None else gravity_vectors.astype(np.float32),
@@ -329,15 +346,13 @@ class LoGeRBackend(MappingBackend):
 def _reanchor_to_first_camera(
     poses: np.ndarray,
     world_points: np.ndarray | None,
+    progress_callback: ProgressCallback | None = None,
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Canonicalize the world frame so camera 0 sits at the origin.
 
-    Pi3 emits `camera_poses` and `points` in some internal world frame; the
-    upstream eval adapter (`third_party/LoGeR/eval/pi3_adapter.py`) re-anchors
-    them by left-multiplying every pose by `inv(poses[0])` and applying the
-    same transform to `points`. Doing this here gives us a reproducible world
-    frame (camera 0 = identity) across runs and matches the convention our
-    pose-convention assertion expects.
+    Mirrors the re-anchoring in `third_party/LoGeR/eval/pi3_adapter.py`, giving a
+    reproducible world frame across runs. Mutates `world_points` in place, so
+    callers must not rely on the un-anchored values afterwards.
     """
     if poses.shape[0] == 0:
         return poses, world_points
@@ -350,12 +365,18 @@ def _reanchor_to_first_camera(
     if world_points is None:
         return rebased_poses, None
 
-    wp_f64 = world_points.astype(np.float64)
-    flat = wp_f64.reshape(-1, 3)
-    homog = np.concatenate([flat, np.ones((flat.shape[0], 1), dtype=np.float64)], axis=1)
-    transformed = homog @ reference_inv.T
-    rebased_world = transformed[:, :3].reshape(world_points.shape).astype(world_points.dtype)
-    return rebased_poses, rebased_world
+    # Per-block float64 matmul written back over the input rows: identical values
+    # to a whole-array pass, without a full-size copy.
+    flat = world_points.reshape(-1, 3)
+    transform = reference_inv.T
+    total = flat.shape[0]
+    for start in range(0, total, _REANCHOR_POINT_BLOCK):
+        block = flat[start : start + _REANCHOR_POINT_BLOCK].astype(np.float64)
+        homog = np.concatenate([block, np.ones((block.shape[0], 1), dtype=np.float64)], axis=1)
+        flat[start : start + _REANCHOR_POINT_BLOCK] = (homog @ transform)[:, :3]
+        if progress_callback is not None:
+            progress_callback(min(start + _REANCHOR_POINT_BLOCK, total), total, "Aligning poses to world frame")
+    return rebased_poses, flat.reshape(world_points.shape)
 
 
 def _assert_pose_convention(poses: np.ndarray) -> None:

@@ -21,8 +21,8 @@ from deepreefmap.pointcloud.transect_crop import (
 )
 from deepreefmap.postproc.ortho_outputs import OrthoOutputs, TransectCropParams, apply_ortho_crop
 from deepreefmap.postproc.reports import save_cover_report
-from deepreefmap.visualization.final_cloud_index import build_final_cloud_index, median_distance_to_camera
-from deepreefmap.visualization.live_frame_cloud import LiveFrameCloudCache
+from deepreefmap.pointcloud.final_cloud_index import build_final_cloud_index, median_distance_to_camera
+from deepreefmap.pointcloud.live_frame_cloud import LiveFrameCloudCache
 from deepreefmap.visualization.viser_scene import ViserSceneController, rotation_to_wxyz
 
 if TYPE_CHECKING:

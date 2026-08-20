@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Callable
 
 import cv2
 import numpy as np
@@ -14,168 +15,28 @@ _BIAS = np.int64(1 << 20)
 _MASK = np.int64((1 << 21) - 1)
 
 
-def _pack_voxel_key(ix: np.ndarray, iy: np.ndarray, iz: np.ndarray) -> np.ndarray:
-    """Packed int keys where in-range; object array with int or tuple for overflow rows."""
-    xa = ix.astype(np.int64, copy=False) + _BIAS
-    ya = iy.astype(np.int64, copy=False) + _BIAS
-    za = iz.astype(np.int64, copy=False) + _BIAS
-    in_range = (xa >= 0) & (xa <= _MASK) & (ya >= 0) & (ya <= _MASK) & (za >= 0) & (za <= _MASK)
-    n = int(ix.shape[0])
-    out = np.empty(n, dtype=object)
-    if np.any(in_range):
-        xi = xa[in_range].astype(np.uint64)
-        yi = ya[in_range].astype(np.uint64)
-        zi = za[in_range].astype(np.uint64)
-        packed = xi | (yi << np.uint64(21)) | (zi << np.uint64(42))
-        ir = np.flatnonzero(in_range)
-        out[ir] = packed.astype(object)
-    if np.any(~in_range):
-        ir = np.flatnonzero(~in_range)
-        for j in ir:
-            out[int(j)] = (int(ix[j]), int(iy[j]), int(iz[j]))
-    return out
+def _pack_voxel_keys_int64(keys: np.ndarray) -> np.ndarray | None:
+    """Pack an ``(N, 3)`` int voxel-index array into one int64 per row, ix most significant.
 
-
-class _GrowableArray2D:
-    def __init__(self, cols: int, dtype: np.dtype) -> None:
-        self.cols = int(cols)
-        self.dtype = dtype
-        self._data = np.zeros((512, self.cols), dtype=dtype)
-        self.size = 0
-
-    def _ensure_capacity(self, need: int) -> None:
-        if self.size + need <= len(self._data):
-            return
-        new_len = max(len(self._data) * 2, self.size + need)
-        new_buf = np.zeros((new_len, self.cols), dtype=self.dtype)
-        if self.size:
-            new_buf[: self.size] = self._data[: self.size]
-        self._data = new_buf
-
-    def append_rows(self, rows: np.ndarray) -> None:
-        n = int(rows.shape[0])
-        if n == 0:
-            return
-        self._ensure_capacity(n)
-        self._data[self.size : self.size + n] = rows
-        self.size += n
-
-    def set_row(self, i: int, row: np.ndarray) -> None:
-        self._data[i] = row
-
-    def view(self) -> np.ndarray:
-        return self._data[: self.size]
-
-
-class _GrowableArray1D:
-    def __init__(self, dtype: np.dtype) -> None:
-        self.dtype = dtype
-        self._data = np.zeros(512, dtype=dtype)
-        self.size = 0
-
-    def _ensure_capacity(self, need: int) -> None:
-        if self.size + need <= len(self._data):
-            return
-        new_len = max(len(self._data) * 2, self.size + need)
-        new_buf = np.zeros(new_len, dtype=self.dtype)
-        if self.size:
-            new_buf[: self.size] = self._data[: self.size]
-        self._data = new_buf
-
-    def append(self, values: np.ndarray) -> None:
-        n = int(values.shape[0])
-        if n == 0:
-            return
-        self._ensure_capacity(n)
-        self._data[self.size : self.size + n] = values
-        self.size += n
-
-    def __setitem__(self, i: int, v) -> None:
-        self._data[i] = v
-
-    def view(self) -> np.ndarray:
-        return self._data[: self.size]
-
-
-class NearestCameraVoxelMap:
-    """Winner-takes-all store: one point per voxel cell; closer-to-camera replaces occupant."""
-
-    def __init__(self, radius: float) -> None:
-        if radius <= 0 or not np.isfinite(radius):
-            raise ValueError("radius must be finite and positive")
-        self._radius = float(radius)
-        self._key_to_idx: dict[object, int] = {}
-        self._xyz = _GrowableArray2D(3, np.float32)
-        self._rgb = _GrowableArray2D(3, np.uint8)
-        self._labels = _GrowableArray1D(np.int32)
-        self._frame_indices = _GrowableArray1D(np.int32)
-        self._confidence = _GrowableArray1D(np.float32)
-        self._distance = _GrowableArray1D(np.float32)
-
-    def add_points(
-        self,
-        xyz: np.ndarray,
-        rgb: np.ndarray,
-        labels: np.ndarray,
-        frame_index: int,
-        confidence: np.ndarray,
-        distance: np.ndarray,
-    ) -> None:
-        n = int(xyz.shape[0])
-        if n == 0:
-            return
-        r = self._radius
-        ix = np.floor(xyz[:, 0] / r).astype(np.int64, copy=False)
-        iy = np.floor(xyz[:, 1] / r).astype(np.int64, copy=False)
-        iz = np.floor(xyz[:, 2] / r).astype(np.int64, copy=False)
-        order = np.lexsort((distance, iz, iy, ix))
-        cx, cy, cz = ix[order], iy[order], iz[order]
-        same_cell = (np.diff(cx) == 0) & (np.diff(cy) == 0) & (np.diff(cz) == 0)
-        first_in_cell = np.concatenate([[True], ~same_cell])
-        w = order[first_in_cell]
-
-        xyz_w = xyz[w]
-        rgb_w = rgb[w]
-        lab_w = labels[w]
-        conf_w = confidence[w]
-        dist_w = distance[w]
-        keys = _pack_voxel_key(ix[w], iy[w], iz[w])
-
-        fi = np.int32(frame_index)
-        for i in range(int(w.shape[0])):
-            raw = keys[i]
-            key: object = raw if isinstance(raw, tuple) else int(raw)
-            di = float(dist_w[i])
-            existing = self._key_to_idx.get(key)
-            if existing is None:
-                j = self._xyz.size
-                self._key_to_idx[key] = j
-                self._xyz.append_rows(xyz_w[i : i + 1])
-                self._rgb.append_rows(rgb_w[i : i + 1])
-                self._labels.append(lab_w[i : i + 1])
-                self._frame_indices.append(np.array([fi], dtype=np.int32))
-                self._confidence.append(conf_w[i : i + 1])
-                self._distance.append(np.array([di], dtype=np.float32))
-            else:
-                if di < float(self._distance.view()[existing]):
-                    self._xyz.set_row(existing, xyz_w[i])
-                    self._rgb.set_row(existing, rgb_w[i])
-                    self._labels[existing] = lab_w[i]
-                    self._frame_indices[existing] = fi
-                    self._confidence[existing] = conf_w[i]
-                    self._distance[existing] = di
-
-    def to_semantic_cloud(self) -> SemanticPointCloud:
-        if self._xyz.size == 0:
-            return SemanticPointCloud.empty()
-        return SemanticPointCloud(
-            xyz=self._xyz.view().copy(),
-            rgb=self._rgb.view().copy(),
-            labels=self._labels.view().copy(),
-            frame_indices=self._frame_indices.view().copy(),
-            confidence=self._confidence.view().copy(),
-            distance_to_camera=self._distance.view().copy(),
-        )
+    Returns ``None`` if any axis leaves the 21-bit-per-axis range so callers fall
+    back to a per-axis lexsort. ix sits in the high bits so ascending packed order
+    reproduces the old ix-major (ix, iy, iz) lexsort exactly, keeping the kept rows
+    and their PLY byte-identical. At real voxel/replacement radii the range spans
+    thousands of metres, so overflow never happens on real reef scans.
+    """
+    xa = keys[:, 0].astype(np.int64, copy=False) + _BIAS
+    ya = keys[:, 1].astype(np.int64, copy=False) + _BIAS
+    za = keys[:, 2].astype(np.int64, copy=False) + _BIAS
+    in_range = (
+        (xa >= 0) & (xa <= _MASK) & (ya >= 0) & (ya <= _MASK) & (za >= 0) & (za <= _MASK)
+    )
+    if not bool(np.all(in_range)):
+        return None
+    return (
+        (xa.astype(np.uint64) << np.uint64(42))
+        | (ya.astype(np.uint64) << np.uint64(21))
+        | za.astype(np.uint64)
+    ).astype(np.int64)
 
 
 @dataclass(frozen=True)
@@ -196,28 +57,29 @@ def build_semantic_reference_cloud(
     mapping: MappingSequenceResult,
     classes_config: ClassConfig,
     config: PointFilterConfig | None = None,
+    *,
     progress_cb: Callable[[int, int], None] | None = None,
     stage_cb: Callable[[str], None] | None = None,
+    max_workers: int = 6,
 ) -> SemanticPointCloud:
+    """Lift the kept pixels of every frame into a filtered, voxelized semantic cloud."""
+    def _emit_stage(name: str) -> None:
+        if stage_cb is not None:
+            try:
+                stage_cb(name)
+            except Exception:
+                pass
+
     cfg = config or PointFilterConfig()
     ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
     frame_lookup = {frame.frame_index: frame for frame in frame_batch.frames}
     active_radius = _resolve_replacement_radius(cfg, mapping.depth_maps)
+    ignore_set = list(ignore_labels) if ignore_labels else []
 
-    xyz_parts: list[np.ndarray] = []
-    rgb_parts: list[np.ndarray] = []
-    label_parts: list[np.ndarray] = []
-    frame_parts: list[np.ndarray] = []
-    conf_parts: list[np.ndarray] = []
-    dist_parts: list[np.ndarray] = []
-
-    n_frames = len(mapping.frame_indices)
-    for result_i, frame_index in enumerate(mapping.frame_indices.tolist()):
-        if progress_cb is not None:
-            progress_cb(result_i, n_frames)
+    def _per_frame(result_i: int, frame_index: int):
         frame = frame_lookup.get(int(frame_index))
         if frame is None:
-            continue
+            return None
         depth = mapping.depth_maps[result_i].astype(np.float32)
         h, w = depth.shape
         labels = _resize_nearest(frame.labels, (w, h)).astype(np.int32)
@@ -236,8 +98,8 @@ def build_semantic_reference_cloud(
         valid &= depth >= cfg.min_depth
         valid &= depth <= cfg.max_depth
         valid &= keep_mask
-        if ignore_labels:
-            valid &= ~np.isin(labels, list(ignore_labels))
+        if ignore_set:
+            valid &= ~np.isin(labels, ignore_set)
         if cfg.depth_edge_threshold is not None:
             valid &= depth_edgeness(depth) <= cfg.depth_edge_threshold
         if confidence is not None:
@@ -249,7 +111,7 @@ def build_semantic_reference_cloud(
             valid &= confidence >= max(float(threshold), cfg.min_confidence)
         flat_valid = valid.reshape(-1)
         if not flat_valid.any():
-            continue
+            return None
         xyz_f = xyz[flat_valid]
         rgb_f = rgb.reshape(-1, 3)[flat_valid].astype(np.uint8)
         lab_f = labels.reshape(-1)[flat_valid].astype(np.int32)
@@ -258,38 +120,75 @@ def build_semantic_reference_cloud(
             conf_f = confidence.reshape(-1)[flat_valid].astype(np.float32)
         else:
             conf_f = np.ones(int(flat_valid.sum()), dtype=np.float32)
-
         n = int(xyz_f.shape[0])
-        xyz_parts.append(xyz_f)
-        rgb_parts.append(rgb_f)
-        label_parts.append(lab_f)
-        frame_parts.append(np.full(n, int(frame_index), dtype=np.int32))
-        conf_parts.append(conf_f)
-        dist_parts.append(dist_f)
+        frame_f = np.full(n, int(frame_index), dtype=np.int32)
+        return xyz_f, rgb_f, lab_f, frame_f, conf_f, dist_f
 
-    if not xyz_parts:
+    work = list(enumerate(mapping.frame_indices.tolist()))
+    total = len(work)
+    # Slot each result by submission position, not arrival: downstream tie-breaks
+    # (the replacement lexsort, the voxel reduce) fall through to row order, so
+    # completion order would leak thread scheduling into the cloud and its PLY.
+    parts: list[tuple[np.ndarray, ...] | None] = [None] * total
+    completed = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        fut_to_pos = {ex.submit(_per_frame, ri, fi): ri for ri, fi in work}
+        for fut in as_completed(fut_to_pos):
+            parts[fut_to_pos[fut]] = fut.result()
+            completed += 1
+            if progress_cb is not None:
+                progress_cb(completed, total)
+
+    if all(part is None for part in parts):
         return SemanticPointCloud.empty()
 
-    if stage_cb is not None:
-        stage_cb("concatenating")
+    # For multi-million-point clouds this fill plus the replacement-radius
+    # lexsort that follows are the silent gap the user sees after the
+    # per-frame loop hits N/N, so surface them via stage_cb.
+    _emit_stage("concatenating")
+    n_total = sum(part[0].shape[0] for part in parts if part is not None)
+    xyz = np.empty((n_total, 3), dtype=np.float32)
+    rgb = np.empty((n_total, 3), dtype=np.uint8)
+    labels = np.empty(n_total, dtype=np.int32)
+    frame_indices = np.empty(n_total, dtype=np.int32)
+    confidence = np.empty(n_total, dtype=np.float32)
+    distance = np.empty(n_total, dtype=np.float32)
+    # Releasing each part once copied keeps the peak at ~one cloud instead of
+    # every part plus six concatenated copies co-resident.
+    offset = 0
+    for pos in range(total):
+        part = parts[pos]
+        if part is None:
+            continue
+        xyz_f, rgb_f, lab_f, frame_f, conf_f, dist_f = part
+        stop = offset + xyz_f.shape[0]
+        xyz[offset:stop] = xyz_f
+        rgb[offset:stop] = rgb_f
+        labels[offset:stop] = lab_f
+        frame_indices[offset:stop] = frame_f
+        confidence[offset:stop] = conf_f
+        distance[offset:stop] = dist_f
+        offset = stop
+        parts[pos] = None
     cloud = SemanticPointCloud(
-        xyz=np.concatenate(xyz_parts, axis=0),
-        rgb=np.concatenate(rgb_parts, axis=0),
-        labels=np.concatenate(label_parts, axis=0),
-        frame_indices=np.concatenate(frame_parts, axis=0),
-        confidence=np.concatenate(conf_parts, axis=0),
-        distance_to_camera=np.concatenate(dist_parts, axis=0),
+        xyz=xyz,
+        rgb=rgb,
+        labels=labels,
+        frame_indices=frame_indices,
+        confidence=confidence,
+        distance_to_camera=distance,
     )
 
     if active_radius is not None:
-        if stage_cb is not None:
-            stage_cb("replacing")
-        cloud = nearest_camera_replace_semantic_cloud(cloud, active_radius)
+        _emit_stage("replacing")
+        cloud = nearest_camera_replace_semantic_cloud(
+            cloud, active_radius,
+            progress=lambda sub: _emit_stage(f"replacing_{sub}"),
+        )
 
     if cfg.voxel_size is None or cfg.voxel_size <= 0:
         return cloud
-    if stage_cb is not None:
-        stage_cb("voxelizing")
+    _emit_stage("voxelizing")
     return voxel_reduce_semantic_cloud(cloud, cfg.voxel_size)
 
 
@@ -337,16 +236,48 @@ def voxel_reduce_semantic_cloud(cloud: SemanticPointCloud, voxel_size: float) ->
     )
 
 
-def nearest_camera_replace_semantic_cloud(cloud: SemanticPointCloud, radius: float) -> SemanticPointCloud:
+def nearest_camera_replace_semantic_cloud(
+    cloud: SemanticPointCloud,
+    radius: float,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> SemanticPointCloud:
+    """Drop all but the nearest-to-camera point in each voxel of side `radius`.
+
+    `progress` gets each sub-step name so callers can drive UI through the sort,
+    which dominates on multi-million-point clouds.
+    """
+    def _emit(name: str) -> None:
+        if progress is not None:
+            try:
+                progress(name)
+            except Exception:
+                pass
+
     if len(cloud) == 0 or radius <= 0 or not np.isfinite(radius):
         return cloud
     if cloud.distance_to_camera is None:
         return cloud
+    _emit("keys")
     keys = np.floor(cloud.xyz / float(radius)).astype(np.int64)
     distance = np.asarray(cloud.distance_to_camera, dtype=np.float32).reshape(-1)
-    order = np.lexsort((np.arange(len(cloud), dtype=np.int64), distance, keys[:, 2], keys[:, 1], keys[:, 0]))
-    keys_sorted = keys[order]
-    selected = order[np.concatenate([[True], np.any(np.diff(keys_sorted, axis=0) != 0, axis=1)])]
+    _emit("sort")
+    # Pack the three axes into one int64 (ix in the high bits) so a 2-key sort
+    # reproduces the old (ix, iy, iz, distance) lexsort exactly: same nearest
+    # point per voxel and same row order, so the cloud and its PLY stay
+    # byte-identical while the sort roughly halves in time and peak memory.
+    # lexsort is stable, so equal (voxel, distance) rows keep input order like
+    # the old explicit arange key. Per-axis fallback if a voxel index overflows.
+    packed = _pack_voxel_keys_int64(keys)
+    if packed is not None:
+        order = np.lexsort((distance, packed))
+        packed_sorted = packed[order]
+        selected = order[np.concatenate([[True], packed_sorted[1:] != packed_sorted[:-1]])]
+    else:
+        order = np.lexsort((distance, keys[:, 2], keys[:, 1], keys[:, 0]))
+        keys_sorted = keys[order]
+        selected = order[np.concatenate([[True], np.any(np.diff(keys_sorted, axis=0) != 0, axis=1)])]
+    _emit("select")
     return SemanticPointCloud(
         xyz=cloud.xyz[selected],
         rgb=cloud.rgb[selected],
@@ -358,35 +289,14 @@ def nearest_camera_replace_semantic_cloud(cloud: SemanticPointCloud, radius: flo
 
 
 def _voxel_sort_order(keys: np.ndarray) -> np.ndarray:
-    return np.lexsort((np.arange(keys.shape[0], dtype=np.int64), keys[:, 2], keys[:, 1], keys[:, 0]))
-
-
-def nearest_camera_filter(cloud: SemanticPointCloud, neighborhood_size: float) -> SemanticPointCloud:
-    if len(cloud) == 0 or neighborhood_size <= 0:
-        return cloud
-    if cloud.distance_to_camera is None:
-        return cloud
-    keys = np.floor(cloud.xyz / neighborhood_size).astype(np.int64)
-    order = np.lexsort((keys[:, 2], keys[:, 1], keys[:, 0]))
-    keys_sorted = keys[order]
-    split_points = np.flatnonzero(np.any(np.diff(keys_sorted, axis=0) != 0, axis=1)) + 1
-    groups = np.split(order, split_points)
-    selected: list[int] = []
-    for group in groups:
-        if group.size == 1:
-            selected.append(int(group[0]))
-            continue
-        nearest_idx = int(group[int(np.argmin(cloud.distance_to_camera[group]))])
-        selected.append(nearest_idx)
-    idx = np.asarray(selected, dtype=np.int64)
-    return SemanticPointCloud(
-        xyz=cloud.xyz[idx],
-        rgb=cloud.rgb[idx],
-        labels=cloud.labels[idx],
-        frame_indices=None if cloud.frame_indices is None else cloud.frame_indices[idx],
-        confidence=None if cloud.confidence is None else cloud.confidence[idx],
-        distance_to_camera=None if cloud.distance_to_camera is None else cloud.distance_to_camera[idx],
-    )
+    # ix in the high bits makes ascending packed order match the per-axis
+    # (ix, iy, iz) lexsort, with arange breaking ties to the original index, so
+    # the reduced cloud keeps byte-identical row order. Per-axis on overflow.
+    arange = np.arange(keys.shape[0], dtype=np.int64)
+    packed = _pack_voxel_keys_int64(keys)
+    if packed is not None:
+        return np.lexsort((arange, packed))
+    return np.lexsort((arange, keys[:, 2], keys[:, 1], keys[:, 0]))
 
 
 def estimate_replacement_radius(

@@ -7,8 +7,8 @@ from typing import Any, Callable
 
 import numpy as np
 
-from deepreefmap.visualization.final_cloud_index import FinalCloudIndex
-from deepreefmap.visualization.live_frame_cloud import LiveFrameCloudCache, build_enabled_label_lut, mask_points_by_enabled_lut
+from deepreefmap.pointcloud.final_cloud_index import FinalCloudIndex
+from deepreefmap.pointcloud.live_frame_cloud import LiveFrameCloudCache, build_enabled_label_lut, mask_points_by_enabled_lut
 
 logger = logging.getLogger(__name__)
 
