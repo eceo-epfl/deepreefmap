@@ -51,6 +51,28 @@ def test_process_frame_resizes_to_target_resolution():
     assert disp_net.last_shape == (1, 3, 256, 512)
 
 
+def test_process_sequence_reports_per_frame_progress() -> None:
+    backend = SCSfMLearnerBackend(
+        checkpoint_path="dummy.pt",
+        target_width=64,
+        target_height=64,
+        device="cpu",
+    )
+    with patch.object(SCSfMLearnerBackend, "_load_models", lambda self: None):
+        backend.initialize((64, 64), np.eye(3, dtype=np.float32))
+    backend._disp_net = _FakeDispNet()
+    backend._pose_net = None
+    images = [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(3)]
+
+    seen: list[tuple[int, int]] = []
+    backend.process_sequence(
+        [0, 1, 2],
+        images,
+        progress_callback=lambda cur, tot, msg: seen.append((cur, tot)),
+    )
+    assert seen == [(1, 3), (2, 3), (3, 3)]
+
+
 def test_resolve_checkpoint_path_uses_default_hf_download_when_unset():
     backend = SCSfMLearnerBackend(checkpoint_path=None, device="cpu")
     with patch("deepreefmap.mapping.scsfmlearner_backend.hf_hub_download", return_value="/tmp/scsfmlearner.pt") as mock_download:
