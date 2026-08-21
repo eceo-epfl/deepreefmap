@@ -1,0 +1,53 @@
+name: release
+
+# Pushing a vX.Y.Z tag builds the distributions and publishes a GitHub Release
+# whose notes are that version's CHANGELOG section.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - name: Check the tag, pyproject.toml, and CHANGELOG.md agree
+        run: |
+          python - <<'PY'
+          import os, pathlib, re, sys, tomllib
+
+          version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+
+          packaged = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          if packaged != version:
+              sys.exit(f"::error::tag is {version} but pyproject.toml says {packaged}")
+
+          changelog = pathlib.Path("CHANGELOG.md").read_text()
+          section = re.search(
+              rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## |\Z)",
+              changelog, re.MULTILINE | re.DOTALL,
+          )
+          if section is None or not section.group(1).strip():
+              sys.exit(f"::error::CHANGELOG.md has no content under '## [{version}]'")
+
+          pathlib.Path("release_notes.md").write_text(section.group(1).strip() + "\n")
+          PY
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Build
+        run: uv build
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file release_notes.md

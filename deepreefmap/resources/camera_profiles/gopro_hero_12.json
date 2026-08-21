@@ -1,0 +1,55 @@
+{
+  "name": "gopro_hero_12_4k_wide",
+  "source": "colmap_radial_v1",
+  "distorted": {
+    "model": "RADIAL",
+    "params": {
+      "fx": 2398.207330062544,
+      "fy": 2398.207330062544,
+      "cx": 1920.0,
+      "cy": 1080.0,
+      "k1": 0.3635862291164943,
+      "k2": 0.29770069330548476
+    }
+  },
+  "rectified_pinhole": {
+    "image_size": [
+      3840,
+      2160
+    ],
+    "K": [
+      [
+        3094.475830078125,
+        0.0,
+        1919.5
+      ],
+      [
+        0.0,
+        3094.475830078125,
+        1079.5
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "diagnostics": {
+    "n_input_frames": 100,
+    "n_registered_images": 100,
+    "mean_reprojection_error_px": 1.305746044435041,
+    "camera_model": "RADIAL",
+    "rectification_mode": "undistort",
+    "source_video": "GX010046.MP4",
+    "sampling_fps": 10,
+    "begin_s": null,
+    "end_s": null,
+    "valid_roi_xywh": [
+      0,
+      0,
+      3839,
+      2159
+    ]
+  }
+}
