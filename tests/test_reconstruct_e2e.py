@@ -104,6 +104,11 @@ def _summarize(out_dir: Path) -> dict:
     manifest = json.loads((out_dir / "run_manifest.json").read_text())
     cover = json.loads((out_dir / "benthic_cover.json").read_text())
     with np.load(out_dir / "mapping_outputs.npz") as mapping:
+        # The resume loader reads exactly these keys; local_points is never persisted.
+        assert set(mapping.files) == {
+            "frame_indices", "depth", "poses_w_c", "intrinsics",
+            "confidence", "gravity_vectors", "world_points", "scale_type",
+        }
         depth = mapping["depth"]
         intrinsics = mapping["intrinsics"]
         translations = mapping["poses_w_c"][:, :3, 3]
