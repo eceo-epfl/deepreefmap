@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
+import pytest
 
 from deepreefmap.mapping.base import FrameEstimate, MappingBackend
+from deepreefmap.pipeline.artifacts import ReconstructionCancelled
 
 
 class _StubBackend(MappingBackend):
@@ -44,3 +48,22 @@ def test_process_sequence_without_callback_still_runs() -> None:
     backend = _StubBackend()
     result = backend.process_sequence([0, 1], _images(2))
     assert result.depth_maps.shape[0] == 2
+
+
+def test_cancel_event_stops_mid_sequence() -> None:
+    cancel = threading.Event()
+    calls: list[int] = []
+
+    def record_and_cancel(cur: int, tot: int, msg: str) -> None:
+        calls.append(cur)
+        if cur == 2:
+            cancel.set()
+
+    with pytest.raises(ReconstructionCancelled):
+        _StubBackend().process_sequence([0, 1, 2, 3], _images(4), cancel_event=cancel, progress_callback=record_and_cancel)
+    assert calls == [1, 2]
+
+
+def test_empty_sequence_raises() -> None:
+    with pytest.raises(RuntimeError, match="empty mapping sequence"):
+        _StubBackend().process_sequence([], [])

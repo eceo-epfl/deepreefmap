@@ -18,6 +18,14 @@ def test_resolve_device_prefers_cuda() -> None:
         assert resolve_device().type == "cuda"
 
 
+def test_resolve_device_prefers_cuda_over_mps() -> None:
+    with (
+        patch("torch.cuda.is_available", return_value=True),
+        patch("torch.backends.mps.is_available", return_value=True),
+    ):
+        assert resolve_device().type == "cuda"
+
+
 def test_resolve_device_prefers_mps_over_cpu() -> None:
     with (
         patch("torch.cuda.is_available", return_value=False),
@@ -56,12 +64,10 @@ def test_get_autocast_dtype_cuda_bf16_needs_flash() -> None:
 
 
 def test_get_autocast_dtype_old_gpu_skips_flash_probe() -> None:
+    # The probe answers yes, so only the capability gate can force float16.
     with (
         patch("torch.cuda.get_device_capability", return_value=(7, 5)),
-        patch(
-            "deepreefmap.device._flash_sdpa_works",
-            side_effect=AssertionError("probe must not run below capability 8"),
-        ),
+        patch("deepreefmap.device._flash_sdpa_works", return_value=True),
     ):
         assert get_autocast_dtype(torch.device("cuda")) == torch.float16
 

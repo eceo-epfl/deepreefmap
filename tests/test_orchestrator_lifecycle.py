@@ -1,8 +1,8 @@
 """Resource ownership across run_reconstruction's failure paths.
 
-The orchestrator starts a sampler thread and may build a viser server before it
-does any real work. Both must be released when a run raises, and an injected Qt
-viewer must survive, because the GUI keeps one window across many runs.
+A failed run must leave no threads behind, close any viser server it built
+itself, and leave an injected Qt viewer open, because the GUI keeps one window
+across many runs.
 """
 
 from __future__ import annotations
@@ -14,12 +14,6 @@ from pathlib import Path
 import pytest
 
 from deepreefmap.pipeline.orchestrator import run_reconstruction
-
-SAMPLER_THREAD_NAME = "drm-resource-sampler"
-
-
-def _sampler_threads() -> list[threading.Thread]:
-    return [t for t in threading.enumerate() if t.name == SAMPLER_THREAD_NAME]
 
 
 class _RecordingViewer:
@@ -52,7 +46,9 @@ class _RecordingViewer:
         pass
 
 
-def _run_expecting_failure(tmp_path: Path, **overrides: object) -> None:
+def _run_expecting_failure(
+    tmp_path: Path, expected: type[Exception], **overrides: object
+) -> None:
     kwargs: dict[str, object] = {
         "video_paths": [str(tmp_path / "missing.mp4")],
         "fps": 2,
@@ -64,17 +60,34 @@ def _run_expecting_failure(tmp_path: Path, **overrides: object) -> None:
         "transect_crop_width": None,
     }
     kwargs.update(overrides)
-    with pytest.raises(Exception):
+    with pytest.raises(expected):
         run_reconstruction(**kwargs)  # type: ignore[arg-type]
 
 
-def test_failed_run_stops_the_sampler_thread(tmp_path: Path) -> None:
-    before = len(_sampler_threads())
+def _run_expecting_deep_failure(tmp_path: Path) -> None:
+    # Real clip, unknown backend: fails after frame preparation has run.
+    _run_expecting_failure(
+        tmp_path, ValueError,
+        video_paths=[str(Path(__file__).parent / "data" / "reef_clip.mp4")],
+        camera_profile_name="gopro_hero_10", mapping_name="no-such-backend",
+        skip_segmentation=True, processing_width=344, processing_height=192, end_s=1.0,
+    )
 
-    for _ in range(3):
-        _run_expecting_failure(tmp_path, classes_path=tmp_path / "nonexistent.yaml")
 
-    assert len(_sampler_threads()) == before
+def test_failed_run_leaves_no_new_threads(tmp_path: Path) -> None:
+    """A failure after frame preparation leaves no threads behind.
+
+    The first run warms process-wide singletons (tqdm's monitor thread), which
+    live for the interpreter, not the run.
+    """
+    _run_expecting_deep_failure(tmp_path)
+    before = {t.ident for t in threading.enumerate()}
+
+    for _ in range(2):
+        _run_expecting_deep_failure(tmp_path)
+
+    leaked = [t.name for t in threading.enumerate() if t.ident not in before]
+    assert leaked == []
 
 
 def test_failed_run_closes_the_viser_server_it_built(tmp_path: Path, monkeypatch) -> None:
@@ -86,6 +99,7 @@ def test_failed_run_closes_the_viser_server_it_built(tmp_path: Path, monkeypatch
 
     _run_expecting_failure(
         tmp_path,
+        FileNotFoundError,
         enable_viser=True,
         skip_segmentation=True,
         camera_profile_name="no-such-profile",
@@ -101,6 +115,7 @@ def test_failed_run_leaves_an_injected_viewer_open(tmp_path: Path) -> None:
 
     _run_expecting_failure(
         tmp_path,
+        FileNotFoundError,
         viewer=injected,
         enable_viser=True,
         keep_viser_open=False,
@@ -115,4 +130,5 @@ def test_enable_viser_holds_its_v1_signature_position() -> None:
     params = list(inspect.signature(run_reconstruction).parameters.values())
 
     assert params[8].name == "enable_viser"
+    assert all(p.kind is p.POSITIONAL_OR_KEYWORD for p in params[:9])
     assert all(p.kind is p.KEYWORD_ONLY for p in params[9:])

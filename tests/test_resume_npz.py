@@ -40,7 +40,7 @@ def test_resumed_cloud_is_byte_identical_to_fresh(tmp_path: Path) -> None:
     depth = rng.random((n, h, w), dtype=np.float64).astype(np.float32) + 0.5
     poses = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
     world = (rng.random((n, h, w, 3), dtype=np.float64).astype(np.float32) * 0.05)
-    confidence = np.ones((n, h, w), dtype=np.float32)
+    confidence = rng.random((n, h, w), dtype=np.float64).astype(np.float32)
 
     fresh = MappingSequenceResult(
         frame_indices=np.arange(n, dtype=np.int32),
@@ -65,6 +65,8 @@ def test_resumed_cloud_is_byte_identical_to_fresh(tmp_path: Path) -> None:
     )
     resumed = resume_mod.load_mapping_result(tmp_path)
     assert resumed is not None and resumed.local_points is None
+    assert np.array_equal(resumed.confidence, fresh.confidence)
+    assert all(x.dtype == np.float32 for x in (resumed.world_points, resumed.depth_maps, resumed.poses_w_c))
 
     cfg = PointFilterConfig(
         voxel_size=None, replacement_radius_factor=1.0, confidence_percentile=None, min_confidence=0.0
@@ -75,6 +77,23 @@ def test_resumed_cloud_is_byte_identical_to_fresh(tmp_path: Path) -> None:
     assert np.array_equal(a.rgb, b.rgb)
     assert np.array_equal(a.labels, b.labels)
     assert np.array_equal(a.confidence, b.confidence)
+
+
+def test_empty_sentinel_arrays_load_as_none(tmp_path: Path) -> None:
+    np.savez(
+        tmp_path / "mapping_outputs.npz",
+        frame_indices=np.arange(3, dtype=np.int32),
+        depth=np.ones((3, 4, 6), dtype=np.float32),
+        poses_w_c=np.tile(np.eye(4, dtype=np.float32), (3, 1, 1)),
+        intrinsics=np.eye(3, dtype=np.float32),
+        confidence=np.asarray([]),
+        gravity_vectors=np.asarray([]),
+        world_points=np.asarray([]),
+        scale_type=np.asarray("relative"),
+    )
+    resumed = resume_mod.load_mapping_result(tmp_path)
+    assert resumed is not None and resumed.scale_type == "relative"
+    assert resumed.confidence is None and resumed.gravity_vectors is None and resumed.world_points is None
 
 
 def test_freeing_local_points_after_refinement_is_cloud_neutral(tmp_path: Path) -> None:
