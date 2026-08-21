@@ -59,7 +59,7 @@ Everything below covers the library and CLI.
 ## Requirements
 
 - Python 3.10, 3.11, or 3.12
-- `[uv](https://docs.astral.sh/uv/)` for dependency management
+- [`uv`](https://docs.astral.sh/uv/) for dependency management
 - FFmpeg (pulled in via `imageio[ffmpeg]`)
 - **GPU**: strongly recommended. NVIDIA (CUDA), AMD (ROCm), and Apple Silicon (MPS) are supported. CPU-only runs work with `scsfmlearner` but are slow.
 
