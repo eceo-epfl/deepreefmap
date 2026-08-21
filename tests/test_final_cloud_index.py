@@ -1,7 +1,7 @@
 import numpy as np
 
 from deepreefmap.pipeline.artifacts import SemanticPointCloud
-from deepreefmap.visualization.final_cloud_index import build_final_cloud_index, median_distance_to_camera
+from deepreefmap.pointcloud.final_cloud_index import build_final_cloud_index, median_distance_to_camera
 
 
 def test_prefix_end_counts_by_timeline_rank() -> None:
