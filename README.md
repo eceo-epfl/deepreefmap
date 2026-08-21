@@ -1,9 +1,28 @@
 # DeepReefMap
 
-[DeepReefMap](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.14307) is a software for rapid 3D semantic mapping of coral reefs from handheld cameras. 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python 3.10–3.12](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
+[![DOI](https://img.shields.io/badge/DOI-10.1111%2F2041--210X.14307-blue.svg)](https://doi.org/10.1111/2041-210X.14307)
+
+[DeepReefMap](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.14307) is a software for rapid 3D semantic mapping of coral reefs from handheld cameras.
 Repository maintained by [Hugues Sibille](https://github.com/HuguesSib) (EPFL) and [Jonathan Sauder](https://josauder.github.io/) (MIT/EPFL).
 
 ![DeepReefMap 3D viewer](assets/deepreefmap_view_3d_2x.gif)
+
+## Contents
+
+- [What you get](#what-you-get)
+- [Quickstart](#quickstart)
+- [How it works](#how-it-works)
+- [Desktop app](#desktop-app)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Choosing models](#choosing-models)
+- [Camera setup and calibration](#camera-setup-and-calibration)
+- [Outputs](#outputs)
+- [Interactive viewer (viser)](#interactive-viewer-viser)
+- [CLI reference](#cli-reference)
+- [Citation](#citation)
 
 ## What you get
 
@@ -16,11 +35,11 @@ From one input video, a run produces:
 
 ## Quickstart
 
-Example input clip (10s GoPro Hero 10, Linear mode):
+Example input clip (GoPro Hero 10, Linear mode):
 
 ![Example input clip](assets/demo_input.gif)
 
-Get a first reconstruction running in three commands. This uses the lightest backend (`scsfmlearner`) and the bundled GoPro Hero 10 profile.
+Get a first reconstruction running in three commands, on the 7-second clip committed for the end-to-end test. This uses the lightest reconstruction backend (`scsfmlearner`), a SegFormer segmentation model, and the bundled GoPro Hero 10 profile — all weights are public, so no Hugging Face account is needed.
 
 ```bash
 # 1. Install
@@ -28,9 +47,10 @@ uv sync
 
 # 2. Run a reconstruction
 uv run deepreefmap reconstruct \
-  --videos assets/demo_input.mp4 \
+  --videos tests/data/reef_clip.mp4 \
   --camera-profile gopro_hero_10 \
   --mapping scsfmlearner \
+  --segmentation segformer-b2 \
   --out out \
   --viser
 
@@ -38,8 +58,11 @@ uv run deepreefmap reconstruct \
 uv run deepreefmap view-run --run-dir out --viser-port 8080
 ```
 
-Don't have a GoPro Hero 10? See [Camera setup](#camera-setup-and-calibration) to calibrate your own. 
-Want better quality? See the [LoGeR backend](#loger-higher-quality-more-setup).
+Then:
+
+- Higher segmentation quality? The default `coralscapes-vit-b-dpt` is better but gated — see [Using DINOv3 models](#using-dinov3-models-authentication).
+- Higher reconstruction quality? See the [LoGeR backend](#loger-path-higher-quality-more-setup).
+- Different camera? Only GoPro Hero 10 and 12 profiles ship with the package — see [Camera setup and calibration](#camera-setup-and-calibration) to calibrate your own.
 
 ## How it works
 
@@ -59,7 +82,7 @@ Everything below covers the library and CLI.
 ## Requirements
 
 - Python 3.10, 3.11, or 3.12
-- `[uv](https://docs.astral.sh/uv/)` for dependency management
+- [uv](https://docs.astral.sh/uv/) for dependency management
 - FFmpeg (pulled in via `imageio[ffmpeg]`)
 - **GPU**: strongly recommended. NVIDIA (CUDA), AMD (ROCm), and Apple Silicon (MPS) are supported. CPU-only runs work with `scsfmlearner` but are slow.
 
@@ -94,7 +117,17 @@ uv sync --extra gopro --extra train
 
 Extras can be combined (eg. `uv sync --extra rocm --extra gopro --extra loger`).
 
-### Choose a reconstruction backend
+| Extra | Purpose |
+| --- | --- |
+| `cu126`, `cu130`, `rocm` | GPU-specific torch builds (mutually exclusive) |
+| `loger` | Runtime dependencies for the LoGeR backend |
+| `gopro` | GoPro telemetry parsing (Linux x86-64 only) |
+| `train` | Training/logging tools (`wandb`, `tensorboard`) |
+| `dev` | `pytest`, `ruff`, `mypy` |
+
+## Choosing models
+
+### Reconstruction backend
 
 To run `deepreefmap reconstruct`, you need at least one reconstruction backend:
 
@@ -143,8 +176,14 @@ uv run deepreefmap reconstruct \
   --videos GX010001.MP4 \
   --mapping loger_star \
   --camera-profile gopro_hero_10 \
-  --out out_loger \
+  --out out_loger
 ```
+
+`DEEPREEFMAP_LOGER_CKPTS` overrides the LoGeR checkpoint directory, eg. to point at an existing `third_party/LoGeR/ckpts`.
+
+### Segmentation model
+
+Two families of segmentation models are available:
 
 - **DINOv3-based** (`coralscapes-vit-*-dpt`): higher quality, **requires Hugging Face authentication** (gated models).
 - **SegFormer**: lighter and faster, no authentication needed.
@@ -166,11 +205,22 @@ uv run huggingface-cli login
 
 ## Camera setup and calibration
 
-### GoPro Hero 10 in Linear mode with GoPro casing
+### Bundled profiles
 
-If your footage is from a GoPro Hero 10 in Linear mode with the GoPro casing setup used by this project, use the built-in profile:
+Two profiles ship with the package, under `deepreefmap/resources/camera_profiles/`. Both were calibrated with the built-in COLMAP calibrator (`RADIAL` model, 100 registered frames sampled at 10 fps).
 
-- Camera profile: `gopro_hero_10` (bundled JSON: `deepreefmap/resources/camera_profiles/gopro_hero_10.json`). You can also override or add profiles with `./camera_profiles/<name>.json` in the current working directory.
+| Profile | Camera and mode | Rectified size | Mean reprojection error |
+| --- | --- | --- | --- |
+| `gopro_hero_10` | Hero 10, Linear mode, GoPro casing | 1920×1080 | 0.78 px |
+| `gopro_hero_12` | Hero 12, 4K Wide | 3840×2160 | 1.31 px |
+
+List what is available in your install:
+
+```bash
+uv run deepreefmap list-profiles
+```
+
+You can also override a bundled profile or add your own by placing `./camera_profiles/<name>.json` in the current working directory.
 
 Example:
 
@@ -182,12 +232,6 @@ uv run deepreefmap reconstruct \
   --mapping scsfmlearner \
   --out out
 ```
-
-## Camera setup and calibration
-
-### Bundled profile: GoPro Hero 10 (Linear mode, GoPro casing)
-
-If your footage matches this setup, use `--camera-profile gopro_hero_10` (bundled at `deepreefmap/resources/camera_profiles/gopro_hero_10.json`). You can also drop your own profile at `./camera_profiles/<name>.json` in the working directory.
 
 ### Calibrating a different camera
 
@@ -224,7 +268,7 @@ uv run deepreefmap reconstruct \
 Each run writes:
 
 - `frames/`, `labels/`, `masks/` — rectified frames, semantic labels, keep masks.
-- `mapping_outputs.npz` — depth, poses, intrinsics, confidence, frame indices.
+- `mapping_outputs.npz` — depth, poses, intrinsics, confidence, frame indices, gravity vectors, world points, and scale type. These keys are what a resumed run reads back.
 - `semantic_reference_cloud.ply` — filtered semantic point cloud.
 - `tsdf_cloud.ply`, `semantic_tsdf_cloud.ply` — when `--tsdf` is enabled.
 - `ortho.png`, `ortho.npz` — aggregated ortho products.
@@ -250,53 +294,58 @@ In the viewer you can:
 ## CLI reference
 
 ```bash
-uv run deepreefmap list-models           # available segmentation + mapping models
-uv run deepreefmap list-profiles         # available camera profiles
-uv run deepreefmap reconstruct ...       # main pipeline
-uv run deepreefmap calibrate VIDEO ...   # camera calibration via COLMAP
+uv run deepreefmap --version              # installed version
+uv run deepreefmap list-models            # available segmentation + mapping models
+uv run deepreefmap list-profiles          # available camera profiles
+uv run deepreefmap reconstruct ...        # main pipeline
+uv run deepreefmap calibrate VIDEO ...    # camera calibration via COLMAP
 uv run deepreefmap verify-calibration NAME
 uv run deepreefmap render-video --run-dir out
 uv run deepreefmap view-run --run-dir out --viser-port 8080
 ```
 
-Useful `reconstruct` flags:
+Run `uv run deepreefmap reconstruct --help` for the full list. The flags you are most likely to reach for:
 
-- `--grid-bins`: ortho aggregation resolution.
-- `--keep-viser-open` / `--no-keep-viser-open`: keep viewer running after processing.
-- `--require-gravity-telemetry`: fail if gravity telemetry cannot be loaded/aligned.
-- `--preprocess-batch-size`: segmentation batch size during frame preparation.
-- `--transect-length` and `--transect-crop-width`: crop outputs around dominant transect.
-- `--skip-segmentation`: geometry-only run (no semantics).
+**Input and output**
 
-`DEEPREEFMAP_LOGER_CKPTS` overrides the LoGeR checkpoint directory, eg. an existing `third_party/LoGeR/ckpts`.
+- `--videos`: comma-separated video paths, in processing order (required).
+- `--camera-profile`: profile name (required). See [Camera setup](#camera-setup-and-calibration).
+- `--out`: output directory (default `out`).
+- `--fps`: target processing framerate (default `10`).
+- `--begin` / `--end`: trim the concatenated stream, in seconds.
+- `--classes`: classes YAML with class roles and colors (default `configs/classes_coralscapes.yaml`).
 
-## Reconstruction outputs
+**Models**
 
-Each run writes cached and derived artifacts:
+- `--segmentation`: segmentation model name (default `coralscapes-vit-b-dpt`).
+- `--mapping`: reconstruction backend (default `scsfmlearner`).
+- `--skip-segmentation`: geometry-only run, no semantics.
 
-- `frames/`, `labels/`, `masks/`: rectified frames, semantic labels, and keep masks.
-- `mapping_outputs.npz`: depth, poses, intrinsics, confidence, frame indices.
-- `semantic_reference_cloud.ply`: filtered semantic point cloud.
-- `tsdf_cloud.ply` and `semantic_tsdf_cloud.ply`: optional TSDF outputs when `--tsdf` is enabled.
-- `ortho.png` and `ortho.npz`: aggregated ortho products.
-- `benthic_cover.json`: class counts and cover fractions.
-- `geometry_cloud.ply`: geometry-only cloud from `--skip-segmentation`.
-- `run_manifest.json`: canonical run manifest (`semantic` or `geometry_only`).
+**Resolution and throughput**
 
-## Viser app (interactive viewer)
+- `--processing-width` / `--processing-height`: frame size before segmentation and mapping (default `1376×768`). The dominant quality/speed knob.
+- `--preprocess-batch-size`: frames segmented together during preparation (default `4`).
 
-You can use live viewing during reconstruction (`--viser`) or open an existing run:
+**Point cloud and ortho**
 
-```bash
-uv run deepreefmap view-run --run-dir out --viser-port 8080
-```
+- `--tsdf` / `--no-tsdf`: optional TSDF fusion output.
+- `--grid-bins`: ortho aggregation resolution (default `2000`).
+- `--replacement-radius-factor`: multiplier on the auto replacement radius (>1 coarser voxels and stronger thinning, <1 finer).
+- `--replacement-radius-override`: absolute replacement voxel size in meters, skipping the auto estimate.
+- `--replacement-radius-estimation-frames`: leading depth maps used for the auto estimate (default `30`).
+- `--transect-length` / `--transect-crop-width`: crop outputs around the dominant transect, in meters.
 
-Viewer highlights:
+**Backend-specific**
 
-- Click a camera frustum to jump timeline.
-- Inspect RGB, segmentation, and depth for each frame.
-- Toggle class visibility and switch color mode (RGB vs semantic colors).
-- Use `Accumulate` to overlay filtered points up to current timeline index.
+- `--loger-model-path`, `--loger-window-size` (default `32`), `--loger-overlap-size` (default `3`).
+- `--scsfmlearner-checkpoint-path`, `--scsfmlearner-width` (default `512`), `--scsfmlearner-height` (default `256`).
+- `--refine-intrinsics-from-mapper`: let the mapping backend refine intrinsics and override the camera profile's `K` downstream.
+
+**Telemetry and viewer**
+
+- `--require-gravity-telemetry`: fail the run if gravity telemetry cannot be loaded or aligned, instead of continuing unaligned.
+- `--viser` / `--viser-port`: live viewer during reconstruction.
+- `--keep-viser-open` / `--no-keep-viser-open`: keep the viewer running after outputs are generated (default: keep open).
 
 ## Citation
 
@@ -336,6 +385,10 @@ If you use the **LoGeR** backend (`--mapping loger` or `loger_star`), please als
   year={2026}
 }
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, the test suite, and the pull request checklist. Notable changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## Acknowledgements
 

@@ -8,6 +8,28 @@ import typer
 app = typer.Typer(help="DeepReefMap command line interface")
 
 
+def _version_callback(value: bool) -> None:
+    if not value:
+        return
+    from deepreefmap import __version__
+
+    typer.echo(__version__)
+    raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the installed DeepReefMap version and exit.",
+    ),
+) -> None:
+    """DeepReefMap command line interface"""
+
+
 def _available_profiles() -> list[str]:
     from deepreefmap.camera.intrinsics import available_profile_names
 
