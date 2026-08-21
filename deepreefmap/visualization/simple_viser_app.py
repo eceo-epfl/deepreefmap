@@ -110,6 +110,7 @@ class SimpleGeometryViserApp:
         mapping_result: "MappingSequenceResult",
         geometry_xyz: np.ndarray,
         geometry_rgb: np.ndarray,
+        **_ignored: object,
     ) -> None:
         if not self.enabled or self._server is None or self._scene is None:
             return

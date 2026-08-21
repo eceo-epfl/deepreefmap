@@ -1,6 +1,6 @@
 [project]
 name = "deepreefmap"
-version = "0.1.0"
+version = "1.1.0"
 description = "Modular framework for semantic 3D mapping of coral reefs from videos"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
@@ -28,29 +28,26 @@ dependencies = [
   "pyyaml>=6.0.2",
   "scikit-learn>=1.5.0",
   "open3d>=0.18.0",
-  # transformers 5.x requires torch >=2.7 (string-typed torch.library.custom_op
-  # annotations break torch 2.4's infer_schema), so stay on 4.x while torch is
-  # pinned to 2.4.1 below.
-  "transformers==4.57.3",
-  "huggingface_hub>=0.34.0,<1.0",
-  # Keep PyTorch on CUDA 12.1 wheels for the workstation's NVIDIA 535 driver
-  # (CUDA 12.2). Newer torch releases may resolve to cu130 and fail CUDA init.
-  "torch==2.4.1",
-  "torchvision==0.19.1",
+  "transformers>=5.8.0",
+  "huggingface_hub>=1.14.0",
+  "torch>=2.7,<3",
+  "torchvision>=0.22,<1",
   # Upper-bounded so the dual-API fallback in deepreefmap.camera.colmap_calibration
   # (ImageReaderOptions.single_camera vs pycolmap.CameraMode.SINGLE) stays the
   # documented contract; bump after retesting calibrate against a new major.
   "pycolmap>=4.0.4,<5.0",
   "viser>=1.0.27",
   "tqdm>=4.67.3",
+  # User-writable LoGeR checkpoint location (deepreefmap.paths.loger_ckpts_dir).
+  "platformdirs>=4",
 ]
 
 [project.optional-dependencies]
 # LoGeR upstream (https://github.com/Junyi42/LoGeR) is a research repo with no
-# pyproject.toml/setup.py, so we cannot pip-install it. Instead, the LoGeR
-# backend imports it directly from third_party/LoGeR via sys.path. This extra
-# pulls in LoGeR's *runtime* dependencies (omitting demo-only ones like
-# gradio/trimesh/matplotlib/evo). Initialize the submodule with:
+# pyproject.toml/setup.py, so we cannot pip-install it. Instead we vendor its
+# `loger` namespace package into the wheel (see [tool.setuptools.packages.find]).
+# This extra pulls in LoGeR's *runtime* dependencies (omitting demo-only ones
+# like gradio/trimesh/matplotlib/evo). Initialize the submodule with:
 #   git submodule update --init --recursive
 loger = [
   "safetensors>=0.4.0",
@@ -63,6 +60,11 @@ gopro = [
   "py-gpmf-parser>=0.1.1,<0.2.0; sys_platform == 'linux' and platform_machine == 'x86_64'"
 ]
 train = ["wandb>=0.20.0", "tensorboard>=2.18.0"]
+# Exact +local pins per backend. PyApp installs the wheel via `uv pip install`, which
+# ignores [tool.uv.sources], so only an exact local version pulls the right wheel.
+cu126 = ["torch==2.12.1+cu126", "torchvision==0.27.1+cu126"]
+cu130 = ["torch==2.12.1+cu130", "torchvision==0.27.1+cu130"]
+rocm = ["torch==2.9.1+rocm6.4", "torchvision==0.24.1+rocm6.4", "pytorch-triton-rocm>=3.0"]
 dev = ["pytest>=8.4.0", "ruff>=0.12.0", "mypy>=2.0.0"]
 
 [project.urls]
@@ -76,11 +78,49 @@ deepreefmap = "deepreefmap.cli.main:app"
 requires = ["setuptools>=83.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+# `loger` is a PEP-420 namespace package (no __init__.py), so namespaces=true.
 [tool.setuptools.packages.find]
-include = ["deepreefmap*"]
+where = [".", "third_party/LoGeR"]
+include = ["deepreefmap*", "loger*"]
+namespaces = true
 
 [tool.setuptools.package-data]
 "deepreefmap.resources" = ["configs/*.yaml", "camera_profiles/*.json"]
+
+[tool.uv]
+conflicts = [
+  [{ extra = "cu126" }, { extra = "cu130" }, { extra = "rocm" }],
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm6.4"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu126", extra = "cu126" },
+  { index = "pytorch-cu130", extra = "cu130" },
+  { index = "pytorch-rocm", extra = "rocm" },
+]
+torchvision = [
+  { index = "pytorch-cu126", extra = "cu126" },
+  { index = "pytorch-cu130", extra = "cu130" },
+  { index = "pytorch-rocm", extra = "rocm" },
+]
+pytorch-triton-rocm = [
+  { index = "pytorch-rocm", extra = "rocm" },
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

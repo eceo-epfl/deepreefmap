@@ -252,8 +252,8 @@ def test_view_run_cli_loads_cached_run_and_starts_viser(tmp_path: Path, monkeypa
         calls["point_filter_config"] = kwargs["point_filter_config"]
         return loaded
 
-    monkeypatch.setattr(cli_main, "load_cached_run", fake_load_cached_run)
-    monkeypatch.setattr(cli_main, "ViserLiveApp", FakeViewer)
+    monkeypatch.setattr("deepreefmap.pipeline.run_loader.load_cached_run", fake_load_cached_run)
+    monkeypatch.setattr("deepreefmap.visualization.viser_app.ViserLiveApp", FakeViewer)
 
     result = CliRunner().invoke(
         cli_main.app,
@@ -290,7 +290,7 @@ def test_view_run_cli_loads_cached_run_and_starts_viser(tmp_path: Path, monkeypa
 
 
 def test_view_run_cli_reports_load_errors(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(cli_main, "load_cached_run", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("nope")))
+    monkeypatch.setattr("deepreefmap.pipeline.run_loader.load_cached_run", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("nope")))
 
     result = CliRunner().invoke(cli_main.app, ["view-run", "--run-dir", str(tmp_path)])
 
@@ -321,8 +321,8 @@ def test_view_run_cli_reports_disabled_viser(tmp_path: Path, monkeypatch) -> Non
         def __init__(self, *args, **kwargs):
             pass
 
-    monkeypatch.setattr(cli_main, "load_cached_run", lambda *args, **kwargs: loaded)
-    monkeypatch.setattr(cli_main, "ViserLiveApp", DisabledViewer)
+    monkeypatch.setattr("deepreefmap.pipeline.run_loader.load_cached_run", lambda *args, **kwargs: loaded)
+    monkeypatch.setattr("deepreefmap.visualization.viser_app.ViserLiveApp", DisabledViewer)
 
     result = CliRunner().invoke(cli_main.app, ["view-run", "--run-dir", str(tmp_path), "--viser-port", "9999"])
 

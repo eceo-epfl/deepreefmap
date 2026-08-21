@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any, Callable
 import json
 import logging
 
@@ -23,10 +24,11 @@ def save_run_manifest(path: Path, manifest: dict[str, object]) -> None:
     path.write_text(json.dumps(manifest, indent=2))
 
 
-def render_offline_video_placeholder(
+def render_offline_video(
     run_dir: Path,
     transect_length_m: float | None = None,
     crop_width_m: float | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> None:
     """Render a DRM-style 4-panel QC video from manifest artifacts.
 
@@ -102,8 +104,14 @@ def render_offline_video_placeholder(
     n_frames = len(frame_paths[: len(depths)])
     logger.info("Rendering QC video → %s (%d frames)", out_path, n_frames)
     iterable = list(enumerate(frame_paths[: len(depths)]))
-    progress = tqdm(iterable, desc="render-video", unit="frame", total=n_frames)
+    # A caller-driven progress_callback replaces the tqdm bar entirely.
+    if progress_callback is None:
+        progress: Any = tqdm(iterable, desc="render-video", unit="frame", total=n_frames, disable=None)
+    else:
+        progress = iterable
     for idx, frame_path in progress:
+        if progress_callback is not None:
+            progress_callback(idx, n_frames)
         bgr = cv2.imread(str(frame_path))
         if bgr is None:
             continue
@@ -134,7 +142,10 @@ def render_offline_video_placeholder(
         top = np.concatenate([bgr, seg_panel], axis=1)
         bottom = np.concatenate([depth_panel, ortho_panel], axis=1)
         writer.write(np.concatenate([top, bottom], axis=0))
-    progress.close()
+    if progress_callback is None:
+        progress.close()
+    else:
+        progress_callback(n_frames, n_frames)
     writer.release()
     logger.info("Render-video complete: %s", out_path)
 

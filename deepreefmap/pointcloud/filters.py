@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -195,6 +196,8 @@ def build_semantic_reference_cloud(
     mapping: MappingSequenceResult,
     classes_config: ClassConfig,
     config: PointFilterConfig | None = None,
+    progress_cb: Callable[[int, int], None] | None = None,
+    stage_cb: Callable[[str], None] | None = None,
 ) -> SemanticPointCloud:
     cfg = config or PointFilterConfig()
     ignore_labels = classes_config.ids_for_role("ignore_in_point_cloud")
@@ -208,7 +211,10 @@ def build_semantic_reference_cloud(
     conf_parts: list[np.ndarray] = []
     dist_parts: list[np.ndarray] = []
 
+    n_frames = len(mapping.frame_indices)
     for result_i, frame_index in enumerate(mapping.frame_indices.tolist()):
+        if progress_cb is not None:
+            progress_cb(result_i, n_frames)
         frame = frame_lookup.get(int(frame_index))
         if frame is None:
             continue
@@ -264,6 +270,8 @@ def build_semantic_reference_cloud(
     if not xyz_parts:
         return SemanticPointCloud.empty()
 
+    if stage_cb is not None:
+        stage_cb("concatenating")
     cloud = SemanticPointCloud(
         xyz=np.concatenate(xyz_parts, axis=0),
         rgb=np.concatenate(rgb_parts, axis=0),
@@ -274,10 +282,14 @@ def build_semantic_reference_cloud(
     )
 
     if active_radius is not None:
+        if stage_cb is not None:
+            stage_cb("replacing")
         cloud = nearest_camera_replace_semantic_cloud(cloud, active_radius)
 
     if cfg.voxel_size is None or cfg.voxel_size <= 0:
         return cloud
+    if stage_cb is not None:
+        stage_cb("voxelizing")
     return voxel_reduce_semantic_cloud(cloud, cfg.voxel_size)
 
 

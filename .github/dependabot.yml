@@ -20,9 +20,8 @@ updates:
     open-pull-requests-limit: 5
     labels: ["dependencies", "python"]
     ignore:
-      # PyTorch is pinned to CUDA 12.1 wheels for the workstation's NVIDIA 535
-      # driver (CUDA 12.2). Newer torch may resolve to cu130 wheels that fail
-      # CUDA init — bump manually after retesting on target hardware.
+      # Torch is pinned to exact +local wheels per backend in pyproject.toml; bump by
+      # hand after retesting (the PyPI default is CUDA 13 and breaks older drivers).
       - dependency-name: "torch"
       - dependency-name: "torchvision"
     groups:

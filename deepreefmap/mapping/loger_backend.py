@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 import inspect
 import logging
 import sys
+import threading
 import time
 import yaml
 
 import cv2
 import numpy as np
 
+if TYPE_CHECKING:
+    import torch
+
 from deepreefmap.camera.intrinsics import scale_intrinsics
-from deepreefmap.mapping.base import FrameEstimate, MappingBackend
-from deepreefmap.pipeline.artifacts import MappingSequenceResult
+from deepreefmap.mapping.base import FrameEstimate, MappingBackend, ProgressCallback
+from deepreefmap.paths import loger_ckpts_dir
+from deepreefmap.pipeline.artifacts import MappingSequenceResult, ReconstructionCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +31,8 @@ logger = logging.getLogger(__name__)
 _POSE_IDENTITY_TOLERANCE = 1e-3
 
 
-# LoGeR upstream is a research repo with no pyproject.toml/setup.py; we vendor
-# it as a submodule under third_party/LoGeR and put its package directory on
-# sys.path so `import loger.*` resolves. Done at module import time so any
-# helper script (not just the backend) that imports this file gets the fix.
+# The wheel vendors LoGeR's `loger` package, so a deployed binary imports it directly.
+# A source checkout falls back to the third_party/LoGeR submodule on sys.path.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _LOGER_PATH = _REPO_ROOT / "third_party" / "LoGeR"
 if _LOGER_PATH.is_dir() and str(_LOGER_PATH) not in sys.path:
@@ -55,18 +59,20 @@ class LoGeRBackend(MappingBackend):
         turn_off_ttt: bool = False,
         turn_off_swa: bool = False,
         backend_id: str = "loger",
+        device: "torch.device | str | None" = None,
     ) -> None:
         self.name = backend_id
         self.default_window_size = window_size
         self._overlap_size = overlap_size
-        self._model_path = model_path or str(_LOGER_PATH / "ckpts" / "LoGeR" / "latest.pt")
-        self._config_path = config_path or str(_LOGER_PATH / "ckpts" / "LoGeR" / "original_config.yaml")
+        self._model_path = model_path or str(loger_ckpts_dir() / "LoGeR" / "latest.pt")
+        self._config_path = config_path or str(loger_ckpts_dir() / "LoGeR" / "original_config.yaml")
         self._target_resolution = target_resolution
         self._k = np.eye(3, dtype=np.float32)
         self._image_size: tuple[int, int] | None = None
         self._model = None
         self._device = "cuda"
         self._torch = None
+        self._requested_device = device
         self._se3 = se3
         self._sim3 = sim3
         self._turn_off_ttt = turn_off_ttt
@@ -75,15 +81,26 @@ class LoGeRBackend(MappingBackend):
 
     def _load_loger(self) -> None:
         import torch
+
+        from deepreefmap.device import (
+            disable_torch_compile_without_triton,
+            resolve_device,
+        )
+
+        disable_torch_compile_without_triton()
+
         from loger.models.pi3 import Pi3
 
-        if not torch.cuda.is_available():
+        if self._requested_device is not None:
+            device = torch.device(self._requested_device)
+        else:
+            device = resolve_device()
+        if device.type == "cpu":
             raise RuntimeError(
-                "LoGeR requires CUDA, but no CUDA device is available. "
-                "Run on a GPU host or pick a different mapping backend."
+                "LoGeR requires a GPU (CUDA, ROCm, or MPS), but only CPU is available."
             )
         self._torch = torch
-        self._device = "cuda"
+        self._device = device
         if not Path(self._model_path).exists():
             raise FileNotFoundError(
                 f"LoGeR checkpoint not found: {self._model_path}. "
@@ -130,11 +147,32 @@ class LoGeRBackend(MappingBackend):
         del frame_index, image_rgb
         raise RuntimeError("LoGeR must be run with process_sequence(); per-frame proxy estimates are disabled.")
 
+    def _install_window_progress(self, model, n_windows: int, progress_callback: ProgressCallback | None):
+        """Wrap model.decode so each sliding window reports k of N.
+
+        decode runs once per window, so counting calls tracks the loop exactly.
+        Returns a function that puts the original decode back.
+        """
+        if progress_callback is None or n_windows <= 1:
+            return lambda: None
+        original = model.decode
+        counter = {"k": 0}
+
+        def _counting_decode(*args, **kwargs):
+            counter["k"] += 1
+            progress_callback(counter["k"], n_windows, "LoGeR inference")
+            return original(*args, **kwargs)
+
+        model.decode = _counting_decode
+        return lambda: setattr(model, "decode", original)
+
     def process_sequence(
         self,
         frame_indices: list[int],
         images_rgb: list[np.ndarray],
         gravity_vectors: np.ndarray | None = None,
+        cancel_event: threading.Event | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> MappingSequenceResult:
         if gravity_vectors is not None:
             logger.info("Gravity telemetry is available but LoGeR pose output is left unchanged.")
@@ -152,8 +190,11 @@ class LoGeRBackend(MappingBackend):
                 self._overlap_size,
             )
             target_w, target_h = self._target_resolution
-            target_w = _nearest_multiple(target_w, 14)
+            target_w = _nearest_multiple(target_w, 14)  # LoGeR's ViT works in 14 px patches
             target_h = _nearest_multiple(target_h, 14)
+            # Indeterminate: prep must not fill the bar before the windows start counting.
+            if progress_callback is not None:
+                progress_callback(0, 0, "Preparing frames for LoGeR")  # 0/0 shows an indeterminate bar
             t_resize = time.monotonic()
             resized = [cv2.resize(frm, (target_w, target_h), interpolation=cv2.INTER_AREA) for frm in images_rgb]
             logger.info(
@@ -174,21 +215,44 @@ class LoGeRBackend(MappingBackend):
                 "turn_off_ttt": self._turn_off_ttt,
                 "turn_off_swa": self._turn_off_swa,
             }
-            capability = torch.cuda.get_device_capability(self._device)[0]
-            dtype = torch.bfloat16 if capability >= 8 else torch.float16
+            from deepreefmap.device import autocast_context, get_autocast_dtype
+
+            dtype = get_autocast_dtype(self._device)
             logger.info(
                 "LoGeR inference running on %s with autocast dtype=%s (%d frames)...",
                 self._device,
                 str(dtype).split(".")[-1],
                 total_frames,
             )
+            if cancel_event is not None and cancel_event.is_set():
+                raise ReconstructionCancelled("Cancelled before LoGeR inference")
+            # One decode per sliding window, so wrapping decode gives a real countdown.
+            n_windows = _count_windows(total_frames, self.default_window_size, self._overlap_size)
+            restore_decode = self._install_window_progress(model, n_windows, progress_callback)
             t_infer = time.monotonic()
-            with torch.no_grad(), torch.amp.autocast(device_type="cuda", enabled=True, dtype=dtype):
-                out = model(
-                    batch_t,
-                    **forward_kwargs,
-                )
+            try:
+                with torch.no_grad(), autocast_context(self._device):
+                    try:
+                        out = model(
+                            batch_t,
+                            **forward_kwargs,
+                        )
+                    except (NotImplementedError, RuntimeError) as exc:
+                        if self._device.type != "mps" or "not currently implemented for the MPS device" not in str(exc):
+                            raise
+                        logger.warning("LoGeR op unsupported on MPS, retrying on CPU: %s", exc)
+                        model = model.cpu()
+                        batch_t = batch_t.cpu()
+                        self._device = torch.device("cpu")
+                        out = model(batch_t, **forward_kwargs)
+            finally:
+                restore_decode()
             logger.info("LoGeR inference finished in %.1fs", time.monotonic() - t_infer)
+            if progress_callback is not None:
+                # Hundreds of MB still to copy back, so keep reporting past the last window.
+                progress_callback(0, 0, "Transferring depth + points from GPU")
+            if cancel_event is not None and cancel_event.is_set():
+                raise ReconstructionCancelled("Cancelled after LoGeR inference")
 
             if not isinstance(out, dict):
                 raise RuntimeError("LoGeR inference did not return a prediction dictionary")
@@ -213,6 +277,10 @@ class LoGeRBackend(MappingBackend):
                 )
             logger.info("LoGeR outputs validated: %d/%d frames have depth and poses", n_out, n_in)
 
+            # Re-anchoring left-multiplies every point by inv(pose[0]) in float64,
+            # a pass over every pixel of every frame.
+            if progress_callback is not None:
+                progress_callback(0, 0, "Aligning poses to world frame")
             poses, world_points = _reanchor_to_first_camera(poses, world_points)
             _assert_pose_convention(poses)
 
@@ -325,6 +393,25 @@ def _assert_pose_convention(poses: np.ndarray) -> None:
 
 def _nearest_multiple(value: int, multiple: int) -> int:
     return max(multiple, int(round(value / multiple)) * multiple)
+
+
+def _count_windows(n_frames: int, window_size: int, overlap_size: int) -> int:
+    """Number of sliding windows Pi3 will run for a sequence.
+
+    Mirrors the window construction in third_party/LoGeR/loger/models/pi3.py, which
+    must stay in sync or the progress count drifts.
+    """
+    if window_size <= 0 or window_size >= n_frames:
+        return 1
+    step = max(window_size - overlap_size, 1)
+    count = 0
+    for start_idx in range(0, n_frames, step):
+        end_idx = min(start_idx + window_size, n_frames)
+        if end_idx - start_idx >= overlap_size or (end_idx == n_frames and start_idx < n_frames):
+            count += 1
+        if end_idx == n_frames:
+            break
+    return max(1, count)
 
 
 def _tensor_to_numpy(value) -> np.ndarray | None:
