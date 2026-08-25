@@ -19,6 +19,52 @@ def test_loger_disables_per_frame_proxy_path():
         backend.process_frame(0, np.zeros((4, 4, 3), dtype=np.uint8))
 
 
+def test_loger_hands_the_model_a_host_resident_batch(monkeypatch):
+    """Pi3.forward moves each window to the model's device, so the sequence stays on the host."""
+    import torch
+
+    seen: dict[str, object] = {}
+    moved: list[object] = []
+    original_to = torch.Tensor.to
+
+    def recording_to(self, *args, **kwargs):
+        if self.dim() == 5:  # the (B, N, C, H, W) input batch, nothing else
+            moved.append(args[0] if args else kwargs.get("device"))
+        return original_to(self, *args, **kwargs)
+
+    def fake_model(imgs, **kwargs):
+        seen["device"] = imgs.device
+        seen["shape"] = tuple(imgs.shape)
+        n = imgs.shape[1]
+        return {
+            "local_points": torch.zeros(n, 4, 4, 3),
+            "points": torch.zeros(n, 4, 4, 3),
+            "camera_poses": torch.eye(4).repeat(n, 1, 1),
+            "conf": torch.zeros(n, 4, 4, 1),
+        }
+
+    backend = LoGeRBackend.__new__(LoGeRBackend)
+    backend._torch = torch
+    backend._model = fake_model
+    backend._device = torch.device("cpu")
+    backend._target_resolution = (56, 56)
+    backend.default_window_size = 2
+    backend._overlap_size = 0
+    backend._config = {}
+    backend._se3 = backend._sim3 = False
+    backend._turn_off_ttt = backend._turn_off_swa = False
+    backend._image_size = (8, 8)
+    backend._k = np.eye(3, dtype=np.float32)
+
+    frames = [np.zeros((8, 8, 3), dtype=np.uint8) for _ in range(3)]
+    monkeypatch.setattr(torch.Tensor, "to", recording_to)
+    backend.process_sequence([0, 1, 2], frames)
+
+    assert seen["device"] == torch.device("cpu")
+    assert seen["shape"] == (1, 3, 3, 56, 56)
+    assert moved == []
+
+
 def test_loger_target_resolution_uses_patch_multiple():
     assert _nearest_multiple(448, 14) == 448
     assert _nearest_multiple(450, 14) == 448

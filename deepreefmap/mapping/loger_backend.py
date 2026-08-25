@@ -214,7 +214,10 @@ class LoGeRBackend(MappingBackend):
             )
             batch = np.stack(resized, axis=0).astype(np.float32) / 255.0
             del resized  # only needed to build the batch; frees ~3 B/px/frame during inference
-            batch_t = torch.from_numpy(batch).permute(0, 3, 1, 2).unsqueeze(0).to(self._device)
+            # Stays on the host: Pi3.forward moves each window to the model's device
+            # itself, so preloading the sequence only pinned VRAM for frames that are
+            # not being decoded yet.
+            batch_t = torch.from_numpy(batch).permute(0, 3, 1, 2).unsqueeze(0)
             del batch
             forward_kwargs = {
                 "window_size": self.default_window_size,
@@ -251,7 +254,6 @@ class LoGeRBackend(MappingBackend):
                             raise
                         logger.warning("LoGeR op unsupported on MPS, retrying on CPU: %s", exc)
                         model = model.cpu()
-                        batch_t = batch_t.cpu()
                         self._device = torch.device("cpu")
                         out = model(batch_t, **forward_kwargs)
             finally:

@@ -10,6 +10,17 @@ affect published measurements.
 
 ## [Unreleased]
 
+### Fixed
+
+- LoGeR peak VRAM drops by the size of the input batch, 1.6 MiB per frame at the
+  default 504x280 processing size. The backend preloaded the whole resized
+  sequence onto the GPU, but `Pi3.forward` already moves each sliding window to
+  the model's device itself, so only the window being decoded ever needed to be
+  resident. Measured on an RTX 3090 over 600 frames: 12561 MiB to 11587 MiB peak
+  allocated, a 974 MiB saving, with inference time unchanged (59.5 s to 58.8 s).
+  Outputs are byte-identical, checked with a checksum over depth, poses, points
+  and confidence. (#19)
+
 ## [1.1.0] - 2026-08-21
 
 ### Added
