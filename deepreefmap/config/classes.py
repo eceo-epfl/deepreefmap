@@ -9,7 +9,6 @@ import yaml
 
 
 DEFAULT_CLASSES_PATH = Path("configs/classes_coralscapes.yaml")
-_DEFAULT_CLASSES_RESOURCE = "configs/classes_coralscapes.yaml"
 
 
 @dataclass(frozen=True)
@@ -96,11 +95,31 @@ def load_classes(path: Path | str = DEFAULT_CLASSES_PATH) -> ClassConfig:
     return ClassConfig(classes=tuple(classes), path=classes_path)
 
 
+def classes_path_exists(path: Path | str) -> bool:
+    """True if a classes YAML is readable on disk or as a packaged resource."""
+    classes_path = Path(path)
+    if classes_path.exists():
+        return True
+    return _packaged_classes_resource(classes_path) is not None
+
+
+def _packaged_classes_resource(classes_path: Path):
+    """Packaged ``deepreefmap.resources`` traversable for a relative path, else None.
+
+    Lets a run made in a source checkout (with a relative ``configs/*.yaml`` path)
+    reload from an installed wheel, where only the packaged copy exists.
+    """
+    if classes_path.is_absolute():
+        return None
+    resource = resources.files("deepreefmap.resources").joinpath(classes_path.as_posix())
+    return resource if resource.is_file() else None
+
+
 def _read_classes_text(classes_path: Path) -> str:
     if classes_path.exists():
         return classes_path.read_text()
-    if classes_path == DEFAULT_CLASSES_PATH:
-        resource = resources.files("deepreefmap.resources").joinpath(_DEFAULT_CLASSES_RESOURCE)
+    resource = _packaged_classes_resource(classes_path)
+    if resource is not None:
         return resource.read_text()
     raise FileNotFoundError(f"Classes config not found: {classes_path}")
 

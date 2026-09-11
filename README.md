@@ -60,7 +60,7 @@ uv run deepreefmap view-run --run-dir out --viser-port 8080
 
 Then:
 
-- Higher segmentation quality? The default `coralscapes-vit-b-dpt` is better but gated — see [Using DINOv3 models](#using-dinov3-models-authentication).
+- Higher segmentation quality? The default `coralscapesv2-vit-b-dpt` is better but needs the gated DINOv3 encoder — see [Using DINOv3 models](#using-dinov3-models-authentication).
 - Higher reconstruction quality? See the [LoGeR backend](#loger-path-higher-quality-more-setup).
 - Different camera? Only GoPro Hero 10 and 12 profiles ship with the package — see [Camera setup and calibration](#camera-setup-and-calibration) to calibrate your own.
 
@@ -183,10 +183,20 @@ uv run deepreefmap reconstruct \
 
 ### Segmentation model
 
-Two families of segmentation models are available:
+Models come from two datasets and two architectures. The default is `coralscapesv2-vit-b-dpt`.
 
-- **DINOv3-based** (`coralscapes-vit-*-dpt`): higher quality, **requires Hugging Face authentication** (gated models).
+| Model | Dataset | Classes | Notes |
+| --- | --- | --- | --- |
+| `coralscapesv2-vit-l-dpt` / `coralscapesv2-vit-b-dpt` | [CoralscapesV2](https://josauder.github.io/coralscapesv2/) | 39 | Highest quality; DINOv3 encoder (auth required) |
+| `coralscapesv2-vit-l-dpt-95` / `coralscapesv2-vit-b-dpt-95` | CoralscapesV2 | 95 | Fine-grained taxa/morphotype/health; DINOv3 encoder (auth required) |
+| `coralscapesv2-segformer-b5` | CoralscapesV2 | 39 | No authentication needed |
+| `coralscapesv2-segformer-b5-95` | CoralscapesV2 | 95 | Fine-grained; no authentication needed |
+| `coralscapes-vit-s/b/l-dpt` | [Coralscapes](https://josauder.github.io/coralscapes/) | 39 | Original V1 DINOv3 models (auth required) |
+| `segformer-b2` / `segformer-b5` | Coralscapes | 39 | Original V1 SegFormer; no authentication needed |
+
+- **DINOv3-based** (`*-vit-*-dpt`): higher quality, but load the gated `facebook/dinov3` encoder, so they **require Hugging Face authentication**.
 - **SegFormer**: lighter and faster, no authentication needed.
+- The 95-class (`-95`) models automatically use `configs/classes_coralscapesv2_95.yaml`; all others use `configs/classes_coralscapes.yaml`. Pass `--classes` only to override this.
 
 Select with `--segmentation <model_name>`. List all available models:
 
@@ -196,7 +206,9 @@ uv run deepreefmap list-models
 
 ### Using DINOv3 models (authentication)
 
-1. Request access on Hugging Face: see [gated model docs](https://huggingface.co/docs/hub/models-gated).
+The DINOv3 models load the gated `facebook/dinov3` encoder from Hugging Face, so:
+
+1. Request access on Hugging Face: see [gated model docs](https://huggingface.co/docs/hub/models-gated), and accept the license on [facebook/dinov3](https://huggingface.co/facebook/dinov3).
 2. Authenticate locally:
 
 ```bash
@@ -227,7 +239,7 @@ Example:
 ```bash
 uv run deepreefmap reconstruct \
   --videos GX010001.MP4 \
-  --segmentation coralscapes-vit-b-dpt \
+  --segmentation coralscapesv2-vit-b-dpt \
   --camera-profile gopro_hero_10 \
   --mapping scsfmlearner \
   --out out
@@ -313,11 +325,11 @@ Run `uv run deepreefmap reconstruct --help` for the full list. The flags you are
 - `--out`: output directory (default `out`).
 - `--fps`: target processing framerate (default `10`).
 - `--begin` / `--end`: trim the concatenated stream, in seconds.
-- `--classes`: classes YAML with class roles and colors (default `configs/classes_coralscapes.yaml`).
+- `--classes`: classes YAML with class roles and colors (defaults to the segmentation model's own classes file: `configs/classes_coralscapesv2_95.yaml` for `-95` models, otherwise `configs/classes_coralscapes.yaml`).
 
 **Models**
 
-- `--segmentation`: segmentation model name (default `coralscapes-vit-b-dpt`).
+- `--segmentation`: segmentation model name (default `coralscapesv2-vit-b-dpt`).
 - `--mapping`: reconstruction backend (default `scsfmlearner`).
 - `--skip-segmentation`: geometry-only run, no semantics.
 
@@ -372,6 +384,17 @@ The segmentation models are trained on the [Coralscapes](https://josauder.github
   author={Sauder, Jonathan and Domazetoski, Viktor and Banc-Prandi, Guilhem and Perna, Gabriela and Meibom, Anders and Tuia, Devis},
   booktitle={ICCV Joint Workshop on Marine Vision},
   year={2025}
+}
+```
+
+The `coralscapesv2-*` models are trained on the [CoralscapesV2](https://josauder.github.io/coralscapesv2/) dataset. If you use them, please cite
+
+```bibtex
+@inproceedings{sauder2026coralscapesv2,
+  title={CoralscapesV2: Panoptic and Fine-Grained Visual Scene Understanding in Coral Reefs},
+  author={Sauder, Jonathan and Ruckli, Thomas and Strodomskyt{\.e}, Gabriel{\.e} and Abdallah, Ibrahim Souleiman and Abdi, Rahma Hassan and Awaleh, Djama Goumaneh and Farah, Mohamed Houssein and Nour, Moustapha and Saad, Osama Sharhubil and Altaib, Mustafa Mohammed Khalafallah and Kteifan, Maysoon and Alsoqi, Farah and Zgool, Eyad and Al-Omari, Jafar and Gebreluel, Temesgen Gebremeskel and Abdulkerim, Zekaria Zekeria and Ghirmay, Meron and Beraki, Teklehaimanot and Tuia, Devis and Banc-Prandi, Guilhem},
+  booktitle={Proceedings of the European Conference on Computer Vision (ECCV) Workshop on Marine Vision},
+  year={2026}
 }
 ```
 

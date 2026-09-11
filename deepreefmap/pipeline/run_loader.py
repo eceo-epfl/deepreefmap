@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from deepreefmap.config.classes import ClassConfig, load_classes
+from deepreefmap.config.classes import ClassConfig, classes_path_exists, load_classes
 from deepreefmap.io.exports import load_geometry_cloud
 from deepreefmap.pipeline import resume as resume_mod
 from deepreefmap.pipeline.artifacts import FrameBatch, MappingSequenceResult, SemanticPointCloud
@@ -124,7 +124,7 @@ def _resolve_classes_path(run_dir: Path, manifest: dict[str, Any]) -> Path:
     if run_relative.exists():
         return run_relative
 
-    if classes_path.exists():
+    if classes_path_exists(classes_path):
         return classes_path
 
     raise FileNotFoundError(f"Classes config not found for run viewer: {classes_path}")
