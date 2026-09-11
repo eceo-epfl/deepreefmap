@@ -258,6 +258,7 @@ class LoGeRBackend(MappingBackend):
                         out = model(batch_t, **forward_kwargs)
             finally:
                 restore_decode()
+            del batch_t
             logger.info("LoGeR inference finished in %.1fs", time.monotonic() - t_infer)
             if progress_callback is not None:
                 # Hundreds of MB still to copy back, so keep reporting past the last window.
