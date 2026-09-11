@@ -10,6 +10,26 @@ affect published measurements.
 
 ## [Unreleased]
 
+### Added
+
+- CoralscapesV2 segmentation models: `coralscapesv2-vit-l-dpt`,
+  `coralscapesv2-vit-b-dpt`, `coralscapesv2-segformer-b5` (39 classes) and the
+  fine-grained `coralscapesv2-vit-l-dpt-95`, `coralscapesv2-vit-b-dpt-95`,
+  `coralscapesv2-segformer-b5-95` (95 classes). All resolve to public
+  `EPFL-ECEO/*` repositories; the DINOv3 variants still load the gated
+  `facebook/dinov3` encoder and require Hugging Face authentication.
+- 95-class classes file `configs/classes_coralscapesv2_95.yaml` (names, colors,
+  and roles from the CoralscapesV2 dataset), shipped as a packaged resource.
+- Each segmentation model declares its own default classes file, so `--classes`
+  is now optional and defaults to the model's classes file (95-class models pick
+  the fine-grained YAML automatically). Pass `--classes` only to override.
+
+### Changed
+
+- Default `--segmentation` model is now `coralscapesv2-vit-b-dpt` (was
+  `coralscapes-vit-b-dpt`). This shifts numeric outputs (benthic cover fractions,
+  labeled point counts) for runs that relied on the default model.
+
 ## [1.1.0] - 2026-08-21
 
 ### Added

@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from tqdm.auto import tqdm
 
-from deepreefmap.config.classes import load_classes
+from deepreefmap.config.classes import classes_path_exists, load_classes
 from deepreefmap.pointcloud.transect_crop import (
     build_transect_crop_geometry,
     build_transect_crop_selection,
@@ -48,12 +48,12 @@ def render_offline_video(
         raise FileNotFoundError(f"Missing run manifest: {manifest_path}")
 
     manifest = json.loads(manifest_path.read_text())
-    classes_path = Path(manifest.get("classes", "configs/classes_coralscapes.yaml"))
+    manifest_classes = Path(manifest.get("classes", "configs/classes_coralscapes.yaml"))
+    classes_path = manifest_classes
     if not classes_path.is_absolute():
-        classes_path = run_dir / classes_path
-    if not classes_path.exists():
-        classes_path = Path(manifest.get("classes", "configs/classes_coralscapes.yaml"))
-    if not classes_path.exists():
+        run_relative = run_dir / classes_path
+        classes_path = run_relative if run_relative.exists() else manifest_classes
+    if not classes_path_exists(classes_path):
         raise FileNotFoundError(f"Classes config not found for offline render: {classes_path}")
     classes_config = load_classes(classes_path)
     class_colors = classes_config.id_to_color
