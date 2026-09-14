@@ -28,6 +28,9 @@ conflicts = [[
     { package = "deepreefmap", extra = "rocm" },
 ]]
 
+[manifest]
+overrides = [{ name = "numpy", specifier = ">=1.26.0" }]
+
 [[package]]
 name = "absl-py"
 version = "2.4.0"
@@ -563,6 +566,11 @@ dev = [
 gopro = [
     { name = "py-gpmf-parser", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-11-deepreefmap-cu126' and extra == 'extra-11-deepreefmap-cu130') or (platform_machine != 'x86_64' and extra == 'extra-11-deepreefmap-cu126' and extra == 'extra-11-deepreefmap-rocm') or (platform_machine != 'x86_64' and extra == 'extra-11-deepreefmap-cu130' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform != 'linux' and extra == 'extra-11-deepreefmap-cu126' and extra == 'extra-11-deepreefmap-cu130') or (sys_platform != 'linux' and extra == 'extra-11-deepreefmap-cu126' and extra == 'extra-11-deepreefmap-rocm') or (sys_platform != 'linux' and extra == 'extra-11-deepreefmap-cu130' and extra == 'extra-11-deepreefmap-rocm')" },
 ]
+lingbot-map = [
+    { name = "einops" },
+    { name = "lingbot-map" },
+    { name = "safetensors" },
+]
 loger = [
     { name = "accelerate" },
     { name = "einops" },
@@ -579,13 +587,21 @@ train = [
     { name = "tensorboard" },
     { name = "wandb" },
 ]
+vggt-omega = [
+    { name = "einops" },
+    { name = "safetensors" },
+    { name = "vggt-omega" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "accelerate", marker = "extra == 'loger'", specifier = ">=0.30.0" },
+    { name = "einops", marker = "extra == 'lingbot-map'", specifier = ">=0.7.0" },
     { name = "einops", marker = "extra == 'loger'", specifier = ">=0.7.0" },
+    { name = "einops", marker = "extra == 'vggt-omega'", specifier = ">=0.7.0" },
     { name = "huggingface-hub", specifier = ">=1.14.0" },
     { name = "imageio", extras = ["ffmpeg"], specifier = ">=2.37.3" },
+    { name = "lingbot-map", marker = "extra == 'lingbot-map'", git = "https://github.com/robbyant/lingbot-map" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "natsort", marker = "extra == 'loger'", specifier = ">=8.4.0" },
     { name = "numpy", specifier = ">=1.26.0" },
@@ -599,7 +615,9 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "roma", marker = "extra == 'loger'", specifier = ">=1.5.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12.0" },
+    { name = "safetensors", marker = "extra == 'lingbot-map'", specifier = ">=0.4.0" },
     { name = "safetensors", marker = "extra == 'loger'", specifier = ">=0.4.0" },
+    { name = "safetensors", marker = "extra == 'vggt-omega'", specifier = ">=0.4.0" },
     { name = "scikit-learn", specifier = ">=1.5.0" },
     { name = "tensorboard", marker = "extra == 'train'", specifier = ">=2.18.0" },
     { name = "torch", specifier = ">=2.7,<3" },
@@ -613,10 +631,11 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.67.3" },
     { name = "transformers", specifier = ">=5.8.0" },
     { name = "typer", specifier = ">=0.25.1" },
+    { name = "vggt-omega", marker = "extra == 'vggt-omega'", git = "https://github.com/facebookresearch/vggt-omega" },
     { name = "viser", specifier = ">=1.0.27" },
     { name = "wandb", marker = "extra == 'train'", specifier = ">=0.20.0" },
 ]
-provides-extras = ["loger", "gopro", "train", "cu126", "cu130", "rocm", "dev"]
+provides-extras = ["loger", "vggt-omega", "lingbot-map", "gopro", "train", "cu126", "cu130", "rocm", "dev"]
 
 [[package]]
 name = "einops"
@@ -1097,6 +1116,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/8e/b1b959bacd323eb4360579db992513e1406d1c6ef7edb57b5511fd0666fd/librt-0.10.0-cp312-cp312-win32.whl", hash = "sha256:6065c1a758fba1010b41401013903d3d5d2750eab425ddedd584abac31d0630e", size = 62955, upload-time = "2026-05-05T16:29:56.39Z" },
     { url = "https://files.pythonhosted.org/packages/9e/4c/d4cd6e4b9fc24098e63cc85537d1b6689682aee96809c38f08072067cc2b/librt-0.10.0-cp312-cp312-win_amd64.whl", hash = "sha256:d788ecbe208ab352dab0e105cc06057bf9a2fc7e58cabb0d751ad9e30062b9e2", size = 71191, upload-time = "2026-05-05T16:29:57.682Z" },
     { url = "https://files.pythonhosted.org/packages/2b/19/8641da1f63d24b92354a492f893c022d6b3a0df44e70c8eff49364613983/librt-0.10.0-cp312-cp312-win_arm64.whl", hash = "sha256:6003d1f295bdba02656dc81308208fc060d0a51d8c0d0a6db70f7f3c57b9ba0a", size = 61432, upload-time = "2026-05-05T16:29:58.971Z" },
+]
+
+[[package]]
+name = "lingbot-map"
+version = "0.1.0"
+source = { git = "https://github.com/robbyant/lingbot-map#849e690bb086103637e44b1e91878d9d43a8bf0c" }
+dependencies = [
+    { name = "einops" },
+    { name = "huggingface-hub" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "safetensors" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-11-deepreefmap-cu126' and extra == 'extra-11-deepreefmap-cu130') or (extra == 'extra-11-deepreefmap-cu126' and extra == 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cu130' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-11-deepreefmap-cu126' and extra == 'extra-11-deepreefmap-cu130') or (extra == 'extra-11-deepreefmap-cu126' and extra == 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cu130' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "tqdm" },
 ]
 
 [[package]]
@@ -3284,6 +3318,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c7/24/5f1b3bdffd70275f6661c76461e25f024d5a38a46f04aaca912426a2b1d3/urllib3-2.6.3.tar.gz", hash = "sha256:1b62b6884944a57dbe321509ab94fd4d3b307075e0c2eae991ac71ee15ad38ed", size = 435556, upload-time = "2026-01-07T16:24:43.925Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/39/08/aaaad47bc4e9dc8c725e68f9d04865dbcb2052843ff09c97b08904852d84/urllib3-2.6.3-py3-none-any.whl", hash = "sha256:bf272323e553dfb2e87d9bfd225ca7b0f467b919d7bbd355436d3fd37cb0acd4", size = 131584, upload-time = "2026-01-07T16:24:42.685Z" },
+]
+
+[[package]]
+name = "vggt-omega"
+version = "0.0.1"
+source = { git = "https://github.com/facebookresearch/vggt-omega#b2c61f6631d9f344a2d914bfba5d9529d6fc1d35" }
+dependencies = [
+    { name = "einops" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-11-deepreefmap-cu126' and extra == 'extra-11-deepreefmap-cu130') or (extra == 'extra-11-deepreefmap-cu126' and extra == 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cu130' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-11-deepreefmap-cu126' and extra == 'extra-11-deepreefmap-cu130') or (extra == 'extra-11-deepreefmap-cu126' and extra == 'extra-11-deepreefmap-rocm') or (extra == 'extra-11-deepreefmap-cu130' and extra == 'extra-11-deepreefmap-rocm')" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "safetensors" },
 ]
 
 [[package]]

@@ -10,6 +10,79 @@ affect published measurements.
 
 ## [Unreleased]
 
+### Added
+
+- VGGT-Omega reconstruction backend (`--mapping vggt_omega`). Feed-forward camera
+  and depth prediction that produces depth, camera-to-world poses, per-frame
+  intrinsics, and confidence in one forward pass over the whole sequence. Installed via the optional `vggt_omega` extra (pulls
+  `vggt-omega` from GitHub; FAIR Noncommercial Research License, so research-use
+  only) and requires a GPU plus the gated `facebook/VGGT-Omega` checkpoint.
+- CLI flags `--vggt-omega-model-path` and `--vggt-omega-image-resolution` for the
+  VGGT-Omega backend. Because there is no sliding window, peak GPU memory grows
+  with the frame count (~6 GB + ~75 MB/frame), so the frame count must be bounded
+  with `--fps` and `--begin`/`--end`.
+- LingBot-Map reconstruction backend (`--mapping lingbot_map`). Feed-forward
+  *streaming* camera and depth prediction that produces depth, camera-to-world
+  poses, per-frame intrinsics, and confidence. It streams
+  frame-by-frame against a bounded KV cache and offloads per-frame predictions to
+  CPU, so peak GPU memory stays roughly constant as the sequence grows. Installed
+  via the optional `lingbot_map` extra (pulls `lingbot-map` from GitHub;
+  Apache-2.0) and requires a GPU plus the public `robbyant/lingbot-map` checkpoint.
+- CLI flags `--lingbot-map-model-path`, `--lingbot-map-mode` (`streaming` or
+  `windowed`), `--lingbot-map-keyframe-interval`, `--lingbot-map-window-size`,
+  `--lingbot-map-overlap-keyframes`, and `--lingbot-map-attention` (`auto`,
+  `sdpa`, or `flashinfer`) for the LingBot-Map backend.
+- `--no-refine-intrinsics-from-mapper` to force the calibrated camera profile `K`
+  for backends that would otherwise default to their own estimate (see Changed).
+- Demo-style point-cloud cleanup shared across every backend: a relative
+  depth-edge filter (`--depth-edge-rtol`, default `0.03`) zeroes confidence on
+  depth discontinuities so object silhouettes no longer smear into the cloud when
+  viewed from the side, and a sequence-wide confidence percentile cut
+  (`--confidence-percentile`, default `20`) drops the least-confident points.
+  Both are ported from the VGGT-Omega/LoGeR demos, apply to the semantic,
+  geometry-only, and live-preview clouds, and are available on both `reconstruct`
+  and `view`. Set either flag to `0` to disable it.
+
+### Changed
+
+- Point clouds are now sharper by default: the confidence percentile cut moved
+  from keeping the top 95% per frame to keeping the top 80% pooled across the
+  whole sequence, and a depth-edge filter is enabled by default. This drops more
+  points than before (especially at object edges and in low-confidence frames),
+  which shifts point counts and benthic-cover fractions. Restore the previous
+  behaviour with `--confidence-percentile 5 --depth-edge-rtol 0` (the percentile
+  is now pooled globally rather than per frame, so counts will still differ
+  slightly).
+
+- `--refine-intrinsics-from-mapper` is now tri-state. Unset, it defaults to **on**
+  for backends whose model predicts intrinsics (`vggt_omega`, `lingbot_map`) and
+  **off** for `loger`, `loger_star` and `scsfmlearner`; the resolved value is part
+  of the mapping cache key. Point clouds from `vggt_omega` and `lingbot_map`
+  therefore shift laterally relative to previous runs, which unprojected with the
+  camera profile `K`.
+- The `vggt_omega` and `lingbot_map` backends no longer return pre-built
+  `world_points`. Previously they unprojected depth with the model's *per-frame*
+  predicted `K` while reporting the camera profile `K` downstream, so the cloud,
+  the viewer frusta and `mapping_outputs.npz` disagreed on the camera and each
+  frame carried its own lateral scale (visible as smeared, stacked copies of the
+  same structure). The orchestrator now settles one `K` (refined median or
+  calibrated) and the cloud stage unprojects every frame with it.
+- `lingbot_map` poses are no longer inverted. LingBot-Map's `pose_enc` decodes to
+  a camera-to-world `[R|t]` (its windowed alignment code and demo rely on this),
+  unlike VGGT / VGGT-Omega whose encoding is camera-from-world. The backend
+  treated it as camera-from-world and inverted it, so every camera-to-world pose
+  handed downstream was actually world-to-camera and frames were placed at
+  mirrored positions, smearing the cloud. Verified on a 49-frame sequence: warping
+  frame i into frame i+1 with the old poses was no better than not warping at all
+  (mean abs intensity error 35.2 vs 35.1); with the fixed poses it drops to 27.6,
+  and sweeping translation scale bottoms out exactly at 1.0, confirming pose and
+  depth share one scale. `vggt_omega` is unaffected.
+- `vggt_omega` and `lingbot_map` run in full fp32 on CPU and MPS. Both models
+  guard their depth/camera heads with a CUDA-only `autocast(enabled=False)`, so
+  on other devices the heads inherited the bf16/fp16 autocast context and emitted
+  quantized depth (visible as concentric depth terraces) and poses. CUDA behaviour
+  is unchanged (bf16 trunk, fp32 heads).
+
 ## [1.1.0] - 2026-08-21
 
 ### Added

@@ -43,9 +43,17 @@ def _pack_voxel_keys_int64(keys: np.ndarray) -> np.ndarray | None:
 class PointFilterConfig:
     min_depth: float = 0.05
     max_depth: float = 8.0
-    confidence_percentile: float | None = 5.0
+    # Drop points below this confidence percentile, pooled across the whole
+    # sequence (see resolve_confidence_threshold). 20.0 mirrors the VGGT-Omega
+    # library default; None disables the percentile cut. Higher = sharper cloud
+    # but fewer points, which also affects benthic-cover statistics.
+    confidence_percentile: float | None = 20.0
     min_confidence: float = 1e-5
-    depth_edge_threshold: float | None = None
+    # Relative depth-jump tolerance for the edge filter (see depth_edge). Pixels
+    # on depth discontinuities have their confidence zeroed so object silhouettes
+    # do not smear into the cloud. 0.03 mirrors the VGGT-Omega/LoGeR demos; None
+    # disables the edge filter.
+    depth_edge_rtol: float | None = 0.03
     voxel_size: float | None = 0.003
     replacement_radius_factor: float = 1.0
     replacement_radius_estimation_frames: int = 30
@@ -75,6 +83,9 @@ def build_semantic_reference_cloud(
     frame_lookup = {frame.frame_index: frame for frame in frame_batch.frames}
     active_radius = _resolve_replacement_radius(cfg, mapping.depth_maps)
     ignore_set = list(ignore_labels) if ignore_labels else []
+    # One percentile threshold pooled across the sequence, so a low-confidence
+    # frame loses proportionally more points than a clean one (demo behaviour).
+    conf_threshold = resolve_confidence_threshold(mapping, cfg)
 
     def _per_frame(result_i: int, frame_index: int):
         frame = frame_lookup.get(int(frame_index))
@@ -94,21 +105,15 @@ def build_semantic_reference_cloud(
         else:
             xyz = depth_to_points(depth, mapping.intrinsics, mapping.poses_w_c[result_i]).astype(np.float32)
 
-        valid = np.isfinite(depth)
-        valid &= depth >= cfg.min_depth
-        valid &= depth <= cfg.max_depth
-        valid &= keep_mask
-        if ignore_set:
-            valid &= ~np.isin(labels, ignore_set)
-        if cfg.depth_edge_threshold is not None:
-            valid &= depth_edgeness(depth) <= cfg.depth_edge_threshold
-        if confidence is not None:
-            finite_conf = confidence[np.isfinite(confidence)]
-            if finite_conf.size and cfg.confidence_percentile is not None:
-                threshold = np.percentile(finite_conf, cfg.confidence_percentile)
-            else:
-                threshold = cfg.min_confidence
-            valid &= confidence >= max(float(threshold), cfg.min_confidence)
+        valid = frame_validity_mask(
+            depth,
+            confidence,
+            cfg,
+            keep_mask=keep_mask,
+            labels=labels,
+            ignore_labels=ignore_set,
+            conf_threshold=conf_threshold,
+        )
         flat_valid = valid.reshape(-1)
         if not flat_valid.any():
             return None
@@ -192,15 +197,104 @@ def build_semantic_reference_cloud(
     return voxel_reduce_semantic_cloud(cloud, cfg.voxel_size)
 
 
-def depth_edgeness(depth: np.ndarray) -> np.ndarray:
-    depth = depth.astype(np.float32)
-    gx = np.zeros_like(depth)
-    gy = np.zeros_like(depth)
-    gx[:, :-1] += np.abs(depth[:, :-1] - depth[:, 1:])
-    gx[:, 1:] += np.abs(depth[:, :-1] - depth[:, 1:])
-    gy[:-1, :] += np.abs(depth[:-1, :] - depth[1:, :])
-    gy[1:, :] += np.abs(depth[:-1, :] - depth[1:, :])
-    return gx + gy
+def depth_edge(depth: np.ndarray, rtol: float = 0.03, kernel_size: int = 3) -> np.ndarray:
+    """Boolean (H, W) mask of depth discontinuities, ported from VGGT-Omega.
+
+    A pixel is an edge when the max-minus-min depth spread in its
+    ``kernel_size`` x ``kernel_size`` neighbourhood exceeds ``rtol`` times its own
+    depth. Non-finite depths are always edges so they can never leak into the
+    cloud. Mirrors ``visual_util.depth_edge`` in facebookresearch/vggt-omega
+    (BORDER_REPLICATE reproduces its ``np.pad(mode="edge")``).
+    """
+    depth = np.asarray(depth, dtype=np.float32)
+    finite = np.isfinite(depth)
+    # Neutralise non-finite pixels for the morphology, then force them to edges.
+    filled = np.where(finite, depth, 0.0).astype(np.float32)
+    kernel = np.ones((int(kernel_size), int(kernel_size)), np.uint8)
+    depth_max = cv2.dilate(filled, kernel, borderType=cv2.BORDER_REPLICATE)
+    depth_min = cv2.erode(filled, kernel, borderType=cv2.BORDER_REPLICATE)
+    relative_jump = (depth_max - depth_min) / np.maximum(np.abs(filled), 1e-6)
+    edge = relative_jump > float(rtol)
+    edge |= ~finite
+    return edge
+
+
+def resolve_confidence_threshold(
+    mapping: MappingSequenceResult, cfg: PointFilterConfig
+) -> float | None:
+    """Percentile confidence threshold pooled across every frame (demo-style).
+
+    The VGGT-Omega demo computes one percentile over the confidence of the whole
+    sequence, so low-confidence frames shed more points than good ones. Returns
+    ``None`` when the sequence has no confidence or the percentile cut is
+    disabled, in which case callers fall back to the per-frame ``min_confidence``.
+    """
+    if mapping.confidence is None or cfg.confidence_percentile is None:
+        return None
+    conf = np.asarray(mapping.confidence, dtype=np.float32)
+    # Zero confidence at depth edges before pooling so the percentile reflects the
+    # same edge-suppressed distribution the per-frame mask thresholds against.
+    if cfg.depth_edge_rtol is not None and mapping.depth_maps is not None:
+        depths = np.asarray(mapping.depth_maps, dtype=np.float32)
+        if depths.shape == conf.shape:
+            conf = conf.copy()
+            for i in range(conf.shape[0]):
+                conf[i][depth_edge(depths[i], rtol=float(cfg.depth_edge_rtol))] = 0.0
+    finite = conf[np.isfinite(conf)]
+    if not finite.size:
+        return None
+    return float(np.percentile(finite, cfg.confidence_percentile))
+
+
+def frame_validity_mask(
+    depth: np.ndarray,
+    confidence: np.ndarray | None,
+    cfg: PointFilterConfig,
+    *,
+    keep_mask: np.ndarray | None = None,
+    labels: np.ndarray | None = None,
+    ignore_labels: list[int] | None = None,
+    conf_threshold: float | None = None,
+) -> np.ndarray:
+    """Boolean (H, W) mask of the pixels that survive every point filter.
+
+    Follows the VGGT-Omega demo order: depth-edge pixels have their confidence
+    zeroed, then the (optionally sequence-wide) percentile threshold is applied,
+    then the absolute ``min_confidence`` floor. Depth range, keep-mask and
+    ignore-labels are combined on top. ``conf_threshold`` lets callers pass a
+    threshold pooled across the whole sequence (see resolve_confidence_threshold);
+    when omitted it is derived from this frame alone. When ``confidence`` is None
+    the edge mask is applied directly so backends without confidence (e.g.
+    scsfmlearner) still get edge cleanup.
+    """
+    depth = np.asarray(depth, dtype=np.float32)
+    valid = np.isfinite(depth)
+    valid &= depth >= cfg.min_depth
+    valid &= depth <= cfg.max_depth
+    if keep_mask is not None:
+        valid &= keep_mask
+    if labels is not None and ignore_labels:
+        valid &= ~np.isin(labels, ignore_labels)
+
+    edge = None
+    if cfg.depth_edge_rtol is not None:
+        edge = depth_edge(depth, rtol=float(cfg.depth_edge_rtol))
+
+    if confidence is not None:
+        conf = confidence
+        if edge is not None:
+            conf = np.where(edge, np.float32(0.0), conf).astype(np.float32)
+        if conf_threshold is None:
+            finite_conf = conf[np.isfinite(conf)]
+            if finite_conf.size and cfg.confidence_percentile is not None:
+                conf_threshold = float(np.percentile(finite_conf, cfg.confidence_percentile))
+            else:
+                conf_threshold = cfg.min_confidence
+        valid &= conf >= max(float(conf_threshold), cfg.min_confidence)
+    elif edge is not None:
+        valid &= ~edge
+
+    return valid
 
 
 def voxel_reduce_semantic_cloud(cloud: SemanticPointCloud, voxel_size: float) -> SemanticPointCloud:

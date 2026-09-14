@@ -1,7 +1,11 @@
 import numpy as np
 
 from deepreefmap.pipeline.artifacts import MappingSequenceResult
-from deepreefmap.pipeline.orchestrator import _mapping_without_world_points, _maybe_refine_intrinsics
+from deepreefmap.pipeline.orchestrator import (
+    _mapping_without_world_points,
+    _maybe_refine_intrinsics,
+    _resolve_refine_intrinsics,
+)
 
 
 class _RefiningMapper:
@@ -52,6 +56,34 @@ def test_maybe_refine_intrinsics_keeps_original_when_mapper_returns_none():
     )
 
     assert np.allclose(out.intrinsics, mapping_result.intrinsics)
+
+
+def test_maybe_refine_intrinsics_keeps_profile_k_when_disabled():
+    mapping_result = _mapping_result()
+    refined = np.array([[400.0, 0.0, 10.0], [0.0, 420.0, 11.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+
+    out = _maybe_refine_intrinsics(
+        mapping_name="lingbot_map",
+        mapping=_RefiningMapper(refined),
+        mapping_result=mapping_result,
+        camera_profile_intrinsics=np.eye(3, dtype=np.float32),
+        processing_image_size=(2, 2),
+        refine_intrinsics_from_mapper=False,
+    )
+
+    assert np.allclose(out.intrinsics, mapping_result.intrinsics)
+
+
+def test_resolve_refine_intrinsics_defaults_per_backend():
+    assert _resolve_refine_intrinsics("vggt_omega", None) is True
+    assert _resolve_refine_intrinsics("lingbot_map", None) is True
+    assert _resolve_refine_intrinsics("loger", None) is False
+    assert _resolve_refine_intrinsics("scsfmlearner", None) is False
+
+
+def test_resolve_refine_intrinsics_honours_explicit_request():
+    assert _resolve_refine_intrinsics("lingbot_map", False) is False
+    assert _resolve_refine_intrinsics("scsfmlearner", True) is True
 
 
 def test_mapping_without_world_points_forces_unprojection_path():
