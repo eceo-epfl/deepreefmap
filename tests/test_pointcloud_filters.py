@@ -10,10 +10,140 @@ from deepreefmap.pointcloud.filters import (
     _pack_voxel_keys_int64,
     _voxel_sort_order,
     build_semantic_reference_cloud,
+    depth_edge,
     estimate_replacement_radius,
+    frame_validity_mask,
     nearest_camera_replace_semantic_cloud,
+    resolve_confidence_threshold,
     voxel_reduce_semantic_cloud,
 )
+
+
+def test_depth_edge_flags_step_ignores_ramp_and_respects_rtol() -> None:
+    # A sharp vertical step: the two columns straddling the 1.0 -> 2.0 jump are
+    # edges; the flat columns on either side are not.
+    step = np.ones((5, 5), dtype=np.float32)
+    step[:, 3:] = 2.0
+    edge = depth_edge(step, rtol=0.03)
+    assert edge[:, 2].all() and edge[:, 3].all()
+    assert not edge[:, 0].any() and not edge[:, 1].any() and not edge[:, 4].any()
+
+    # A smooth ~1%/column ramp stays under the 3% tolerance everywhere.
+    ramp = (1.01 ** np.arange(6)).astype(np.float32)[None, :].repeat(4, axis=0)
+    assert not depth_edge(ramp, rtol=0.03).any()
+
+    # A tolerance larger than the step's relative jump (1.0) flags nothing.
+    assert not depth_edge(step, rtol=2.0).any()
+
+    # Non-finite depths are always edges.
+    holed = np.ones((3, 3), dtype=np.float32)
+    holed[1, 1] = np.nan
+    assert depth_edge(holed, rtol=0.03)[1, 1]
+
+
+def test_build_semantic_reference_cloud_drops_depth_edges() -> None:
+    # 1x5 depth with a step at column 3 -> columns 2 and 3 are edges.
+    frame = PreparedFrame(
+        frame_index=0,
+        image_rgb=np.full((1, 5, 3), 128, dtype=np.uint8),
+        labels=np.ones((1, 5), dtype=np.int32),
+        keep_mask=np.full((1, 5), 255, dtype=np.uint8),
+    )
+    depth = np.array([[1.0, 1.0, 1.0, 2.0, 2.0]], dtype=np.float32)
+    mapping = MappingSequenceResult(
+        frame_indices=np.array([0], dtype=np.int32),
+        depth_maps=depth[None, ...],
+        poses_w_c=np.eye(4, dtype=np.float32)[None],
+        intrinsics=np.eye(3, dtype=np.float32),
+        world_points=np.arange(15, dtype=np.float32).reshape(1, 1, 5, 3),
+        confidence=np.ones((1, 1, 5), dtype=np.float32),
+    )
+    batch = FrameBatch(frames=(frame,), intrinsics=np.eye(3, dtype=np.float32), image_size=(5, 1), clip_counts=(1,))
+
+    base = dict(voxel_size=None, replacement_radius_factor=0.0, confidence_percentile=None)
+    cloud_on = build_semantic_reference_cloud(batch, mapping, _classes(), PointFilterConfig(**base))
+    cloud_off = build_semantic_reference_cloud(
+        batch, mapping, _classes(), PointFilterConfig(depth_edge_rtol=None, **base)
+    )
+
+    assert len(cloud_off) == 5  # all pixels survive when the edge filter is disabled
+    assert len(cloud_on) == 3  # the two edge columns (2, 3) are removed
+
+
+def test_confidence_percentile_is_pooled_across_frames() -> None:
+    # Frame 0 is uniformly high confidence, frame 1 uniformly low. A percentile
+    # pooled over the whole sequence drops the low frame entirely while keeping
+    # the high one; a per-frame percentile would keep both.
+    def _frame(idx):
+        return PreparedFrame(
+            frame_index=idx,
+            image_rgb=np.full((2, 2, 3), 128, dtype=np.uint8),
+            labels=np.ones((2, 2), dtype=np.int32),
+            keep_mask=np.full((2, 2), 255, dtype=np.uint8),
+        )
+
+    mapping = MappingSequenceResult(
+        frame_indices=np.array([0, 1], dtype=np.int32),
+        depth_maps=np.ones((2, 2, 2), dtype=np.float32),  # flat depth -> no edges
+        poses_w_c=np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)),
+        intrinsics=np.eye(3, dtype=np.float32),
+        world_points=np.stack(
+            [np.arange(12, dtype=np.float32).reshape(2, 2, 3),
+             np.arange(100, 112, dtype=np.float32).reshape(2, 2, 3)]
+        ),
+        confidence=np.stack(
+            [np.full((2, 2), 0.9, dtype=np.float32), np.full((2, 2), 0.1, dtype=np.float32)]
+        ),
+    )
+    batch = FrameBatch(frames=(_frame(0), _frame(1)), intrinsics=np.eye(3, dtype=np.float32), image_size=(2, 2), clip_counts=(2,))
+
+    cloud = build_semantic_reference_cloud(
+        batch,
+        mapping,
+        _classes(),
+        PointFilterConfig(voxel_size=None, replacement_radius_factor=0.0, confidence_percentile=50.0),
+    )
+
+    assert len(cloud) == 4
+    assert set(cloud.frame_indices.tolist()) == {0}  # only the high-confidence frame survives
+
+
+def test_resolve_confidence_threshold_pools_and_disables() -> None:
+    mapping = MappingSequenceResult(
+        frame_indices=np.array([0, 1], dtype=np.int32),
+        depth_maps=np.ones((2, 2, 2), dtype=np.float32),
+        poses_w_c=np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)),
+        intrinsics=np.eye(3, dtype=np.float32),
+        confidence=np.stack(
+            [np.full((2, 2), 0.9, dtype=np.float32), np.full((2, 2), 0.1, dtype=np.float32)]
+        ),
+    )
+    thr = resolve_confidence_threshold(mapping, PointFilterConfig(confidence_percentile=50.0))
+    assert thr is not None and 0.1 < thr < 0.9  # pooled median of {0.1 x4, 0.9 x4}
+
+    # Disabled percentile or missing confidence -> None (callers fall back to min_confidence).
+    assert resolve_confidence_threshold(mapping, PointFilterConfig(confidence_percentile=None)) is None
+    no_conf = MappingSequenceResult(
+        frame_indices=np.array([0], dtype=np.int32),
+        depth_maps=np.ones((1, 2, 2), dtype=np.float32),
+        poses_w_c=np.eye(4, dtype=np.float32)[None],
+        intrinsics=np.eye(3, dtype=np.float32),
+    )
+    assert resolve_confidence_threshold(no_conf, PointFilterConfig(confidence_percentile=50.0)) is None
+
+
+def test_frame_validity_mask_zeroes_edges_via_confidence() -> None:
+    # With confidence present, edge pixels are dropped through the min_confidence
+    # floor (default 1e-5) after their confidence is zeroed.
+    depth = np.array([[1.0, 1.0, 2.0]], dtype=np.float32)
+    conf = np.ones((1, 3), dtype=np.float32)
+    mask = frame_validity_mask(depth, conf, PointFilterConfig(confidence_percentile=None))
+    # Columns 1 and 2 straddle the step; column 0 is flat.
+    assert mask[0, 0] and not mask[0, 1] and not mask[0, 2]
+
+    # No confidence -> edge mask applied directly, same result.
+    mask_no_conf = frame_validity_mask(depth, None, PointFilterConfig(confidence_percentile=None))
+    assert mask_no_conf[0, 0] and not mask_no_conf[0, 1] and not mask_no_conf[0, 2]
 
 
 def _classes():
@@ -214,6 +344,7 @@ def test_replacement_radius_subsamples_without_scaling_xyz() -> None:
         voxel_size=None,
         confidence_percentile=None,
         min_confidence=0.0,
+        depth_edge_rtol=None,  # random depth is all edges; isolate radius subsampling
     )
     cloud_dense = build_semantic_reference_cloud(batch, mapping, _classes(), cfg_dense)
 
@@ -222,6 +353,7 @@ def test_replacement_radius_subsamples_without_scaling_xyz() -> None:
         voxel_size=None,
         confidence_percentile=None,
         min_confidence=0.0,
+        depth_edge_rtol=None,  # random depth is all edges; isolate radius subsampling
     )
     cloud_vox = build_semantic_reference_cloud(batch, mapping, _classes(), cfg_voxel)
 

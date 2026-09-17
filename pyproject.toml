@@ -56,6 +56,26 @@ loger = [
   "roma>=1.5.0",
   "accelerate>=0.30.0",
 ]
+# VGGT-Omega upstream (https://github.com/facebookresearch/vggt-omega) is
+# pip-installable, so we pull it from GitHub rather than vendoring it. It is
+# released under the FAIR Noncommercial Research License (not Apache-2.0), so it
+# must stay an optional dependency and out of the wheel. Upstream pins numpy<2;
+# see [tool.uv] override-dependencies below, which keeps our numpy 2.x lock.
+vggt_omega = [
+  "vggt-omega @ git+https://github.com/facebookresearch/vggt-omega",
+  "einops>=0.7.0",
+  "safetensors>=0.4.0",
+]
+# LingBot-Map upstream (https://github.com/robbyant/lingbot-map) is
+# pip-installable, so we pull it from GitHub rather than vendoring it. It is
+# Apache-2.0 licensed. FlashInfer is deliberately omitted: it is CUDA-only and
+# JIT-compiles kernels on first use, so it stays an optional user install
+# (`pip install flashinfer-python`); the backend falls back to SDPA without it.
+lingbot_map = [
+  "lingbot-map @ git+https://github.com/robbyant/lingbot-map",
+  "einops>=0.7.0",
+  "safetensors>=0.4.0",
+]
 gopro = [
   "py-gpmf-parser>=0.1.1,<0.2.0; sys_platform == 'linux' and platform_machine == 'x86_64'"
 ]
@@ -91,6 +111,10 @@ namespaces = true
 conflicts = [
   [{ extra = "cu126" }, { extra = "cu130" }, { extra = "rocm" }],
 ]
+# VGGT-Omega upstream pins numpy<2, but the rest of the project (and the lock)
+# is on numpy 2.x. Override it so the `vggt_omega` extra resolves against our
+# numpy without downgrading everything else.
+override-dependencies = ["numpy>=1.26.0"]
 
 [[tool.uv.index]]
 name = "pytorch-cu126"

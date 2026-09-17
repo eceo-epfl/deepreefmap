@@ -10,7 +10,9 @@ Both SegFormer processors set do_resize=False, so the processing size is the
 segmentation input size and cost scales with it directly.
 
 Skipped unless DEEPREEFMAP_E2E=1, since it pulls model weights and takes minutes
-on a CPU runner. DEEPREEFMAP_E2E_UPDATE=1 rewrites the golden.
+on a CPU runner. DEEPREEFMAP_E2E_UPDATE=1 rewrites the golden. When the matrix
+fails on a pull request, the `update-golden` job in e2e.yml does that rewrite and
+opens a PR onto the branch; merging it accepts the new values.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from e2e_views import render_views
+from golden_diff import CLOUD_RTOL, COVER_ATOL, MAPPING_RTOL
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("DEEPREEFMAP_E2E") != "1",
@@ -179,13 +182,11 @@ def test_reconstruct_matches_golden(scenario: str, tmp_path: Path):
     assert scenario in goldens, (
         f"no golden for {scenario} in {GOLDEN_PATH}; run with DEEPREEFMAP_E2E_UPDATE=1"
     )
-    # Tolerances follow measured drift: across thread counts depth and pose values
-    # move ~1e-6 relative, point counts less than 0.1%, per-class cover a few percent.
     golden = goldens[scenario]
     assert summary["structure"] == golden["structure"], f"see {summary_path}"
-    assert summary["mapping"] == pytest.approx(golden["mapping"], rel=3e-4), f"see {summary_path}"
-    assert summary["cloud"] == pytest.approx(golden["cloud"], rel=2e-3), f"see {summary_path}"
+    assert summary["mapping"] == pytest.approx(golden["mapping"], rel=MAPPING_RTOL), f"see {summary_path}"
+    assert summary["cloud"] == pytest.approx(golden["cloud"], rel=CLOUD_RTOL), f"see {summary_path}"
     # Classes missing from a run read as 0.0, so a noise-level class appearing or
     # vanishing cannot flake the key set.
     cover = {name: summary["cover"].get(name, 0.0) for name in golden["cover"]}
-    assert cover == pytest.approx(golden["cover"], abs=5e-3), f"see {summary_path}"
+    assert cover == pytest.approx(golden["cover"], abs=COVER_ATOL), f"see {summary_path}"

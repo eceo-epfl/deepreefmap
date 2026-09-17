@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
+from deepreefmap.pointcloud.filters import depth_edge
 from deepreefmap.pointcloud.unprojection import depth_to_points
 
 if TYPE_CHECKING:
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
 # Match defaults in pointcloud/filters.py for consistency with reference cloud construction.
 _DEFAULT_MIN_DEPTH = 0.05
 _DEFAULT_MAX_DEPTH = 8.0
+_DEFAULT_DEPTH_EDGE_RTOL = 0.03
 
 
 def build_enabled_label_lut(max_label_id: int, enabled_classes: set[int]) -> np.ndarray:
@@ -54,12 +56,14 @@ class LiveFrameCloudCache:
         min_depth: float = _DEFAULT_MIN_DEPTH,
         max_depth: float = _DEFAULT_MAX_DEPTH,
         max_depth_for_viz: float | None = None,
+        depth_edge_rtol: float | None = _DEFAULT_DEPTH_EDGE_RTOL,
         lru_size: int = 8,
     ) -> None:
         self._frame_order = frame_order
         self._min_depth = float(min_depth)
         self._max_depth = float(max_depth)
         self._max_depth_for_viz = None if max_depth_for_viz is None else float(max_depth_for_viz)
+        self._depth_edge_rtol = None if depth_edge_rtol is None else float(depth_edge_rtol)
         self._lru_size = max(1, int(lru_size))
 
         self._mapping_frame_indices = np.asarray(mapping.frame_indices, dtype=np.int32).reshape(-1)
@@ -121,6 +125,10 @@ class LiveFrameCloudCache:
         valid = np.isfinite(depth) & (depth >= self._min_depth) & (depth <= self._max_depth) & keep_d
         if self._max_depth_for_viz is not None:
             valid &= depth <= self._max_depth_for_viz
+        # Drop depth-discontinuity pixels so the scrubbing preview matches the
+        # sharp edges of the final reference cloud (see filters.depth_edge).
+        if self._depth_edge_rtol is not None:
+            valid &= ~depth_edge(depth, rtol=self._depth_edge_rtol)
         flat = valid.reshape(-1)
 
         if self._world_points is not None:

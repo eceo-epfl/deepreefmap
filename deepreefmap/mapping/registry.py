@@ -9,7 +9,14 @@ if TYPE_CHECKING:
     from deepreefmap.mapping.base import MappingBackend
 
 
-_BACKENDS: tuple[str, ...] = ("scsfmlearner", "loger", "loger_star")
+_BACKENDS: tuple[str, ...] = ("scsfmlearner", "loger", "loger_star", "vggt_omega", "lingbot_map")
+
+# Backends whose model predicts camera intrinsics (a FoV term in pose_enc) for
+# every frame. For these, --refine-intrinsics-from-mapper defaults to on so the
+# K used for unprojection is the one the model's depth and poses were predicted
+# with, rather than the camera profile's. LoGeR can refine K too, but only via a
+# post-hoc optimization seeded from the profile, so it keeps the opt-in default.
+_INTRINSICS_ESTIMATING_BACKENDS: frozenset[str] = frozenset({"vggt_omega", "lingbot_map"})
 
 # LoGeR checkpoints are plain files in a user-writable folder, not Hugging Face
 # cache entries: the backend loads them from a fixed path. See deepreefmap.paths.
@@ -29,6 +36,36 @@ def loger_available() -> bool:
     if importlib.util.find_spec("loger") is None:
         return False
     return all(importlib.util.find_spec(m) is not None for m in _LOGER_EXTRA_SENTINELS)
+
+
+def vggt_omega_available() -> bool:
+    """True when the VGGT-Omega package is installed.
+
+    Mirrors ``loger_available``: the GUI only offers backends that will run on
+    this machine, and this check must not import torch just to fill a dropdown.
+    """
+    return importlib.util.find_spec("vggt_omega") is not None
+
+
+def lingbot_map_available() -> bool:
+    """True when the LingBot-Map package is installed.
+
+    Mirrors ``vggt_omega_available``: the GUI only offers backends that will run
+    on this machine, and this check must not import torch just to fill a dropdown.
+    """
+    return importlib.util.find_spec("lingbot_map") is not None
+
+
+def backend_estimates_intrinsics(name: str) -> bool:
+    """True when the backend's model predicts per-frame intrinsics itself.
+
+    Used by the orchestrator to resolve an unset ``--refine-intrinsics-from-mapper``
+    to the backend default. Pure string lookup: it runs before the backend (and
+    torch) is imported, and must stay cheap enough for the cache key.
+    """
+    if name not in _BACKENDS:
+        raise ValueError(f"Unsupported mapping backend: {name}")
+    return name in _INTRINSICS_ESTIMATING_BACKENDS
 
 
 def _loger_star_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -53,6 +90,14 @@ def create_mapping_backend(name: str, **kwargs: Any) -> MappingBackend:
         return LoGeRBackend(**kwargs)
     if name == "loger_star":
         return LoGeRBackend(**_loger_star_kwargs(kwargs))
+    if name == "vggt_omega":
+        from deepreefmap.mapping.vggt_omega_backend import VGGTOmegaBackend
+
+        return VGGTOmegaBackend(**kwargs)
+    if name == "lingbot_map":
+        from deepreefmap.mapping.lingbot_map_backend import LingBotMapBackend
+
+        return LingBotMapBackend(**kwargs)
     raise ValueError(f"Unsupported mapping backend: {name}")
 
 
