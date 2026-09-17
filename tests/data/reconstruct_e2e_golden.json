@@ -23,10 +23,10 @@
       ]
     },
     "mapping": {
-      "depth_mean": 0.5944051244417469,
-      "depth_std": 0.1628498853334754,
+      "depth_mean": 0.594405113672389,
+      "depth_std": 0.16284990148729533,
       "depth_min": 0.3199633061885834,
-      "depth_max": 1.6078553199768066,
+      "depth_max": 1.6078522205352783,
       "pose_path_length": 0.32285624742507935,
       "fx": 416.7969970703125,
       "fy": 370.48626708984375,
@@ -34,25 +34,25 @@
       "cy": 127.88148498535156
     },
     "cloud": {
-      "cloud_points": 274389,
-      "cover_denominator": 260241.0
+      "cloud_points": 266970,
+      "cover_denominator": 252828.0
     },
     "cover": {
-      "other coral dead": 0.0003381481011831341,
-      "sand": 0.6307153753636052,
-      "other coral alive": 0.0002267129314750558,
-      "unknown hard substrate": 0.17502622569080198,
-      "transect line": 0.016400182907382002,
-      "massive/meandering alive": 0.07143762896699597,
-      "rubble": 0.02554555200756222,
-      "branching dead": 0.02272124684427127,
-      "branching alive": 0.037177078169850254,
-      "massive/meandering dead": 0.009452776464892157,
-      "acropora alive": 0.005533332564814922,
-      "pocillopora alive": 0.0008376850688400368,
-      "stylophora alive": 0.001625416440914383,
-      "meandering alive": 0.0028704162679977405,
-      "meandering dead": 9.222220941358203e-05
+      "other coral dead": 0.0003243311658518835,
+      "sand": 0.6335057825873717,
+      "other coral alive": 0.0002294049709684054,
+      "unknown hard substrate": 0.1758705523122439,
+      "transect line": 0.016604173588368378,
+      "massive/meandering alive": 0.06835477083234452,
+      "rubble": 0.025622162102298795,
+      "branching dead": 0.0225845238660275,
+      "branching alive": 0.03657031657885994,
+      "massive/meandering dead": 0.009294856582340564,
+      "acropora alive": 0.005632287563086367,
+      "pocillopora alive": 0.0008780673026721724,
+      "stylophora alive": 0.0016295663454997072,
+      "meandering alive": 0.0028042780071827486,
+      "meandering dead": 9.49261948834781e-05
     }
   },
   "b2_w1376_fps5": {
@@ -79,36 +79,36 @@
       ]
     },
     "mapping": {
-      "depth_mean": 0.5943110524933926,
-      "depth_std": 0.162293685803241,
-      "depth_min": 0.3111574351787567,
-      "depth_max": 1.6084731817245483,
-      "pose_path_length": 0.34527647495269775,
+      "depth_mean": 0.5943110436294634,
+      "depth_std": 0.16229370498517914,
+      "depth_min": 0.3111574649810791,
+      "depth_max": 1.6084716320037842,
+      "pose_path_length": 0.34527653455734253,
       "fx": 416.7969970703125,
       "fy": 370.48626708984375,
       "cx": 255.86666870117188,
       "cy": 127.88148498535156
     },
     "cloud": {
-      "cloud_points": 335551,
-      "cover_denominator": 315917.0
+      "cloud_points": 326881,
+      "cover_denominator": 307272.0
     },
     "cover": {
-      "other coral dead": 0.00024373490505417563,
-      "sand": 0.6133098250489843,
-      "other coral alive": 0.0005539429660322173,
-      "unknown hard substrate": 0.18030685274929809,
-      "transect line": 0.01685885849764337,
-      "massive/meandering alive": 0.08366121481275145,
-      "rubble": 0.025304114688351687,
-      "branching dead": 0.021375867712088936,
-      "branching alive": 0.0370951863938946,
-      "massive/meandering dead": 0.010436285480046974,
-      "acropora alive": 0.005159583055042939,
-      "pocillopora alive": 0.0004969659752403321,
-      "stylophora alive": 0.0018390906472269615,
-      "meandering alive": 0.0032730115821560726,
-      "meandering dead": 8.546548618782781e-05
+      "other coral dead": 0.0002505923090942227,
+      "sand": 0.6176482074513786,
+      "other coral alive": 0.000576036866359447,
+      "unknown hard substrate": 0.18012705355515635,
+      "transect line": 0.017202999297039757,
+      "massive/meandering alive": 0.08050196568512588,
+      "rubble": 0.02548230883386706,
+      "branching dead": 0.021280819599573016,
+      "branching alive": 0.03567848681298654,
+      "massive/meandering dead": 0.010280793564008435,
+      "acropora alive": 0.005308000728995808,
+      "pocillopora alive": 0.0005142024004790544,
+      "stylophora alive": 0.0018387617485485172,
+      "meandering alive": 0.0032219011169257205,
+      "meandering dead": 8.787003046161055e-05
     }
   },
   "b2_w344_fps3": {
@@ -135,36 +135,36 @@
       ]
     },
     "mapping": {
-      "depth_mean": 0.6263365611300018,
-      "depth_std": 0.16711839754487998,
-      "depth_min": 0.3429945707321167,
-      "depth_max": 1.6268731355667114,
-      "pose_path_length": 0.3465630114078522,
+      "depth_mean": 0.6263365612914682,
+      "depth_std": 0.1671184385841625,
+      "depth_min": 0.3429946303367615,
+      "depth_max": 1.6268740892410278,
+      "pose_path_length": 0.3465631306171417,
       "fx": 416.7969970703125,
       "fy": 370.48626708984375,
       "cx": 255.86666870117188,
       "cy": 127.88148498535156
     },
     "cloud": {
-      "cloud_points": 256458,
-      "cover_denominator": 255326.0
+      "cloud_points": 251508,
+      "cover_denominator": 250373.0
     },
     "cover": {
-      "sand": 0.6362258446065031,
-      "other coral alive": 0.05555250934099935,
-      "algae covered substrate": 0.018223760995746616,
-      "unknown hard substrate": 0.09286167487839077,
-      "transect line": 0.0134181399465781,
-      "massive/meandering alive": 0.05860351080579338,
-      "rubble": 0.03181422965150435,
-      "branching dead": 0.04999882503152832,
-      "branching alive": 0.025641728613615536,
-      "acropora alive": 0.0066503215497050825,
-      "table acropora alive": 0.007245638908689283,
-      "sponge": 0.0014687105895991792,
-      "table acropora dead": 0.00010966372402340537,
-      "stylophora alive": 0.00047782051181626624,
-      "meandering alive": 0.0017076208455073121
+      "sand": 0.6432962020665167,
+      "other coral alive": 0.050600504047960446,
+      "algae covered substrate": 0.017418012325610188,
+      "unknown hard substrate": 0.09283349242929549,
+      "transect line": 0.013447935679965491,
+      "massive/meandering alive": 0.05616420300911041,
+      "rubble": 0.03228782656276835,
+      "branching dead": 0.050748283560927095,
+      "branching alive": 0.02538612390313652,
+      "acropora alive": 0.00678188143290211,
+      "table acropora alive": 0.007209243808238109,
+      "sponge": 0.0015137414976854533,
+      "table acropora dead": 9.985102227476605e-05,
+      "stylophora alive": 0.0005232193567197741,
+      "meandering alive": 0.0016894792968890416
     }
   },
   "b2_w344_fps5": {
@@ -191,37 +191,37 @@
       ]
     },
     "mapping": {
-      "depth_mean": 0.6265777572178435,
-      "depth_std": 0.16693389580911844,
+      "depth_mean": 0.6265777518215145,
+      "depth_std": 0.16693392723651213,
       "depth_min": 0.34123414754867554,
-      "depth_max": 1.627625823020935,
-      "pose_path_length": 0.3667486011981964,
+      "depth_max": 1.6276276111602783,
+      "pose_path_length": 0.366748571395874,
       "fx": 416.7969970703125,
       "fy": 370.48626708984375,
       "cx": 255.86666870117188,
       "cy": 127.88148498535156
     },
     "cloud": {
-      "cloud_points": 311263,
-      "cover_denominator": 309593.0
+      "cloud_points": 305505,
+      "cover_denominator": 303834.0
     },
     "cover": {
-      "sand": 0.6123846469396917,
-      "other coral alive": 0.06856744177032427,
-      "algae covered substrate": 0.023359701285235776,
-      "unknown hard substrate": 0.09667531242631455,
-      "transect line": 0.014748395474057876,
-      "massive/meandering alive": 0.06171974172542661,
-      "rubble": 0.03575339235706234,
-      "branching dead": 0.04686798474125707,
-      "branching alive": 0.021415212876260123,
-      "massive/meandering dead": 0.0003811455685367563,
-      "acropora alive": 0.006676507543775215,
-      "table acropora alive": 0.002309483741557464,
-      "sponge": 0.007102873772985823,
-      "table acropora dead": 3.5530519100884064e-05,
-      "stylophora alive": 8.721127415671543e-05,
-      "meandering alive": 0.00191541798425675
+      "sand": 0.6197101048598906,
+      "other coral alive": 0.06185285386098988,
+      "algae covered substrate": 0.02265381754510687,
+      "unknown hard substrate": 0.09612156638164261,
+      "transect line": 0.014863379345300394,
+      "massive/meandering alive": 0.06027633510403707,
+      "rubble": 0.036490320372308566,
+      "branching dead": 0.048108506618745765,
+      "branching alive": 0.021389969522831547,
+      "massive/meandering dead": 0.00033241836002554027,
+      "acropora alive": 0.006694444992989593,
+      "table acropora alive": 0.0022248991225471805,
+      "sponge": 0.007247378502735046,
+      "table acropora dead": 2.303889623939388e-05,
+      "stylophora alive": 7.569923050086561e-05,
+      "meandering alive": 0.001935267284109086
     }
   },
   "b2_w688_fps3": {
@@ -248,36 +248,36 @@
       ]
     },
     "mapping": {
-      "depth_mean": 0.6080865654202874,
-      "depth_std": 0.1653042031987001,
-      "depth_min": 0.3265322744846344,
-      "depth_max": 1.6153191328048706,
-      "pose_path_length": 0.33324193954467773,
+      "depth_mean": 0.6080865605403418,
+      "depth_std": 0.16530423303051445,
+      "depth_min": 0.3265323042869568,
+      "depth_max": 1.615317940711975,
+      "pose_path_length": 0.3332420289516449,
       "fx": 416.7969970703125,
       "fy": 370.48626708984375,
       "cx": 255.86666870117188,
       "cy": 127.88148498535156
     },
     "cloud": {
-      "cloud_points": 266290,
-      "cover_denominator": 255809.0
+      "cloud_points": 260288,
+      "cover_denominator": 249915.0
     },
     "cover": {
-      "other coral dead": 0.000340097494615123,
-      "sand": 0.6466699764277254,
-      "other coral alive": 0.0310856928411432,
-      "algae covered substrate": 0.0029123291205547888,
-      "unknown hard substrate": 0.17440746807188176,
-      "transect line": 0.017172968894761324,
-      "massive/meandering alive": 0.06117454819806965,
-      "rubble": 0.02071467383868433,
-      "branching dead": 0.009217814854051265,
-      "branching alive": 0.023232177132157195,
-      "massive/meandering dead": 0.004131989101243506,
-      "acropora alive": 0.0059653882388813525,
-      "pocillopora alive": 0.0012392058137125747,
-      "stylophora alive": 0.0012001141476648592,
-      "meandering alive": 0.0005355558248536994
+      "other coral dead": 0.0003441169997799252,
+      "sand": 0.6489206330152252,
+      "other coral alive": 0.03105055718944441,
+      "algae covered substrate": 0.00274093191685173,
+      "unknown hard substrate": 0.174847448132365,
+      "transect line": 0.01742592481443691,
+      "massive/meandering alive": 0.05696336754496529,
+      "rubble": 0.02115919412600284,
+      "branching dead": 0.009559250145049316,
+      "branching alive": 0.023748074345277394,
+      "massive/meandering dead": 0.004125402636896544,
+      "acropora alive": 0.00612608286817518,
+      "pocillopora alive": 0.0011844026969169519,
+      "stylophora alive": 0.0012404217433927536,
+      "meandering alive": 0.0005641918252205749
     }
   },
   "b2_w688_fps5": {
@@ -304,36 +304,36 @@
       ]
     },
     "mapping": {
-      "depth_mean": 0.6081959486008373,
-      "depth_std": 0.1649754107624566,
+      "depth_mean": 0.6081959420930048,
+      "depth_std": 0.16497543698507855,
       "depth_min": 0.31991058588027954,
-      "depth_max": 1.61497962474823,
-      "pose_path_length": 0.35507306456565857,
+      "depth_max": 1.6149793863296509,
+      "pose_path_length": 0.35507309436798096,
       "fx": 416.7969970703125,
       "fy": 370.48626708984375,
       "cx": 255.86666870117188,
       "cy": 127.88148498535156
     },
     "cloud": {
-      "cloud_points": 325723,
-      "cover_denominator": 310242.0
+      "cloud_points": 318981,
+      "cover_denominator": 303564.0
     },
     "cover": {
-      "other coral dead": 0.0002159604437825955,
-      "sand": 0.6169957645966697,
-      "other coral alive": 0.03848286176597624,
-      "algae covered substrate": 0.0017631397425235784,
-      "unknown hard substrate": 0.18665106594207104,
-      "transect line": 0.01640977043727155,
-      "massive/meandering alive": 0.07057393905402878,
-      "rubble": 0.01820836637205794,
-      "branching dead": 0.010939846958181032,
-      "branching alive": 0.02607641776419698,
-      "massive/meandering dead": 0.004512606287994533,
-      "acropora alive": 0.007397451022105324,
-      "pocillopora alive": 0.0005221730133250817,
-      "stylophora alive": 0.000921860998833169,
-      "meandering alive": 0.00032877560098245885
+      "other coral dead": 0.0002371822745780132,
+      "sand": 0.6194904534134482,
+      "other coral alive": 0.03833458512867138,
+      "algae covered substrate": 0.00153509638824103,
+      "unknown hard substrate": 0.18714999143508454,
+      "transect line": 0.016797116917684575,
+      "massive/meandering alive": 0.06633856452016708,
+      "rubble": 0.018915286397596553,
+      "branching dead": 0.01101909317310353,
+      "branching alive": 0.026373351253771857,
+      "massive/meandering dead": 0.004430696657047608,
+      "acropora alive": 0.007599715381270506,
+      "pocillopora alive": 0.0004974239369622221,
+      "stylophora alive": 0.0009487290983120528,
+      "meandering alive": 0.0003327140240608241
     }
   },
   "b5_w1376_fps3": {
@@ -360,10 +360,10 @@
       ]
     },
     "mapping": {
-      "depth_mean": 0.5944051244417469,
-      "depth_std": 0.1628498853334754,
+      "depth_mean": 0.594405113672389,
+      "depth_std": 0.16284990148729533,
       "depth_min": 0.3199633061885834,
-      "depth_max": 1.6078553199768066,
+      "depth_max": 1.6078522205352783,
       "pose_path_length": 0.32285624742507935,
       "fx": 416.7969970703125,
       "fy": 370.48626708984375,
@@ -371,24 +371,24 @@
       "cy": 127.88148498535156
     },
     "cloud": {
-      "cloud_points": 265005,
-      "cover_denominator": 255380.0
+      "cloud_points": 259199,
+      "cover_denominator": 249608.0
     },
     "cover": {
-      "sand": 0.6530033675307385,
-      "other coral alive": 5.090453441929673e-05,
-      "unknown hard substrate": 0.17678361657138383,
-      "transect line": 0.018082856919100946,
-      "massive/meandering alive": 0.0476270655493774,
-      "rubble": 0.02413658078158039,
-      "branching dead": 0.012949330409585716,
-      "branching alive": 0.028381235805466365,
-      "massive/meandering dead": 0.020365729501135563,
-      "acropora alive": 0.008085989505834442,
-      "pocillopora alive": 0.006425718537081996,
-      "stylophora alive": 0.00019970240426031796,
-      "meandering alive": 0.003853081682199076,
-      "meandering dead": 5.4820267836165715e-05
+      "sand": 0.6512211147078619,
+      "other coral alive": 4.807538219928848e-05,
+      "unknown hard substrate": 0.17857600717925706,
+      "transect line": 0.018288676644979327,
+      "massive/meandering alive": 0.04697766097240473,
+      "rubble": 0.02402166597224448,
+      "branching dead": 0.012932277811608602,
+      "branching alive": 0.028656934072625876,
+      "massive/meandering dead": 0.02028781128809974,
+      "acropora alive": 0.008256946892727797,
+      "pocillopora alive": 0.006594339925002404,
+      "stylophora alive": 0.00018028268324733182,
+      "meandering alive": 0.0039021185218422487,
+      "meandering dead": 5.60879458991699e-05
     }
   },
   "b5_w1376_fps5": {
@@ -415,34 +415,34 @@
       ]
     },
     "mapping": {
-      "depth_mean": 0.5943110524933926,
-      "depth_std": 0.162293685803241,
-      "depth_min": 0.3111574351787567,
-      "depth_max": 1.6084731817245483,
-      "pose_path_length": 0.34527647495269775,
+      "depth_mean": 0.5943110436294634,
+      "depth_std": 0.16229370498517914,
+      "depth_min": 0.3111574649810791,
+      "depth_max": 1.6084716320037842,
+      "pose_path_length": 0.34527653455734253,
       "fx": 416.7969970703125,
       "fy": 370.48626708984375,
       "cx": 255.86666870117188,
       "cy": 127.88148498535156
     },
     "cloud": {
-      "cloud_points": 321762,
-      "cover_denominator": 308843.0
+      "cloud_points": 315404,
+      "cover_denominator": 302464.0
     },
     "cover": {
-      "sand": 0.636857561932762,
-      "other coral alive": 0.0005148246843865653,
-      "unknown hard substrate": 0.18590675521219518,
-      "transect line": 0.01887366720307729,
-      "massive/meandering alive": 0.05247973889646196,
-      "rubble": 0.02601321707145702,
-      "branching dead": 0.012038479097794024,
-      "branching alive": 0.02811784628435807,
-      "massive/meandering dead": 0.0197058052149474,
-      "acropora alive": 0.008373186376249422,
-      "pocillopora alive": 0.006569681035348057,
-      "meandering alive": 0.004322584614189087,
-      "meandering dead": 0.0002266523767739596
+      "sand": 0.6357219371561574,
+      "other coral alive": 0.0005025391451544647,
+      "unknown hard substrate": 0.18754959267879814,
+      "transect line": 0.019000608336859924,
+      "massive/meandering alive": 0.05141438319932289,
+      "rubble": 0.026360161870503596,
+      "branching dead": 0.011935304697418535,
+      "branching alive": 0.027910759627592045,
+      "massive/meandering dead": 0.019724661447312736,
+      "acropora alive": 0.008443980110029623,
+      "pocillopora alive": 0.006734685780787135,
+      "meandering alive": 0.004456728734659332,
+      "meandering dead": 0.0002446572154041473
     }
   },
   "b5_w344_fps3": {
@@ -469,32 +469,32 @@
       ]
     },
     "mapping": {
-      "depth_mean": 0.6263365611300018,
-      "depth_std": 0.16711839754487998,
-      "depth_min": 0.3429945707321167,
-      "depth_max": 1.6268731355667114,
-      "pose_path_length": 0.3465630114078522,
+      "depth_mean": 0.6263365612914682,
+      "depth_std": 0.1671184385841625,
+      "depth_min": 0.3429946303367615,
+      "depth_max": 1.6268740892410278,
+      "pose_path_length": 0.3465631306171417,
       "fx": 416.7969970703125,
       "fy": 370.48626708984375,
       "cx": 255.86666870117188,
       "cy": 127.88148498535156
     },
     "cloud": {
-      "cloud_points": 231114,
-      "cover_denominator": 230874.0
+      "cloud_points": 228100,
+      "cover_denominator": 227850.0
     },
     "cover": {
-      "sand": 0.7535278983341563,
-      "other coral alive": 0.0009615634501936121,
-      "algae covered substrate": 0.004729852646898308,
-      "unknown hard substrate": 0.14189557940694925,
-      "transect line": 0.0010828417231910047,
-      "massive/meandering alive": 0.0333212055060336,
-      "rubble": 0.029167424655872902,
-      "branching dead": 0.007423962854197528,
-      "branching alive": 0.012045531328776735,
-      "acropora alive": 0.01559725218084323,
-      "pocillopora alive": 0.0002468879128875491
+      "sand": 0.7528856703971911,
+      "other coral alive": 0.0009699363616414308,
+      "algae covered substrate": 0.004691683124862849,
+      "unknown hard substrate": 0.1436954136493307,
+      "transect line": 0.0010972130787798991,
+      "massive/meandering alive": 0.03152073732718894,
+      "rubble": 0.0295852534562212,
+      "branching dead": 0.007518104015799869,
+      "branching alive": 0.01204739960500329,
+      "acropora alive": 0.01574720210664911,
+      "pocillopora alive": 0.00024138687733157778
     }
   },
   "b5_w344_fps5": {
@@ -521,32 +521,32 @@
       ]
     },
     "mapping": {
-      "depth_mean": 0.6265777572178435,
-      "depth_std": 0.16693389580911844,
+      "depth_mean": 0.6265777518215145,
+      "depth_std": 0.16693392723651213,
       "depth_min": 0.34123414754867554,
-      "depth_max": 1.627625823020935,
-      "pose_path_length": 0.3667486011981964,
+      "depth_max": 1.6276276111602783,
+      "pose_path_length": 0.366748571395874,
       "fx": 416.7969970703125,
       "fy": 370.48626708984375,
       "cx": 255.86666870117188,
       "cy": 127.88148498535156
     },
     "cloud": {
-      "cloud_points": 274740,
-      "cover_denominator": 274302.0
+      "cloud_points": 272037,
+      "cover_denominator": 271587.0
     },
     "cover": {
-      "sand": 0.74021698711639,
-      "other coral alive": 0.0014910573018060386,
-      "algae covered substrate": 0.0004192459406056099,
-      "unknown hard substrate": 0.15280967692543254,
-      "transect line": 0.0017134399311707533,
-      "massive/meandering alive": 0.04617538333661439,
-      "rubble": 0.02047378436905309,
-      "branching dead": 0.00409038213356082,
-      "branching alive": 0.017134399311707533,
-      "acropora alive": 0.014086663604348492,
-      "pocillopora alive": 0.0013889800293107597
+      "sand": 0.7393431938936694,
+      "other coral alive": 0.0015280554665724059,
+      "algae covered substrate": 0.00040502675017581845,
+      "unknown hard substrate": 0.1541642273010122,
+      "transect line": 0.0017416150257560192,
+      "massive/meandering alive": 0.04508315935593383,
+      "rubble": 0.020630589829410097,
+      "branching dead": 0.004215960263193747,
+      "branching alive": 0.01738301170527308,
+      "acropora alive": 0.014153843887962236,
+      "pocillopora alive": 0.0013513165210411397
     }
   },
   "b5_w688_fps3": {
@@ -573,35 +573,35 @@
       ]
     },
     "mapping": {
-      "depth_mean": 0.6080865654202874,
-      "depth_std": 0.1653042031987001,
-      "depth_min": 0.3265322744846344,
-      "depth_max": 1.6153191328048706,
-      "pose_path_length": 0.33324193954467773,
+      "depth_mean": 0.6080865605403418,
+      "depth_std": 0.16530423303051445,
+      "depth_min": 0.3265323042869568,
+      "depth_max": 1.615317940711975,
+      "pose_path_length": 0.3332420289516449,
       "fx": 416.7969970703125,
       "fy": 370.48626708984375,
       "cx": 255.86666870117188,
       "cy": 127.88148498535156
     },
     "cloud": {
-      "cloud_points": 248186,
-      "cover_denominator": 243936.0
+      "cloud_points": 243318,
+      "cover_denominator": 239051.0
     },
     "cover": {
-      "sand": 0.6975600157418339,
-      "other coral alive": 0.00226288862652499,
-      "unknown hard substrate": 0.16781860815951724,
-      "transect line": 0.0160410927456382,
-      "massive/meandering alive": 0.040641807687262235,
-      "rubble": 0.02599452315361406,
-      "branching dead": 0.0009510691328873147,
-      "branching alive": 0.02681031090121999,
-      "massive/meandering dead": 0.0066328873147054965,
-      "acropora alive": 0.01247458349731077,
-      "sponge": 8.198871835235472e-06,
-      "pocillopora alive": 0.0015208907254361799,
-      "stylophora alive": 0.0001598780007870917,
-      "meandering alive": 0.0011232454414272597
+      "sand": 0.6947471460065007,
+      "other coral alive": 0.0023467795575002823,
+      "unknown hard substrate": 0.17010596065274775,
+      "transect line": 0.01628941104617843,
+      "massive/meandering alive": 0.03967354246583365,
+      "rubble": 0.02658010215393368,
+      "branching dead": 0.000962137786497442,
+      "branching alive": 0.026910575567556713,
+      "massive/meandering dead": 0.006714048466645193,
+      "acropora alive": 0.01285081426139192,
+      "sponge": 4.183207767380182e-06,
+      "pocillopora alive": 0.0015017715884894855,
+      "stylophora alive": 0.00017569472622996766,
+      "meandering alive": 0.0011378325127274097
     }
   },
   "b5_w688_fps5": {
@@ -628,34 +628,34 @@
       ]
     },
     "mapping": {
-      "depth_mean": 0.6081959486008373,
-      "depth_std": 0.1649754107624566,
+      "depth_mean": 0.6081959420930048,
+      "depth_std": 0.16497543698507855,
       "depth_min": 0.31991058588027954,
-      "depth_max": 1.61497962474823,
-      "pose_path_length": 0.35507306456565857,
+      "depth_max": 1.6149793863296509,
+      "pose_path_length": 0.35507309436798096,
       "fx": 416.7969970703125,
       "fy": 370.48626708984375,
       "cx": 255.86666870117188,
       "cy": 127.88148498535156
     },
     "cloud": {
-      "cloud_points": 296051,
-      "cover_denominator": 289997.0
+      "cloud_points": 291028,
+      "cover_denominator": 284971.0
     },
     "cover": {
-      "sand": 0.6767552767787253,
-      "other coral alive": 0.004382803960040966,
-      "unknown hard substrate": 0.18148118773642485,
-      "transect line": 0.016717414318079153,
-      "massive/meandering alive": 0.042445266675172504,
-      "rubble": 0.024727842012158746,
-      "branching dead": 0.0016517412249092232,
-      "branching alive": 0.026307168694848566,
-      "massive/meandering dead": 0.008651813639451443,
-      "acropora alive": 0.01374841808708366,
-      "pocillopora alive": 0.0006069028300292762,
-      "stylophora alive": 0.0004379355648506709,
-      "meandering alive": 0.002086228478225637
+      "sand": 0.6744124840773271,
+      "other coral alive": 0.00448115773183938,
+      "unknown hard substrate": 0.18363272052243912,
+      "transect line": 0.016984184355601097,
+      "massive/meandering alive": 0.04141824957627267,
+      "rubble": 0.02492885240954343,
+      "branching dead": 0.0016492906295728336,
+      "branching alive": 0.026693944296086267,
+      "massive/meandering dead": 0.008667548627755105,
+      "acropora alive": 0.013945278642388172,
+      "pocillopora alive": 0.000621115832839131,
+      "stylophora alive": 0.0004316228668882097,
+      "meandering alive": 0.0021335504314474105
     }
   }
 }
