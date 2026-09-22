@@ -1,5 +1,5 @@
 {
-  "name": "gopro_hero_12_4k_wide",
+  "name": "gopro_hero_12",
   "source": "colmap_radial_v1",
   "distorted": {
     "model": "RADIAL",
