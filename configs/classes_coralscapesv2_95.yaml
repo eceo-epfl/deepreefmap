@@ -1,0 +1,96 @@
+classes:
+  - {id: 1, name: "acanthaster planci", color: [179, 245, 234], roles: []}
+  - {id: 2, name: "acropora alive", color: [236, 128, 255], roles: []}
+  - {id: 3, name: "acropora bleached", color: [255, 236, 254], roles: []}
+  - {id: 4, name: "acropora dead", color: [118, 63, 128], roles: []}
+  - {id: 5, name: "algae covered brain coral", color: [208, 207, 58], roles: []}
+  - {id: 6, name: "algae covered branching coral", color: [6, 71, 245], roles: []}
+  - {id: 7, name: "algae covered lobophylliidae", color: [50, 208, 130], roles: []}
+  - {id: 8, name: "algae covered massive coral", color: [67, 182, 208], roles: []}
+  - {id: 9, name: "algae covered pocillopora", color: [225, 109, 77], roles: []}
+  - {id: 10, name: "algae covered porites", color: [173, 81, 130], roles: []}
+  - {id: 11, name: "algae covered substrate", color: [125, 163, 125], roles: []}
+  - {id: 12, name: "algae covered table acropora", color: [48, 162, 221], roles: []}
+  - {id: 13, name: "anemone", color: [0, 255, 189], roles: []}
+  - {id: 14, name: "background", color: [29, 162, 216], roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 15, name: "brain coral alive", color: [114, 78, 120], roles: []}
+  - {id: 16, name: "brain coral bleached", color: [219, 67, 238], roles: []}
+  - {id: 17, name: "brain coral dead", color: [78, 172, 99], roles: []}
+  - {id: 18, name: "branching coral alive", color: [226, 91, 157], roles: []}
+  - {id: 19, name: "branching coral bleached", color: [252, 231, 240], roles: []}
+  - {id: 20, name: "branching coral dead", color: [123, 50, 86], roles: []}
+  - {id: 21, name: "cirrhipathes", color: [6, 189, 22], roles: []}
+  - {id: 22, name: "dark", color: [31, 31, 31], roles: ["ignore_in_cover"]}
+  - {id: 23, name: "dead giant clam", color: [89, 155, 134], roles: []}
+  - {id: 24, name: "feather worm", color: [159, 186, 38], roles: []}
+  - {id: 25, name: "fish", color: [255, 255, 0], roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 26, name: "fungiidae alive", color: [100, 133, 248], roles: []}
+  - {id: 27, name: "fungiidae bleached", color: [200, 138, 27], roles: []}
+  - {id: 28, name: "fungiidae dead", color: [3, 92, 44], roles: []}
+  - {id: 29, name: "galaxea alive", color: [96, 188, 108], roles: []}
+  - {id: 30, name: "galaxea bleached", color: [67, 243, 60], roles: []}
+  - {id: 31, name: "galaxea dead", color: [176, 225, 11], roles: []}
+  - {id: 32, name: "giant clam", color: [189, 255, 234], roles: []}
+  - {id: 33, name: "goniopora alive", color: [181, 5, 120], roles: []}
+  - {id: 34, name: "goniopora dead", color: [179, 191, 30], roles: []}
+  - {id: 35, name: "hard coral alive", color: [109, 232, 188], roles: []}
+  - {id: 36, name: "hard coral bleached", color: [70, 247, 149], roles: []}
+  - {id: 37, name: "hard coral dead", color: [114, 15, 203], roles: []}
+  - {id: 38, name: "hard substrate", color: [125, 125, 125], roles: []}
+  - {id: 39, name: "human", color: [255, 0, 0], roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 40, name: "human-made structure", color: [151, 171, 80], roles: []}
+  - {id: 41, name: "leather coral alive", color: [86, 184, 94], roles: []}
+  - {id: 42, name: "lobophylliidae alive", color: [201, 73, 234], roles: []}
+  - {id: 43, name: "lobophylliidae bleached", color: [253, 187, 79], roles: []}
+  - {id: 44, name: "lobophylliidae dead", color: [57, 106, 220], roles: []}
+  - {id: 45, name: "massive alive", color: [236, 150, 21], roles: []}
+  - {id: 46, name: "massive bleached", color: [255, 248, 228], roles: []}
+  - {id: 47, name: "massive dead", color: [134, 86, 18], roles: []}
+  - {id: 48, name: "meandering coral alive", color: [230, 193, 0], roles: []}
+  - {id: 49, name: "meandering coral bleached", color: [251, 243, 216], roles: []}
+  - {id: 50, name: "meandering coral dead", color: [119, 100, 14], roles: []}
+  - {id: 51, name: "millepora", color: [244, 150, 115], roles: []}
+  - {id: 52, name: "millepora bleached", color: [164, 226, 52], roles: []}
+  - {id: 53, name: "millepora dead", color: [119, 128, 174], roles: []}
+  - {id: 54, name: "nephtheidae alive", color: [132, 109, 91], roles: []}
+  - {id: 55, name: "other animal", color: [0, 255, 255], roles: []}
+  - {id: 56, name: "other coral alive", color: [224, 118, 119], roles: []}
+  - {id: 57, name: "other coral bleached", color: [250, 224, 225], roles: []}
+  - {id: 58, name: "other coral dead", color: [114, 60, 61], roles: []}
+  - {id: 59, name: "pavona alive", color: [13, 191, 102], roles: []}
+  - {id: 60, name: "pavona bleached", color: [118, 249, 130], roles: []}
+  - {id: 61, name: "pavona dead", color: [141, 130, 175], roles: []}
+  - {id: 62, name: "pocillopora alive", color: [255, 146, 150], roles: []}
+  - {id: 63, name: "pocillopora bleached", color: [250, 219, 220], roles: []}
+  - {id: 64, name: "pocillopora dead", color: [130, 66, 66], roles: []}
+  - {id: 65, name: "porites alive", color: [255, 209, 71], roles: []}
+  - {id: 66, name: "porites bleached", color: [213, 10, 25], roles: []}
+  - {id: 67, name: "porites dead", color: [40, 24, 243], roles: []}
+  - {id: 68, name: "rubble", color: [161, 153, 128], roles: []}
+  - {id: 69, name: "sand", color: [194, 178, 128], roles: []}
+  - {id: 70, name: "sea cucumber", color: [0, 231, 255], roles: []}
+  - {id: 71, name: "sea urchin", color: [0, 142, 255], roles: []}
+  - {id: 72, name: "seagrass", color: [125, 222, 125], roles: []}
+  - {id: 73, name: "seriatopora alive", color: [191, 19, 6], roles: []}
+  - {id: 74, name: "seriatopora bleached", color: [247, 89, 191], roles: []}
+  - {id: 75, name: "seriatopora dead", color: [75, 131, 128], roles: []}
+  - {id: 76, name: "soft coral (malacalcyonacea) alive", color: [147, 144, 54], roles: []}
+  - {id: 77, name: "soft coral (malacalcyonacea) bleached", color: [7, 227, 247], roles: []}
+  - {id: 78, name: "sponge", color: [240, 80, 80], roles: []}
+  - {id: 79, name: "stylophora alive", color: [255, 111, 194], roles: []}
+  - {id: 80, name: "stylophora bleached", color: [255, 220, 241], roles: []}
+  - {id: 81, name: "stylophora dead", color: [123, 54, 94], roles: []}
+  - {id: 82, name: "table acropora alive", color: [189, 119, 255], roles: []}
+  - {id: 83, name: "table acropora bleached", color: [244, 233, 253], roles: []}
+  - {id: 84, name: "table acropora dead", color: [85, 53, 116], roles: []}
+  - {id: 85, name: "thin plate/encrusting coral alive", color: [91, 28, 190], roles: []}
+  - {id: 86, name: "thin plate/encrusting coral bleached", color: [42, 209, 57], roles: []}
+  - {id: 87, name: "thin plate/encrusting coral dead", color: [8, 19, 242], roles: []}
+  - {id: 88, name: "transect line", color: [0, 255, 0], roles: ["transect_line"]}
+  - {id: 89, name: "transect tools", color: [8, 205, 12], roles: ["transect_tools", "ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 90, name: "trash", color: [255, 0, 134], roles: []}
+  - {id: 91, name: "turbinaria", color: [228, 255, 119], roles: []}
+  - {id: 92, name: "turbinaria dead", color: [169, 30, 70], roles: []}
+  - {id: 93, name: "water column", color: [31, 0, 166], roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 94, name: "water surface", color: [0, 255, 248], roles: ["ignore_in_point_cloud", "ignore_in_cover"]}
+  - {id: 95, name: "xeniidae alive", color: [139, 142, 168], roles: []}

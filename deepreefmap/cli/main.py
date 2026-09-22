@@ -63,7 +63,7 @@ def list_profiles() -> None:
 def reconstruct(
     videos: str = typer.Option(..., help="Comma-separated video paths in processing order."),
     fps: int = typer.Option(10, help="Target processing framerate."),
-    segmentation: str = typer.Option("coralscapes-vit-b-dpt", help="Segmentation model name."),
+    segmentation: str = typer.Option("coralscapesv2-vit-b-dpt", help="Segmentation model name."),
     mapping: str = typer.Option("scsfmlearner", help="3D mapping backend name."),
     camera_profile: str = typer.Option(
         ...,
@@ -74,7 +74,7 @@ def reconstruct(
     end: Optional[float] = typer.Option(None, help="End timestamp in the concatenated stream (seconds)."),
     transect_length: Optional[float] = typer.Option(None, help="Transect length in meters."),
     transect_crop_width: Optional[float] = typer.Option(None, help="Crop width around transect in meters."),
-    classes: Path = typer.Option(Path("configs/classes_coralscapes.yaml"), help="Classes YAML with class roles and colors."),
+    classes: Optional[Path] = typer.Option(None, help="Classes YAML with class roles and colors. Defaults to the segmentation model's classes file."),
     viser: bool = typer.Option(False, help="Enable viser visualization."),
     viser_port: int = typer.Option(8080, help="Port for viser visualization server."),
     tsdf: bool = typer.Option(False, help="Enable optional TSDF fusion output."),

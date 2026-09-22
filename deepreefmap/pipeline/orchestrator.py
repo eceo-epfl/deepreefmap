@@ -33,7 +33,7 @@ from deepreefmap.pointcloud.tsdf_align import align_tsdf_to_reference
 from deepreefmap.pointcloud.unprojection import depth_to_points
 from deepreefmap.postproc.ortho_outputs import TransectCropParams, build_ortho_outputs
 from deepreefmap.postproc.reports import save_cover_report, save_run_manifest
-from deepreefmap.segmentation.registry import create_segmentation_model
+from deepreefmap.segmentation.registry import create_segmentation_model, default_classes_path
 from deepreefmap.telemetry.gopro import extract_gravity_vectors_for_video_selection
 
 if TYPE_CHECKING:
@@ -139,7 +139,7 @@ def run_reconstruction(
     begin_s: float | None = None,
     end_s: float | None = None,
     mapping_options: dict[str, object] | None = None,
-    classes_path: Path = DEFAULT_CLASSES_PATH,
+    classes_path: Path | None = None,
     grid_bins: int = 2000,
     require_gravity_telemetry: bool = False,
     preprocess_batch_size: int = 4,
@@ -168,6 +168,12 @@ def run_reconstruction(
         device = resolve_device()
         logger.info("Compute device: %s", device)
 
+        # An unset --classes defers to the model's own classes file (39- vs 95-class),
+        # so switching models does not silently mismatch label ids and colors.
+        if classes_path is None:
+            classes_path = (
+                DEFAULT_CLASSES_PATH if skip_segmentation else default_classes_path(segmentation_name)
+            )
         logger.info("Loading classes from %s", classes_path)
         classes_config = load_classes(classes_path)
         if viewer is None and enable_viser:
