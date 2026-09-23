@@ -45,7 +45,7 @@ lingbot-map/
 lingbot_map/
 
 # Local datasets (e.g. Hugging Face downloads)
-data/
+/data/
 
 # Large binary/data artifacts
 *.npy
