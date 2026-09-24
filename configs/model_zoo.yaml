@@ -24,3 +24,5 @@ mapping:
     - scsfmlearner
     - loger
     - loger_star
+    - vggt_omega
+    - lingbot_map

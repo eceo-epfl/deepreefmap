@@ -17,6 +17,17 @@ def _version_callback(value: bool) -> None:
     raise typer.Exit()
 
 
+def _optional_filter_arg(value: object, default: float | None) -> float | None:
+    """Resolve a CLI point-filter option to Optional[float]; <=0 means disabled (None).
+
+    Direct (non-Typer) calls in tests receive the OptionInfo default rather than a
+    number, so fall back to ``default`` for anything that is not a real number.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return float(value) if value > 0 else None
+
+
 @app.callback()
 def main(
     version: bool = typer.Option(
@@ -90,14 +101,32 @@ def reconstruct(
         None,
         help="Absolute replacement voxel size in meters (skips auto estimate when set).",
     ),
+    confidence_percentile: float = typer.Option(
+        20.0,
+        help=(
+            "Drop points below this confidence percentile, pooled across the whole sequence "
+            "(higher = sharper cloud but fewer points; also affects benthic-cover stats). "
+            "Set 0 to disable the percentile cut."
+        ),
+    ),
+    depth_edge_rtol: float = typer.Option(
+        0.03,
+        help=(
+            "Relative depth-jump tolerance for the edge filter: pixels on depth discontinuities "
+            "are dropped so object silhouettes do not smear into the cloud. Set 0 to disable."
+        ),
+    ),
     loger_model_path: Optional[Path] = typer.Option(None, help="LoGeR checkpoint path (defaults to vendored)."),
     loger_window_size: int = typer.Option(32, help="LoGeR window size."),
     loger_overlap_size: int = typer.Option(3, help="LoGeR overlap size."),
-    refine_intrinsics_from_mapper: bool = typer.Option(
-        False,
+    refine_intrinsics_from_mapper: Optional[bool] = typer.Option(
+        None,
+        "--refine-intrinsics-from-mapper/--no-refine-intrinsics-from-mapper",
         help=(
-            "Allow mapping backend to refine camera intrinsics and override camera profile K for "
-            "downstream 3D reconstruction."
+            "Use the mapping backend's estimated camera intrinsics (instead of the camera profile K) "
+            "to unproject depth and for all downstream 3D reconstruction. Defaults to on for backends "
+            "whose model predicts intrinsics (vggt_omega, lingbot_map) and off otherwise; pass the "
+            "--no- form to force the calibrated profile K."
         ),
     ),
     scsfmlearner_checkpoint_path: Optional[Path] = typer.Option(
@@ -111,6 +140,38 @@ def reconstruct(
     scsfmlearner_height: int = typer.Option(
         256,
         help="SC-SfMLearner mapping height (independent of global processing height).",
+    ),
+    vggt_omega_model_path: Optional[Path] = typer.Option(
+        None,
+        help="Optional VGGT-Omega checkpoint path. Defaults to facebook/VGGT-Omega/vggt_omega_1b_512.pt on Hugging Face Hub (gated; request access first).",
+    ),
+    vggt_omega_image_resolution: int = typer.Option(
+        512,
+        help="VGGT-Omega input resolution (must be a positive multiple of 16).",
+    ),
+    lingbot_map_model_path: Optional[Path] = typer.Option(
+        None,
+        help="Optional LingBot-Map checkpoint path. Defaults to robbyant/lingbot-map/lingbot-map.pt on Hugging Face Hub.",
+    ),
+    lingbot_map_mode: str = typer.Option(
+        "streaming",
+        help="LingBot-Map inference mode: 'streaming' (default) or 'windowed' (long sequences, >~3000 frames).",
+    ),
+    lingbot_map_keyframe_interval: Optional[int] = typer.Option(
+        None,
+        help="LingBot-Map keyframe interval (>= 1). Defaults to auto (1 for <=320 frames, else ceil(frames/320)).",
+    ),
+    lingbot_map_window_size: int = typer.Option(
+        64,
+        help="LingBot-Map window size in keyframes (windowed mode only).",
+    ),
+    lingbot_map_overlap_keyframes: Optional[int] = typer.Option(
+        None,
+        help="LingBot-Map overlap between windows in keyframes (windowed mode only).",
+    ),
+    lingbot_map_attention: str = typer.Option(
+        "auto",
+        help="LingBot-Map attention backend: 'auto' (default), 'sdpa', or 'flashinfer' (CUDA only).",
     ),
     grid_bins: int = typer.Option(2000, help="Number of bins used to build the ortho grid."),
     keep_viser_open: bool = typer.Option(
@@ -173,6 +234,63 @@ def reconstruct(
         }
         if resolved_checkpoint_path is not None:
             mapping_options["checkpoint_path"] = str(resolved_checkpoint_path)
+    elif mapping == "vggt_omega":
+        # When called directly in tests, unset Typer options can be OptionInfo objects.
+        resolved_vggt_model_path = (
+            vggt_omega_model_path if isinstance(vggt_omega_model_path, Path) else None
+        )
+        if resolved_vggt_model_path is not None and not resolved_vggt_model_path.exists():
+            typer.echo(f"VGGT-Omega checkpoint not found: {resolved_vggt_model_path}", err=True)
+            raise typer.Exit(code=1)
+        resolved_resolution = (
+            vggt_omega_image_resolution if isinstance(vggt_omega_image_resolution, int) else 512
+        )
+        if resolved_resolution <= 0 or resolved_resolution % 16 != 0:
+            typer.echo("`--vggt-omega-image-resolution` must be a positive multiple of 16.", err=True)
+            raise typer.Exit(code=1)
+        mapping_options = {
+            "image_resolution": resolved_resolution,
+            "model_path": str(resolved_vggt_model_path) if resolved_vggt_model_path else None,
+        }
+    elif mapping == "lingbot_map":
+        # When called directly in tests, unset Typer options can be OptionInfo objects.
+        resolved_lingbot_model_path = (
+            lingbot_map_model_path if isinstance(lingbot_map_model_path, Path) else None
+        )
+        if resolved_lingbot_model_path is not None and not resolved_lingbot_model_path.exists():
+            typer.echo(f"LingBot-Map checkpoint not found: {resolved_lingbot_model_path}", err=True)
+            raise typer.Exit(code=1)
+        resolved_mode = lingbot_map_mode if isinstance(lingbot_map_mode, str) else "streaming"
+        if resolved_mode not in ("streaming", "windowed"):
+            typer.echo("`--lingbot-map-mode` must be 'streaming' or 'windowed'.", err=True)
+            raise typer.Exit(code=1)
+        resolved_attention = lingbot_map_attention if isinstance(lingbot_map_attention, str) else "auto"
+        if resolved_attention not in ("auto", "sdpa", "flashinfer"):
+            typer.echo("`--lingbot-map-attention` must be 'auto', 'sdpa', or 'flashinfer'.", err=True)
+            raise typer.Exit(code=1)
+        resolved_keyframe_interval = (
+            lingbot_map_keyframe_interval if isinstance(lingbot_map_keyframe_interval, int) else None
+        )
+        if resolved_keyframe_interval is not None and resolved_keyframe_interval < 1:
+            typer.echo("`--lingbot-map-keyframe-interval` must be >= 1.", err=True)
+            raise typer.Exit(code=1)
+        resolved_window_size = (
+            lingbot_map_window_size if isinstance(lingbot_map_window_size, int) else 64
+        )
+        if resolved_window_size <= 0:
+            typer.echo("`--lingbot-map-window-size` must be positive.", err=True)
+            raise typer.Exit(code=1)
+        resolved_overlap_keyframes = (
+            lingbot_map_overlap_keyframes if isinstance(lingbot_map_overlap_keyframes, int) else None
+        )
+        mapping_options = {
+            "model_path": str(resolved_lingbot_model_path) if resolved_lingbot_model_path else None,
+            "mode": resolved_mode,
+            "keyframe_interval": resolved_keyframe_interval,
+            "window_size": resolved_window_size,
+            "overlap_keyframes": resolved_overlap_keyframes,
+            "attention": resolved_attention,
+        }
     run_reconstruction(
         video_paths=[v.strip() for v in videos.split(",") if v.strip()],
         fps=fps,
@@ -188,6 +306,9 @@ def reconstruct(
         replacement_radius_factor=replacement_radius_factor,
         replacement_radius_estimation_frames=replacement_radius_estimation_frames,
         replacement_radius_override=replacement_radius_override,
+        # 0 (or below) disables the respective filter; anything else is the value.
+        confidence_percentile=_optional_filter_arg(confidence_percentile, 20.0),
+        depth_edge_rtol=_optional_filter_arg(depth_edge_rtol, 0.03),
         mapping_options=mapping_options,
         classes_path=classes,
         grid_bins=grid_bins,
@@ -196,7 +317,10 @@ def reconstruct(
         processing_width=processing_width,
         processing_height=processing_height,
         skip_segmentation=skip_segmentation,
-        refine_intrinsics_from_mapper=refine_intrinsics_from_mapper,
+        # None (or an OptionInfo when called directly in tests) means "backend default".
+        refine_intrinsics_from_mapper=(
+            refine_intrinsics_from_mapper if isinstance(refine_intrinsics_from_mapper, bool) else None
+        ),
         enable_viser=viser,
         viser_port=viser_port,
         keep_viser_open=keep_viser_open,
@@ -284,6 +408,20 @@ def view_run(
         None,
         help="Absolute replacement voxel size in meters for the rebuilt semantic cloud.",
     ),
+    confidence_percentile: float = typer.Option(
+        20.0,
+        help=(
+            "Drop points below this confidence percentile, pooled across the whole sequence, when "
+            "rebuilding the semantic cloud (higher = sharper but fewer points). Set 0 to disable."
+        ),
+    ),
+    depth_edge_rtol: float = typer.Option(
+        0.03,
+        help=(
+            "Relative depth-jump tolerance for the edge filter used when rebuilding the semantic cloud. "
+            "Set 0 to disable."
+        ),
+    ),
     ortho_bins: int = typer.Option(1000, help="Bins used for the interactive ortho preview."),
 ) -> None:
     from deepreefmap.pipeline.run_loader import load_cached_run
@@ -295,6 +433,9 @@ def view_run(
         loaded = load_cached_run(
             run_dir,
             point_filter_config=PointFilterConfig(
+                # 0 (or below) disables the respective filter; anything else is the value.
+                confidence_percentile=_optional_filter_arg(confidence_percentile, 20.0),
+                depth_edge_rtol=_optional_filter_arg(depth_edge_rtol, 0.03),
                 replacement_radius_factor=1.0 if replacement_radius_factor is None else replacement_radius_factor,
                 replacement_radius_estimation_frames=replacement_radius_estimation_frames,
                 replacement_radius_override=replacement_radius_override,

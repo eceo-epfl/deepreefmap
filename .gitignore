@@ -34,6 +34,19 @@ camera_profiles/*_diagnostics/
 *.hdf5
 *.pb
 
+# Locally cloned/downloaded Hugging Face model repos.
+# e.g. `git clone https://huggingface.co/facebook/VGGT-Omega vggt` pulls in
+# multi-GB checkpoints plus repo metadata (.gitattributes, LICENSE.txt, README.md)
+# that must never be committed. The checkpoint blobs are already ignored above by
+# *.pt; these entries also keep the repo metadata files out.
+vggt/
+vggt-omega/
+lingbot-map/
+lingbot_map/
+
+# Local datasets (e.g. Hugging Face downloads)
+/data/
+
 # Large binary/data artifacts
 *.npy
 *.npz

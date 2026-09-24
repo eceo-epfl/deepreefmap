@@ -19,7 +19,7 @@ from deepreefmap.camera.rectification import Rectifier
 from deepreefmap.config.classes import ClassConfig, DEFAULT_CLASSES_PATH, load_classes
 from deepreefmap.io.exports import save_geometry_cloud, save_ortho_grid, save_semantic_cloud
 from deepreefmap.io.video import _first_sample_time, iter_video_frames, selected_local_indices_for_clip
-from deepreefmap.mapping.registry import create_mapping_backend
+from deepreefmap.mapping.registry import backend_estimates_intrinsics, create_mapping_backend
 from deepreefmap.pipeline import resume as resume_mod
 from deepreefmap.pipeline.artifacts import (
     FrameBatch,
@@ -27,7 +27,12 @@ from deepreefmap.pipeline.artifacts import (
     PreparedFrame,
     ReconstructionCancelled,
 )
-from deepreefmap.pointcloud.filters import PointFilterConfig, build_semantic_reference_cloud
+from deepreefmap.pointcloud.filters import (
+    PointFilterConfig,
+    build_semantic_reference_cloud,
+    frame_validity_mask,
+    resolve_confidence_threshold,
+)
 from deepreefmap.pointcloud.tsdf import integrate_tsdf
 from deepreefmap.pointcloud.tsdf_align import align_tsdf_to_reference
 from deepreefmap.pointcloud.unprojection import depth_to_points
@@ -136,6 +141,9 @@ def run_reconstruction(
     replacement_radius_factor: float | None = None,
     replacement_radius_estimation_frames: int = 30,
     replacement_radius_override: float | None = None,
+    # Defaults mirror PointFilterConfig; None disables the respective filter.
+    confidence_percentile: float | None = 20.0,
+    depth_edge_rtol: float | None = 0.03,
     begin_s: float | None = None,
     end_s: float | None = None,
     mapping_options: dict[str, object] | None = None,
@@ -146,7 +154,7 @@ def run_reconstruction(
     processing_width: int | None = None,
     processing_height: int | None = None,
     skip_segmentation: bool = False,
-    refine_intrinsics_from_mapper: bool = False,
+    refine_intrinsics_from_mapper: bool | None = None,
     viewer: RunViewer | None = None,
     viser_port: int = 8080,
     keep_viser_open: bool = True,
@@ -351,8 +359,9 @@ def run_reconstruction(
 
         logger.info("Prepared %d sampled frames in %.1fs", frame_count, time.monotonic() - t_start)
 
+        refine_intrinsics_from_mapper = _resolve_refine_intrinsics(mapping_name, refine_intrinsics_from_mapper)
         map_key_options = dict(mapping_options or {})
-        map_key_options["refine_intrinsics_from_mapper"] = bool(refine_intrinsics_from_mapper)
+        map_key_options["refine_intrinsics_from_mapper"] = refine_intrinsics_from_mapper
         map_key = resume_mod.mapping_key(
             preprocess_key_str=prep_key,
             mapping_name=mapping_name,
@@ -448,6 +457,17 @@ def run_reconstruction(
         _check_cancel(cancel_event, pause_event)
         # No throwaway preview cloud: the semantic build reports per-frame progress instead.
 
+        # One filter config drives both the semantic and geometry-only clouds so
+        # the demo-style edge/confidence cleanup applies regardless of --skip-segmentation.
+        point_filter_config = PointFilterConfig(
+            confidence_percentile=confidence_percentile,
+            depth_edge_rtol=depth_edge_rtol,
+            replacement_radius_factor=1.0
+            if replacement_radius_factor is None
+            else replacement_radius_factor,
+            replacement_radius_estimation_frames=replacement_radius_estimation_frames,
+            replacement_radius_override=replacement_radius_override,
+        )
 
         if skip_segmentation:
             logger.info("Skip segmentation: building geometry-only point cloud...")
@@ -457,6 +477,7 @@ def run_reconstruction(
             geometry_xyz, geometry_rgb = _build_geometry_cloud(
                 frame_batch=frame_batch,
                 mapping_result=mapping_result_for_cloud,
+                config=point_filter_config,
                 voxel_size=0.003,
             )
             output_files = [
@@ -502,13 +523,7 @@ def run_reconstruction(
             frame_batch,
             mapping_result_for_cloud,
             classes_config,
-            PointFilterConfig(
-                replacement_radius_factor=1.0
-                if replacement_radius_factor is None
-                else replacement_radius_factor,
-                replacement_radius_estimation_frames=replacement_radius_estimation_frames,
-                replacement_radius_override=replacement_radius_override,
-            ),
+            point_filter_config,
             progress_cb=_cloud_progress,
             stage_cb=_cloud_stage,
         )
@@ -733,6 +748,24 @@ def _prepare_frames(
     )
 
 
+def _resolve_refine_intrinsics(mapping_name: str, requested: bool | None) -> bool:
+    """Turn the tri-state CLI flag into the effective refinement decision.
+
+    ``None`` (flag not given) defers to the backend: models that predict their
+    own intrinsics default to using them, everything else keeps the profile K.
+    The result feeds the mapping cache key, so it must be resolved before that.
+    """
+    if requested is not None:
+        return bool(requested)
+    resolved = backend_estimates_intrinsics(mapping_name)
+    logger.info(
+        "refine_intrinsics_from_mapper not set; using backend '%s' default: %s",
+        mapping_name,
+        "mapper-estimated K" if resolved else "camera profile K",
+    )
+    return resolved
+
+
 def _maybe_refine_intrinsics(
     *,
     mapping_name: str,
@@ -742,6 +775,12 @@ def _maybe_refine_intrinsics(
     processing_image_size: tuple[int, int],
     refine_intrinsics_from_mapper: bool,
 ) -> MappingSequenceResult:
+    """Settle the single K that drives every downstream unprojection.
+
+    Whatever this returns in ``mapping_result.intrinsics`` is what the cloud
+    stage, the viewers and the saved artifacts use, so the geometry is always
+    self-consistent regardless of which K wins here.
+    """
     depth_h, depth_w = mapping_result.depth_maps[0].shape
     camera_profile_intrinsics_depth = scale_intrinsics(
         camera_profile_intrinsics,
@@ -755,6 +794,13 @@ def _maybe_refine_intrinsics(
     )
     mapping_result = dataclasses.replace(mapping_result, intrinsics=effective_intrinsics)
     if not refine_intrinsics_from_mapper:
+        logger.info(
+            "Intrinsics refinement off for backend '%s'; unprojecting with the camera profile K. "
+            "camera_profile_K=%s effective_K=%s",
+            mapping_name,
+            _format_matrix(camera_profile_intrinsics_depth),
+            _format_matrix(mapping_result.intrinsics),
+        )
         return mapping_result
     refined_intrinsics = mapping.refine_intrinsics(mapping_result)
     if refined_intrinsics is None:
@@ -819,11 +865,14 @@ def _build_geometry_cloud(
     frame_batch: FrameBatch,
     mapping_result: MappingSequenceResult,
     *,
-    min_depth: float = 0.05,
-    max_depth: float = 8.0,
+    config: PointFilterConfig | None = None,
     voxel_size: float = 0.003,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Aggregate per-frame depth+RGB into a single XYZ/RGB cloud (geometry-only)."""
+    cfg = config or PointFilterConfig()
+    # Same demo-style edge/confidence cleanup as the semantic cloud, minus the
+    # semantic keep-mask/labels this path does not have.
+    conf_threshold = resolve_confidence_threshold(mapping_result, cfg)
     frame_lookup = {int(f.frame_index): f for f in frame_batch.frames}
     xyz_parts: list[np.ndarray] = []
     rgb_parts: list[np.ndarray] = []
@@ -838,7 +887,10 @@ def _build_geometry_cloud(
             xyz = mapping_result.world_points[result_i].reshape(-1, 3).astype(np.float32)
         else:
             xyz = depth_to_points(depth, mapping_result.intrinsics, mapping_result.poses_w_c[result_i]).astype(np.float32)
-        valid = np.isfinite(depth) & (depth >= min_depth) & (depth <= max_depth)
+        confidence = None if mapping_result.confidence is None else mapping_result.confidence[result_i].astype(np.float32)
+        if confidence is not None and confidence.shape != depth.shape:
+            confidence = cv2.resize(confidence, (w, h), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+        valid = frame_validity_mask(depth, confidence, cfg, conf_threshold=conf_threshold)
         flat = valid.reshape(-1)
         if not flat.any():
             continue
