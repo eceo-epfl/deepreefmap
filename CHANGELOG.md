@@ -10,30 +10,33 @@ affect published measurements.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-24
+
 ### Added
 
 - VGGT-Omega reconstruction backend (`--mapping vggt_omega`). Feed-forward camera
   and depth prediction that produces depth, camera-to-world poses, per-frame
-  intrinsics, and confidence in one forward pass over the whole sequence. Installed via the optional `vggt_omega` extra (pulls
+  intrinsics, and confidence in one forward pass over the whole sequence.
+  Installed via the optional `vggt_omega` extra (pulls
   `vggt-omega` from GitHub; FAIR Noncommercial Research License, so research-use
-  only) and requires a GPU plus the gated `facebook/VGGT-Omega` checkpoint.
+  only) and requires a GPU plus the gated `facebook/VGGT-Omega` checkpoint. (#37)
 - CLI flags `--vggt-omega-model-path` and `--vggt-omega-image-resolution` for the
   VGGT-Omega backend. Because there is no sliding window, peak GPU memory grows
   with the frame count (~6 GB + ~75 MB/frame), so the frame count must be bounded
-  with `--fps` and `--begin`/`--end`.
+  with `--fps` and `--begin`/`--end`. (#37)
 - LingBot-Map reconstruction backend (`--mapping lingbot_map`). Feed-forward
   *streaming* camera and depth prediction that produces depth, camera-to-world
   poses, per-frame intrinsics, and confidence. It streams
   frame-by-frame against a bounded KV cache and offloads per-frame predictions to
   CPU, so peak GPU memory stays roughly constant as the sequence grows. Installed
   via the optional `lingbot_map` extra (pulls `lingbot-map` from GitHub;
-  Apache-2.0) and requires a GPU plus the public `robbyant/lingbot-map` checkpoint.
+  Apache-2.0) and requires a GPU plus the public `robbyant/lingbot-map` checkpoint. (#37)
 - CLI flags `--lingbot-map-model-path`, `--lingbot-map-mode` (`streaming` or
   `windowed`), `--lingbot-map-keyframe-interval`, `--lingbot-map-window-size`,
   `--lingbot-map-overlap-keyframes`, and `--lingbot-map-attention` (`auto`,
-  `sdpa`, or `flashinfer`) for the LingBot-Map backend.
+  `sdpa`, or `flashinfer`) for the LingBot-Map backend. (#37)
 - `--no-refine-intrinsics-from-mapper` to force the calibrated camera profile `K`
-  for backends that would otherwise default to their own estimate (see Changed).
+  for backends that would otherwise default to their own estimate (see Changed). (#37)
 - Demo-style point-cloud cleanup shared across every backend: a relative
   depth-edge filter (`--depth-edge-rtol`, default `0.03`) zeroes confidence on
   depth discontinuities so object silhouettes no longer smear into the cloud when
@@ -41,7 +44,18 @@ affect published measurements.
   (`--confidence-percentile`, default `20`) drops the least-confident points.
   Both are ported from the VGGT-Omega/LoGeR demos, apply to the semantic,
   geometry-only, and live-preview clouds, and are available on both `reconstruct`
-  and `view`. Set either flag to `0` to disable it.
+  and `view`. Set either flag to `0` to disable it. (#37)
+- CoralscapesV2 segmentation models: `coralscapesv2-vit-l-dpt`,
+  `coralscapesv2-vit-b-dpt`, `coralscapesv2-segformer-b5` (39 classes) and the
+  fine-grained `coralscapesv2-vit-l-dpt-95`, `coralscapesv2-vit-b-dpt-95`,
+  `coralscapesv2-segformer-b5-95` (95 classes). All resolve to public
+  `EPFL-ECEO/*` repositories; the DINOv3 variants still load the gated
+  `facebook/dinov3` encoder and require Hugging Face authentication. (#36)
+- 95-class classes file `configs/classes_coralscapesv2_95.yaml` (names, colors,
+  and roles from the CoralscapesV2 dataset), shipped as a packaged resource. (#36)
+- Each segmentation model declares its own default classes file, so `--classes`
+  is now optional and defaults to the model's classes file (95-class models pick
+  the fine-grained YAML automatically). Pass `--classes` only to override. (#36)
 
 ### Changed
 
@@ -52,21 +66,20 @@ affect published measurements.
   which shifts point counts and benthic-cover fractions. Restore the previous
   behaviour with `--confidence-percentile 5 --depth-edge-rtol 0` (the percentile
   is now pooled globally rather than per frame, so counts will still differ
-  slightly).
-
+  slightly). (#37)
 - `--refine-intrinsics-from-mapper` is now tri-state. Unset, it defaults to **on**
   for backends whose model predicts intrinsics (`vggt_omega`, `lingbot_map`) and
   **off** for `loger`, `loger_star` and `scsfmlearner`; the resolved value is part
   of the mapping cache key. Point clouds from `vggt_omega` and `lingbot_map`
   therefore shift laterally relative to previous runs, which unprojected with the
-  camera profile `K`.
+  camera profile `K`. (#37)
 - The `vggt_omega` and `lingbot_map` backends no longer return pre-built
   `world_points`. Previously they unprojected depth with the model's *per-frame*
   predicted `K` while reporting the camera profile `K` downstream, so the cloud,
   the viewer frusta and `mapping_outputs.npz` disagreed on the camera and each
   frame carried its own lateral scale (visible as smeared, stacked copies of the
   same structure). The orchestrator now settles one `K` (refined median or
-  calibrated) and the cloud stage unprojects every frame with it.
+  calibrated) and the cloud stage unprojects every frame with it. (#37)
 - `lingbot_map` poses are no longer inverted. LingBot-Map's `pose_enc` decodes to
   a camera-to-world `[R|t]` (its windowed alignment code and demo rely on this),
   unlike VGGT / VGGT-Omega whose encoding is camera-from-world. The backend
@@ -76,30 +89,16 @@ affect published measurements.
   frame i into frame i+1 with the old poses was no better than not warping at all
   (mean abs intensity error 35.2 vs 35.1); with the fixed poses it drops to 27.6,
   and sweeping translation scale bottoms out exactly at 1.0, confirming pose and
-  depth share one scale. `vggt_omega` is unaffected.
+  depth share one scale. `vggt_omega` is unaffected. (#37)
 - `vggt_omega` and `lingbot_map` run in full fp32 on CPU and MPS. Both models
   guard their depth/camera heads with a CUDA-only `autocast(enabled=False)`, so
   on other devices the heads inherited the bf16/fp16 autocast context and emitted
   quantized depth (visible as concentric depth terraces) and poses. CUDA behaviour
-  is unchanged (bf16 trunk, fp32 heads).
-
-- CoralscapesV2 segmentation models: `coralscapesv2-vit-l-dpt`,
-  `coralscapesv2-vit-b-dpt`, `coralscapesv2-segformer-b5` (39 classes) and the
-  fine-grained `coralscapesv2-vit-l-dpt-95`, `coralscapesv2-vit-b-dpt-95`,
-  `coralscapesv2-segformer-b5-95` (95 classes). All resolve to public
-  `EPFL-ECEO/*` repositories; the DINOv3 variants still load the gated
-  `facebook/dinov3` encoder and require Hugging Face authentication.
-- 95-class classes file `configs/classes_coralscapesv2_95.yaml` (names, colors,
-  and roles from the CoralscapesV2 dataset), shipped as a packaged resource.
-- Each segmentation model declares its own default classes file, so `--classes`
-  is now optional and defaults to the model's classes file (95-class models pick
-  the fine-grained YAML automatically). Pass `--classes` only to override.
-
-### Changed
-
+  is unchanged (bf16 trunk, fp32 heads). (#37)
 - Default `--segmentation` model is now `coralscapesv2-vit-b-dpt` (was
   `coralscapes-vit-b-dpt`). This shifts numeric outputs (benthic cover fractions,
-  labeled point counts) for runs that relied on the default model.
+  labeled point counts) for runs that relied on the default model. (#36)
+
 ### Fixed
 
 - LoGeR peak VRAM drops by the size of the input batch, 1.6 MiB per frame at the
@@ -109,7 +108,10 @@ affect published measurements.
   resident. Measured on an RTX 3090 over 600 frames: 12561 MiB to 11587 MiB peak
   allocated, a 974 MiB saving, with inference time unchanged (59.5 s to 58.8 s).
   Outputs are byte-identical, checked with a checksum over depth, poses, points
-  and confidence. (#19)
+  and confidence. (#35)
+- The bundled Hero 12 camera profile declares the name it resolves under,
+  `gopro_hero_12`. It declared `gopro_hero_12_4k_wide`, so the loaded profile's
+  name disagreed with the `--camera-profile` key used to load it. (#39)
 
 ## [1.1.0] - 2026-08-21
 
