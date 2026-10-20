@@ -8,6 +8,16 @@ from deepreefmap.pointcloud.grid_ortho import OrthoGrid
 
 
 @dataclass(frozen=True)
+class TransectFrame:
+    """Line-following coordinates: pixel = centroid + u * direction + v * normal, v = centerline(u)."""
+
+    centroid: np.ndarray
+    direction: np.ndarray
+    normal: np.ndarray
+    centerline: np.ndarray
+
+
+@dataclass(frozen=True)
 class TransectCropSelection:
     y0: int
     y1: int
@@ -15,6 +25,10 @@ class TransectCropSelection:
     x1: int
     mask: np.ndarray
     pixel_size_m: float
+    frame: TransectFrame | None = None
+    start: float = 0.0
+    end: float = 0.0
+    half_width_px: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -24,6 +38,7 @@ class TransectCropGeometry:
     start: float
     end: float
     px_length: float
+    frame: TransectFrame | None = None
 
 
 def crop_ortho_around_transect(
@@ -134,6 +149,8 @@ def point_mask_with_transect_selection(
 
 
 def _crop_grid_with_spec(grid: OrthoGrid, spec: TransectCropSelection) -> OrthoGrid:
+    if spec.frame is not None:
+        return _rotate_grid(grid, spec)
     y0, y1, x0, x1 = spec.y0, spec.y1, spec.x0, spec.x1
     return OrthoGrid(
         rgb=_mask_array(grid.rgb[y0:y1, x0:x1], spec.mask),
@@ -141,6 +158,47 @@ def _crop_grid_with_spec(grid: OrthoGrid, spec: TransectCropSelection) -> OrthoG
         height=_mask_array(grid.height[y0:y1, x0:x1], spec.mask),
         counts=_mask_array(grid.counts[y0:y1, x0:x1], spec.mask),
         frame_index=_mask_array(grid.frame_index[y0:y1, x0:x1], spec.mask, fill_value=-1),
+        cell_size=grid.cell_size,
+        pixel_size_m=spec.pixel_size_m,
+    )
+
+
+def _rotate_grid(grid: OrthoGrid, spec: TransectCropSelection) -> OrthoGrid:
+    """Rotate the strip rigidly (no warping) so the transect axis is horizontal and the line is mid-height."""
+    frame = spec.frame
+    margin = spec.half_width_px
+    u = np.arange(np.floor(spec.start - margin), np.ceil(spec.end + margin) + 1, dtype=np.float64)
+    c = _eval_centerline(frame.centerline, u, spec.start, spec.end)
+    v_mid = 0.5 * (c.min() + c.max())
+    half = int(np.ceil(max(c.max() - v_mid, v_mid - c.min()) + spec.half_width_px))
+    v = v_mid + np.arange(-half, half + 1, dtype=np.float64)
+
+    uu, vv = np.meshgrid(u, v)
+    xy = (
+        frame.centroid[None, None, :]
+        + uu[..., None] * frame.direction[None, None, :]
+        + vv[..., None] * frame.normal[None, None, :]
+    )
+    xs = np.rint(xy[..., 0]).astype(np.int64)
+    ys = np.rint(xy[..., 1]).astype(np.int64)
+    height, width = grid.labels.shape
+    keep = (
+        (xs >= 0) & (xs < width) & (ys >= 0) & (ys < height)
+        & (np.abs(vv - _eval_centerline(frame.centerline, uu, spec.start, spec.end)) <= spec.half_width_px)
+    )
+    xs = np.clip(xs, 0, width - 1)
+    ys = np.clip(ys, 0, height - 1)
+
+    def sample(array: np.ndarray, fill_value: int | float = 0) -> np.ndarray:
+        out = array[ys, xs]
+        return np.where(keep[..., None] if out.ndim == 3 else keep, out, fill_value)
+
+    return OrthoGrid(
+        rgb=sample(grid.rgb),
+        labels=sample(grid.labels),
+        height=sample(grid.height),
+        counts=sample(grid.counts),
+        frame_index=sample(grid.frame_index, -1),
         cell_size=grid.cell_size,
         pixel_size_m=spec.pixel_size_m,
     )
@@ -173,22 +231,63 @@ def build_transect_crop_geometry(
     transect_offsets = centered @ direction
     start = float(transect_offsets.min())
     end = float(transect_offsets.max())
-    px_length = end - start
-    if px_length <= 1e-6:
+    if end - start <= 1e-6:
         return None
+
+    line_across = centered @ normal
+    centerline = _fit_centerline(transect_offsets, line_across, start, end)
 
     yy, xx = np.indices(labels.shape, dtype=np.float32)
     coords_x = np.asarray(xx - float(centroid[0]), dtype=np.float32)
     coords_y = np.asarray(yy - float(centroid[1]), dtype=np.float32)
     along = np.asarray(coords_x * float(direction[0]) + coords_y * float(direction[1]), dtype=np.float32)
     across = np.asarray(coords_x * float(normal[0]) + coords_y * float(normal[1]), dtype=np.float32)
+    across = across - _eval_centerline(centerline, along, start, end).astype(np.float32)
+
+    grid_along = np.linspace(start, end, 200)
+    slope = np.polyval(np.polyder(centerline), grid_along)
+    px_length = float(np.sum(np.sqrt(1.0 + slope**2)[:-1] * np.diff(grid_along)))
     return TransectCropGeometry(
         along=along,
         across=across,
         start=start,
         end=end,
         px_length=px_length,
+        frame=TransectFrame(centroid=centroid, direction=direction, normal=normal, centerline=centerline),
     )
+
+
+def _eval_centerline(coeffs: np.ndarray, u: np.ndarray, start: float, end: float) -> np.ndarray:
+    """Centerline across(along); continued linearly past the ends so the margin cannot blow up."""
+    u = np.asarray(u, dtype=np.float64)
+    clamped = np.clip(u, start, end)
+    slope_at = np.polyval(np.polyder(coeffs), clamped)
+    return np.polyval(coeffs, clamped) + slope_at * (u - clamped)
+
+
+def _fit_centerline(offsets: np.ndarray, across: np.ndarray, start: float, end: float, degree: int = 3) -> np.ndarray:
+    """Polynomial across(along) following the line, so the crop strip bends with it."""
+    n_bins = int(np.clip((end - start) / 20.0, 8, 60))
+    edges = np.linspace(start, end, n_bins + 1)
+    bin_idx = np.clip(np.digitize(offsets, edges) - 1, 0, n_bins - 1)
+    centers, medians = [], []
+    for b in range(n_bins):
+        sel = bin_idx == b
+        if sel.sum() >= 3:
+            centers.append(offsets[sel].mean())
+            medians.append(np.median(across[sel]))
+    if len(centers) < 2:
+        return np.array([0.0, 0.0])
+    centers = np.asarray(centers)
+    medians = np.asarray(medians)
+    degree = min(degree, len(centers) - 1)
+    coeffs = np.polyfit(centers, medians, degree)
+    resid = medians - np.polyval(coeffs, centers)
+    mad = float(np.median(np.abs(resid))) + 1e-6
+    keep = np.abs(resid) <= 3.0 * 1.4826 * mad
+    if keep.sum() > degree + 1:
+        coeffs = np.polyfit(centers[keep], medians[keep], degree)
+    return coeffs
 
 
 def _crop_spec_for_transect(
@@ -220,8 +319,8 @@ def build_transect_crop_selection(
     half_width_px = max(0.5, (crop_width_m / max(pixel_size_m, 1e-6)) / 2.0)
 
     crop_mask = (
-        (geometry.along >= geometry.start)
-        & (geometry.along <= geometry.end)
+        (geometry.along >= geometry.start - half_width_px)
+        & (geometry.along <= geometry.end + half_width_px)
         & (np.abs(geometry.across) <= half_width_px)
     )
     crop_ys, crop_xs = np.where(crop_mask)
@@ -239,6 +338,10 @@ def build_transect_crop_selection(
         x1=x1,
         mask=crop_mask[y0:y1, x0:x1],
         pixel_size_m=pixel_size_m,
+        frame=geometry.frame,
+        start=geometry.start,
+        end=geometry.end,
+        half_width_px=half_width_px,
     )
 
 
