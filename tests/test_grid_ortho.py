@@ -7,6 +7,7 @@ from deepreefmap.pipeline.artifacts import SemanticPointCloud
 from deepreefmap.pointcloud.grid_ortho import OrthoGrid, aggregate_cloud_to_ortho_grid
 from deepreefmap.pointcloud.transect_crop import (
     build_transect_crop_geometry,
+    build_transect_crop_selection,
     crop_grid_around_transect,
     point_mask_with_transect_geometry,
 )
@@ -94,7 +95,7 @@ def test_crop_grid_around_transect_sets_pixel_size():
     assert cropped.rgb.shape[0] < grid.rgb.shape[0]
 
 
-def test_crop_grid_around_vertical_transect_uses_transect_direction():
+def test_crop_grid_around_vertical_transect_is_rotated_to_a_wide_strip():
     grid = OrthoGrid(
         rgb=np.zeros((12, 12, 3), dtype=np.uint8),
         labels=np.zeros((12, 12), dtype=np.int32),
@@ -108,11 +109,11 @@ def test_crop_grid_around_vertical_transect_uses_transect_direction():
     cropped = crop_grid_around_transect(grid, 15, None, transect_length_m=6.0, crop_width_m=4.0)
 
     assert np.isclose(cropped.pixel_size_m, 1.0)
-    assert cropped.labels.shape[0] > cropped.labels.shape[1]
+    assert cropped.labels.shape[1] > cropped.labels.shape[0]
     assert 15 in cropped.labels
 
 
-def test_crop_grid_masks_pixels_outside_diagonal_transect_corridor():
+def test_crop_grid_puts_a_diagonal_transect_in_the_middle_row():
     grid = OrthoGrid(
         rgb=np.ones((20, 20, 3), dtype=np.uint8) * 255,
         labels=np.ones((20, 20), dtype=np.int32),
@@ -132,9 +133,8 @@ def test_crop_grid_masks_pixels_outside_diagonal_transect_corridor():
         crop_width_m=3.0,
     )
 
-    assert cropped.counts[0, -1] == 0
-    assert cropped.frame_index[0, -1] == -1
-    assert cropped.counts[cropped.counts.shape[0] // 2, cropped.counts.shape[1] // 2] > 0
+    middle = cropped.labels.shape[0] // 2
+    assert (cropped.labels[middle] == 15).mean() > 0.75
 
 
 def test_point_mask_with_transect_geometry_filters_projected_points():
@@ -168,3 +168,58 @@ def test_point_mask_with_transect_geometry_filters_projected_points():
 
     assert keep[:4].any()
     assert not keep[4:].any()
+
+
+def test_transect_crop_follows_a_curved_line():
+    labels = np.zeros((400, 2000), dtype=np.uint8)
+    xs = np.arange(100, 1900)
+    ys = (200 + 60 * np.sin(xs / 600)).astype(int)
+    for dy in (-1, 0, 1):
+        labels[ys + dy, xs] = 5
+
+    geometry = build_transect_crop_geometry(labels, 5, None)
+    selection = build_transect_crop_selection(geometry, 50.0, 1.0)
+
+    assert selection.mask[ys - selection.y0, xs - selection.x0].all()
+
+
+def test_rotated_crop_centres_a_curved_line_on_average():
+    labels = np.zeros((400, 2000), dtype=np.uint8)
+    xs = np.arange(100, 1900)
+    ys = (200 + 60 * np.sin(xs / 600)).astype(int)
+    for dy in (-1, 0, 1):
+        labels[ys + dy, xs] = 5
+    grid = OrthoGrid(
+        rgb=np.zeros((400, 2000, 3), dtype=np.uint8),
+        labels=labels,
+        height=np.zeros(labels.shape, dtype=np.float32),
+        counts=np.ones(labels.shape, dtype=np.int32),
+        frame_index=np.zeros(labels.shape, dtype=np.int32),
+        cell_size=1.0,
+    )
+
+    cropped = crop_grid_around_transect(grid, 5, None, 50.0, 1.0)
+
+    rows = np.where(cropped.labels == 5)[0]
+    middle = cropped.labels.shape[0] // 2
+    assert abs((rows.min() + rows.max()) / 2 - middle) <= 3
+
+
+def test_crop_keeps_a_margin_beyond_both_ends_of_the_line():
+    labels = np.zeros((100, 400), dtype=np.uint8)
+    labels[50, 100:300] = 5
+    grid = OrthoGrid(
+        rgb=np.zeros((100, 400, 3), dtype=np.uint8),
+        labels=labels,
+        height=np.zeros(labels.shape, dtype=np.float32),
+        counts=np.ones(labels.shape, dtype=np.int32),
+        frame_index=np.zeros(labels.shape, dtype=np.int32),
+        cell_size=1.0,
+    )
+
+    cropped = crop_grid_around_transect(grid, 5, None, 20.0, 4.0)
+
+    cols = np.where((cropped.labels == 5).any(axis=0))[0]
+    assert cols.min() >= 10
+    assert cropped.labels.shape[1] - 1 - cols.max() >= 10
+    assert cropped.frame_index[:, 0].max() == 0
